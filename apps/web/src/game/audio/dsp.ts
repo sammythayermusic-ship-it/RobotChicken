@@ -119,11 +119,15 @@ export function loudness(d: Float32Array, sampleRate: number): number {
  * Non-finite samples become 0. Returns the gain applied.
  */
 export function normalize(d: Float32Array, sampleRate: number, peak = 0.89, target = DEFAULT_LOUDNESS): number {
-  const lv = measure(d, 1);
-  if (!lv.finite) for (let i = 0; i < d.length; i++) if (!Number.isFinite(d[i] as number)) d[i] = 0;
-  if (lv.peak <= 1e-6) return 1;
+  let top = 0;
+  for (let i = 0; i < d.length; i++) {
+    const v = d[i] as number;
+    if (!Number.isFinite(v)) d[i] = 0;
+    else if (Math.abs(v) > top) top = Math.abs(v);
+  }
+  if (top <= 1e-6) return 1;
   const loud = loudness(d, sampleRate);
-  const g = Math.min(peak / lv.peak, loud > 0 ? target / loud : Infinity);
+  const g = Math.min(peak / top, loud > 0 ? target / loud : Infinity);
   for (let i = 0; i < d.length; i++) d[i] = (d[i] as number) * g;
   return g;
 }

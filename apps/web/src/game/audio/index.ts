@@ -1,7 +1,7 @@
 import type { AudioSink } from "../fx/director";
 import { installDebug } from "../engine/debug";
 import { AudioEngine, type SoundSource } from "./engine";
-import { fileUrl, loadManifest } from "./manifest";
+import { browserDeps, loadSounds } from "./loader";
 import { SOUND_NAMES, type SoundName } from "./names";
 
 export type GameAudio = AudioSink & { setMuted(m: boolean): void; dispose(): void };
@@ -26,8 +26,6 @@ declare module "../engine/debug" {
     audio?: AudioDebug;
   }
 }
-
-const RENDER_CONCURRENCY = 3;
 
 /**
  * Creates the game's audio engine. Must be called from a user gesture (the
@@ -69,7 +67,7 @@ export async function createAudio(): Promise<GameAudio | null> {
     buffer: (n) => engine.buffer(n),
   });
 
-  void loadSounds(engine).catch((e: unknown) => console.warn("[cockfight] audio: sounds failed to load", e));
+  void loadSounds(engine, browserDeps(engine)).catch((e: unknown) => console.warn("[cockfight] audio: sounds failed to load", e));
 
   return {
     play: (name, opts) => engine.play(name, opts),
@@ -81,70 +79,4 @@ export async function createAudio(): Promise<GameAudio | null> {
       engine.dispose();
     },
   };
-}
-
-/**
- * Fills the engine: procedural recipes render in RENDER_ORDER (a few at a
- * time), while manifest-listed files are fetched and decoded alongside. A
- * decoded file always wins; a file that fails falls back to its recipe.
- */
-async function loadSounds(engine: AudioEngine): Promise<void> {
-  const t0 = performance.now();
-  const manifest = loadManifest();
-  const [{ RECIPES, RENDER_ORDER, FIRST_HITS }, { renderRecipe }] = await Promise.all([import("./recipes"), import("./offline")]);
-  const queue = RENDER_ORDER.slice();
-  const fromFile = new Set<SoundName>();
-  let renderMs = 0;
-
-  const markProgress = () => {
-    if (engine.firstHitsMs < 0 && FIRST_HITS.every((n) => engine.has(n))) engine.firstHitsMs = Math.round(performance.now() - t0);
-  };
-
-  const render = async (name: SoundName) => {
-    const t = performance.now();
-    try {
-      const buf = await renderRecipe(name, RECIPES[name]);
-      if (!engine.has(name)) engine.setBuffer(name, buf, "recipe");
-    } catch (e) {
-      console.warn(`[cockfight] audio: recipe ${name} failed to render`, e);
-    }
-    renderMs += performance.now() - t;
-    markProgress();
-  };
-
-  const worker = async () => {
-    for (let name = queue.shift(); name && !engine.isDisposed; name = queue.shift()) {
-      if (fromFile.has(name) || engine.has(name)) continue;
-      await render(name);
-    }
-  };
-
-  const files = manifest.then(async (entries) => {
-    const listed = Object.entries(entries) as [SoundName, string][];
-    for (const [name] of listed) fromFile.add(name);
-    await Promise.all(
-      listed.map(async ([name, file]) => {
-        try {
-          const res = await fetch(fileUrl(file));
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const buf = await engine.ctx.decodeAudioData(await res.arrayBuffer());
-          if (!engine.isDisposed) engine.setBuffer(name, buf, "file");
-          markProgress();
-        } catch (e) {
-          console.warn(`[cockfight] audio: ${file} failed (${String(e)}); using the procedural ${name}`);
-          fromFile.delete(name);
-          if (!engine.has(name) && !engine.isDisposed) await render(name);
-        }
-      }),
-    );
-  });
-
-  await Promise.all([...Array.from({ length: RENDER_CONCURRENCY }, worker), files]);
-  if (engine.isDisposed) return;
-  engine.readyMs = Math.round(performance.now() - t0);
-  const fileCount = SOUND_NAMES.filter((n) => engine.sourceOf(n) === "file").length;
-  console.info(
-    `[cockfight] audio: ${engine.ready}/${SOUND_NAMES.length} sounds ready in ${engine.readyMs} ms ` +
-      `(first hits ${engine.firstHitsMs} ms; ${engine.ready - fileCount} procedural, ${Math.round(renderMs)} ms of render work; ${fileCount} from files)`,
-  );
 }
