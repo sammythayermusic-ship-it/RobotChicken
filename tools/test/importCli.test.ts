@@ -1,16 +1,17 @@
 /**
  * The Blender-free parts of `pnpm assets:import`: argument parsing, the
  * Blender command line, the inputs refused before Blender runs, the exit codes,
- * and the UI preset staying in sync with EXPORT_KWARGS. The Blender round trips
- * are in heroImport.test.ts (local only).
+ * the staging and dry-run rules (through a stand-in Blender that copies the
+ * placeholder glb), and the UI preset staying in sync with EXPORT_KWARGS. The
+ * Blender round trips are in heroImport.test.ts (local only).
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { HITBOXES_JSON, PLACEHOLDER_GLB, fromRepo } from "../src/assets/gltf";
-import { importChicken } from "../src/assets/import";
+import { HERO_GLB, HITBOXES_JSON, PLACEHOLDER_GLB, SCRATCH_DIR, fromRepo, readHitboxes, type HitboxesFile } from "../src/assets/gltf";
+import { defaultImportOut, importChicken, setupProblems, stagingDir } from "../src/assets/import";
 import { blenderArgs, cfLines } from "../src/blender/run";
 import { parseArgs } from "../src/cli/main";
 import { repoPath } from "../src/root";
@@ -77,6 +78,127 @@ describe("importChicken refuses bad inputs before running Blender", () => {
     const r = await importChicken({ blend, out: join(tmp, "chicken.glb"), log: quiet });
     expect(r.problems).toEqual(["--out must be inside apps/web/public/ so the game can load it (hitboxes.json.source.file decides which glb loads)"]);
   });
+
+  it("a dry run (--hitboxes elsewhere) over the glb hitboxes.json names", () => {
+    const hitboxes = join(tmp, "dry.json");
+    const hero = fromRepo(HERO_GLB);
+    // After a real import hitboxes.json names chicken.glb: a dry run must not replace it under the game.
+    expect(setupProblems({ blend, out: hero }, hitboxes, hero)).toEqual([
+      `--out must not be ${HERO_GLB} in a dry run (--hitboxes ${hitboxes}): ${HITBOXES_JSON} names it, so the game loads it. ` +
+        `Leave --out off (the glb goes to ${SCRATCH_DIR}/hero.glb) or pick another file`,
+    ]);
+    // A real import may replace it (it re-bakes hitboxes.json with it), and a dry run may write any other glb.
+    expect(setupProblems({ blend, out: hero }, fromRepo(HITBOXES_JSON), hero)).toEqual([]);
+    expect(setupProblems({ blend, out: join(tmp, "other.glb") }, hitboxes, hero)).toEqual([]);
+  });
+});
+
+describe("assets:import defaults and staging", () => {
+  it("a dry run writes its glb to art/blender/out/<blend name>.glb unless --out says otherwise", () => {
+    expect(defaultImportOut("/art/hero.blend")).toBe(fromRepo(HERO_GLB));
+    expect(defaultImportOut("/art/hero.blend", fromRepo(HITBOXES_JSON))).toBe(fromRepo(HERO_GLB));
+    expect(defaultImportOut("/art/hero.blend", join(tmp, "dry.json"))).toBe(fromRepo(`${SCRATCH_DIR}/hero.glb`));
+  });
+
+  it("stages repo files under the gitignored scratch dir, other files next to their target", () => {
+    expect(stagingDir(fromRepo(HERO_GLB), 42)).toBe(fromRepo(`${SCRATCH_DIR}/.import-42`));
+    expect(stagingDir(fromRepo(HITBOXES_JSON), 42)).toBe(fromRepo(`${SCRATCH_DIR}/.import-42`));
+    expect(stagingDir(join(tmp, "x", "hero.glb"), 42)).toBe(join(tmp, "x", ".import-42"));
+  });
+});
+
+/**
+ * A stand-in for Blender: it copies the committed placeholder glb to the
+ * --out it is given (recording that path), prints the CF_REPORT line, and with
+ * `interrupt` first sends SIGINT to the process that ran it, as Ctrl-C would.
+ */
+function fakeBlender(dir: string, opts: { interrupt?: boolean } = {}): { path: string; outLog: string } {
+  const path = join(dir, opts.interrupt ? "blender-interrupt" : "blender");
+  const outLog = `${path}.out`;
+  const script = [
+    "#!/bin/sh",
+    'prev=""; out=""',
+    'for a in "$@"; do [ "$prev" = "--out" ] && out="$a"; prev="$a"; done',
+    `printf '%s' "$out" > '${outLog}'`,
+    `cp '${fromRepo(PLACEHOLDER_GLB)}' "$out"`,
+    opts.interrupt ? 'kill -INT "$PPID"' : "",
+    `echo 'CF_REPORT {"tris": 1, "joints": 16, "clips": 21, "bytes": 1024}'`,
+    "",
+  ].join("\n");
+  writeFileSync(path, script);
+  chmodSync(path, 0o755);
+  return { path, outLog };
+}
+
+/** Staging directories or Blender temp files left in `dir`. */
+const importLeftovers = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.startsWith(".import-") || f.endsWith(".tmp.glb")) : []);
+
+describe.skipIf(process.platform === "win32")("assets:import end to end with a stand-in Blender", () => {
+  const blend = join(tmp, "stand_in.blend");
+  writeFileSync(blend, "");
+  const committed = readHitboxes();
+
+  it("stages next to an out-of-repo target, moves the glb and the bake into place, and cleans up", async () => {
+    const outDir = join(tmp, "e2e");
+    mkdirSync(outDir, { recursive: true });
+    const blender = fakeBlender(tmp);
+    const out = join(outDir, "hero.glb");
+    const hitboxes = join(outDir, "hero.json");
+    const r = await importChicken({ blend, out, hitboxes, blender: blender.path, log: quiet });
+    expect(r.problems).toEqual([]);
+    expect(r.ok).toBe(true);
+    // Blender wrote into this run's staging directory, never over the target.
+    expect(readFileSync(blender.outLog, "utf8")).toBe(join(outDir, `.import-${process.pid}`, "hero.glb"));
+    expect(readFileSync(out).equals(readFileSync(fromRepo(PLACEHOLDER_GLB)))).toBe(true);
+    const baked = JSON.parse(readFileSync(hitboxes, "utf8")) as HitboxesFile;
+    expect(baked.source).toEqual({ file: out, sha256: committed.source.sha256 });
+    expect(baked.clips).toEqual(committed.clips);
+    expect(importLeftovers(outDir)).toEqual([]);
+  });
+
+  it("a dry run without --out writes art/blender/out/<blend name>.glb and leaves the real bake alone", async () => {
+    const before = readFileSync(fromRepo(HITBOXES_JSON), "utf8");
+    const name = `cf_dry_run_${process.pid}`;
+    const dryBlend = join(tmp, `${name}.blend`);
+    writeFileSync(dryBlend, "");
+    const hitboxes = join(tmp, `${name}.json`);
+    const out = fromRepo(`${SCRATCH_DIR}/${name}.glb`);
+    const blender = fakeBlender(tmp);
+    try {
+      const r = await importChicken({ blend: dryBlend, hitboxes, blender: blender.path, log: quiet });
+      expect(r.ok).toBe(true);
+      expect(readFileSync(blender.outLog, "utf8")).toBe(fromRepo(`${SCRATCH_DIR}/.import-${process.pid}/${name}.glb`));
+      expect(existsSync(out)).toBe(true);
+      expect((JSON.parse(readFileSync(hitboxes, "utf8")) as HitboxesFile).source.file).toBe(`${SCRATCH_DIR}/${name}.glb`);
+      expect(readFileSync(fromRepo(HITBOXES_JSON), "utf8")).toBe(before);
+      expect(importLeftovers(fromRepo(SCRATCH_DIR))).toEqual([]);
+    } finally {
+      rmSync(out, { force: true });
+    }
+  });
+
+  it("Ctrl-C during the import removes the staging and moves nothing into place", () => {
+    const outDir = join(tmp, "interrupted");
+    mkdirSync(outDir, { recursive: true });
+    const blender = fakeBlender(tmp, { interrupt: true });
+    const out = join(outDir, "hero.glb");
+    const hitboxes = join(outDir, "hero.json");
+    const tsx = repoPath("tools", "node_modules", ".bin", "tsx");
+    const res = spawnSync(tsx, ["src/cli/import.ts", "--blend", blend, "--out", out, "--hitboxes", hitboxes], {
+      cwd: repoPath("tools"),
+      encoding: "utf8",
+      env: { ...process.env, BLENDER: blender.path, INIT_CWD: repoPath() },
+    });
+    expect(res.status, `${res.stdout}\n${res.stderr}`).toBe(130);
+    expect(res.stdout).toContain("assets:import interrupted (SIGINT); nothing was moved into place");
+    // Blender did write the staged glb (then the signal came); it is gone with its staging directory.
+    const staged = readFileSync(blender.outLog, "utf8");
+    expect(dirname(dirname(staged))).toBe(outDir);
+    expect(basename(dirname(staged))).toMatch(/^\.import-\d+$/);
+    expect(existsSync(out)).toBe(false);
+    expect(existsSync(hitboxes)).toBe(false);
+    expect(importLeftovers(outDir)).toEqual([]);
+  });
 });
 
 describe("pnpm assets:import (the CLI)", () => {
@@ -88,6 +210,28 @@ describe("pnpm assets:import (the CLI)", () => {
     const r = run([]);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("usage: pnpm assets:import --blend <file.blend>");
+  });
+
+  it("a dry run's glb defaults to art/blender/out/<blend name>.glb", () => {
+    const r = run(["--blend", join(tmp, "nope.blend"), "--hitboxes", join(tmp, "dry.json")]);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain(`-> ${SCRATCH_DIR}/nope.glb`);
+  });
+
+  it("every root assets:* wrapper that takes paths forwards the user's directory as CF_CWD", () => {
+    const scripts = (JSON.parse(readFileSync(repoPath("package.json"), "utf8")) as { scripts: Record<string, string> }).scripts;
+    for (const name of ["assets:validate", "assets:bake", "assets:inspect", "assets:import"]) {
+      expect(scripts[name], name).toBe(`CF_CWD="$INIT_CWD" pnpm -s --filter @cockfight/tools run ${name}`);
+    }
+  });
+
+  const hasPnpm = spawnSync("pnpm", ["--version"]).status === 0;
+  it.skipIf(!hasPnpm)("the root wrapper resolves --blend against where the user ran it, not the repo root", () => {
+    // As in validate.test.ts: no ::group:: annotations from pnpm on GitHub Actions.
+    const env = { ...process.env, GITHUB_ACTIONS: "", CI: "" };
+    const r = spawnSync("pnpm", ["-s", "assets:import", "--blend", "nothere.blend"], { cwd: repoPath("docs"), encoding: "utf8", env });
+    expect(r.status, r.stderr).toBe(1);
+    expect(r.stdout).toContain(`--blend ${repoPath("docs", "nothere.blend")} does not exist`);
   });
 
   it("exits 3 with install instructions when Blender is missing, leaving hitboxes.json alone", () => {

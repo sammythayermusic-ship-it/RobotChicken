@@ -24,8 +24,11 @@ It runs three stages and stops at the first one that fails, saying exactly what 
    and that is what makes the game load it.
 
 The glb goes to `apps/web/public/models/chicken.glb` (`--out` picks another file under
-`apps/web/public/`; the placeholder's file is off limits). It is written only after it
-validates, so a failed import never leaves the game half-updated.
+`apps/web/public/`; the placeholder's file is off limits). Relative paths are relative to
+the directory you run the command from. The glb and the bake are staged in
+`art/blender/out/` (gitignored) and moved into place together only after all three stages
+pass, so a failed or interrupted (Ctrl-C) import never leaves the game half-updated or stray
+files in the repo.
 
 A hero chicken changes gameplay (its helpers are the hitboxes), so a successful import changes
 the rules hash. It prints the next steps:
@@ -40,9 +43,9 @@ Commit the glb, `hitboxes.json` and the re-blessed goldens together, and say why
 
 | Option | What it does |
 |---|---|
-| `--out <file.glb>` | where the glb goes (default `apps/web/public/models/chicken.glb`) |
+| `--out <file.glb>` | where the glb goes (default `apps/web/public/models/chicken.glb`, or `art/blender/out/<name>.glb` in a dry run) |
 | `--retime` | the file is not at 60 fps: scale every clip to 60 fps, keeping its real-time length, instead of failing |
-| `--hitboxes <file.json>` | a dry run: bake somewhere else, so the game keeps loading what it loads now |
+| `--hitboxes <file.json>` | a dry run: bake somewhere else, so the game keeps loading what it loads now. The glb goes to `art/blender/out/<name of the .blend>.glb` unless `--out` says otherwise, and it may never be the glb `hitboxes.json` names |
 
 Exit codes: 0 done, 1 a stage failed, 2 bad arguments, 3 Blender not found (it looks at
 `$BLENDER`, then `/Applications/Blender.app`, then `blender` on `PATH`).
