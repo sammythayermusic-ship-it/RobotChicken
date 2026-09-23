@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { WebGLRenderer } from "three";
 import { RULES, runReplay, type CpuLevel, type Replay } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import FightHud from "@/components/hud/FightHud";
@@ -18,6 +19,14 @@ const FightCanvas = dynamic(() => import("@/game/react/FightCanvas"), {
   ssr: false,
   loading: () => <div className="absolute inset-0 grid place-items-center font-display text-zinc-400">LOADING…</div>,
 });
+
+/**
+ * Builds the junkyard arena for a fight. Module scope on purpose: an inline
+ * arrow in PlayClient would share the render's closure scope, which also
+ * holds the `engine` state (the previous fight), so every engine would keep
+ * the one before it alive, canvas and WebGL context included.
+ */
+const buildJunkyard = (renderer: WebGLRenderer) => import("@/game/view/arena/Junkyard").then((m) => m.createJunkyard(renderer));
 
 export interface PlayParams {
   mode: FightMode | null;
@@ -155,7 +164,8 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   );
 
   const togglePause = useCallback(() => {
-    if (!engine || cold.matchWinner >= 0) return;
+    const c = hud.get();
+    if (!engine || c.matchWinner >= 0 || c.loading) return;
     if (engine.paused) {
       uiSound("ui_select");
       engine.resume();
@@ -163,20 +173,31 @@ export default function PlayClient({ params }: { params: PlayParams }) {
       uiSound("pause");
       engine.pause();
     }
-  }, [engine, cold.matchWinner, uiSound]);
+  }, [engine, hud, uiSound]);
+
+  /**
+   * The next fight (REMATCH, RESTART, R). One per press: until the new fight
+   * has loaded, more presses (a held R's key repeat, a double click) do nothing.
+   */
+  const rematch = useCallback(() => {
+    if (hud.get().loading) return;
+    hud.set({ loading: true });
+    setRound((r) => r + 1);
+  }, [hud]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!cfg) return;
       if (e.code === "Escape" || e.code === "KeyP") {
         e.preventDefault();
-        togglePause();
+        if (!e.repeat) togglePause();
       }
-      if (e.code === "KeyR" && cold.matchWinner >= 0) setRound((r) => r + 1);
+      // Read the store, not a render's snapshot: it is current even between a press and the re-render.
+      if (e.code === "KeyR" && !e.repeat && hud.get().matchWinner >= 0) rematch();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cfg, togglePause, cold.matchWinner]);
+  }, [cfg, togglePause, rematch, hud]);
 
   if (!cfg) {
     return (
@@ -200,12 +221,11 @@ export default function PlayClient({ params }: { params: PlayParams }) {
           matchId,
           hud,
           quality,
+          shake,
           manual: params.manual,
           debug: params.debug,
           bench: params.bench,
-          arena: params.arena
-            ? (renderer) => import("@/game/view/arena/Junkyard").then((m) => m.createJunkyard(renderer))
-            : undefined,
+          arena: params.arena ? buildJunkyard : undefined,
         }}
       />
       <FightHud store={hud} />
@@ -229,7 +249,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
               className="rounded border border-zinc-600 py-2 font-display"
               onClick={() => {
                 uiSound("ui_select");
-                setRound((r) => r + 1);
+                rematch();
               }}
             >
               RESTART
@@ -276,7 +296,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 px-6 py-3 font-display text-xl tracking-wider shadow-[0_4px_0_#7c2d12]"
             onClick={() => {
               uiSound("ui_select");
-              setRound((r) => r + 1);
+              rematch();
             }}
           >
             REMATCH (R)

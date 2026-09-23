@@ -19,6 +19,18 @@ export async function openFight(page: Page, query: string): Promise<void> {
   });
 }
 
+/** Waits until the fight on screen is `matchId` (`<seed>-<n>`) and running: model loaded, shaders compiled. */
+export async function waitForMatch(page: Page, matchId: string): Promise<void> {
+  await page.waitForFunction(
+    (id) => {
+      const f = (window as unknown as { __cockfight?: { fight?: { ready(): boolean; matchId(): string } } }).__cockfight?.fight;
+      return f?.matchId() === id && f.ready();
+    },
+    matchId,
+    { timeout: 60_000 },
+  );
+}
+
 export function snap(page: Page): Promise<FightSnapshot> {
   return page.evaluate(() => {
     const s = (window as unknown as { __cockfight: { fight: { state(): FightSnapshot & { f: FightSnapshot["f"] } } } }).__cockfight.fight.state();
