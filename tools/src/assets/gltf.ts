@@ -92,11 +92,20 @@ export function toRepo(abs: string): string {
 }
 
 /**
- * Resolve a path typed on the command line. pnpm runs package scripts from
- * tools/, but sets INIT_CWD to where the user actually ran the command.
+ * The directory the user ran the command from. pnpm runs package scripts in
+ * tools/ and sets INIT_CWD to where pnpm was invoked, which is the user's
+ * directory for `pnpm --filter @cockfight/tools run ...`. The root wrappers
+ * (`pnpm assets:validate` etc.) start a second pnpm from the repo root, which
+ * resets INIT_CWD to the root, so they pass the user's directory on as CF_CWD.
+ * Empty values are skipped (a wrapper run where INIT_CWD was unset).
  */
-export function userPath(p: string): string {
-  return resolve(process.env.INIT_CWD ?? process.cwd(), p);
+export function userCwd(env: NodeJS.ProcessEnv = process.env): string {
+  return env.CF_CWD || env.INIT_CWD || process.cwd();
+}
+
+/** Resolve a path typed on the command line against the user's directory (see userCwd). */
+export function userPath(p: string, env: NodeJS.ProcessEnv = process.env): string {
+  return resolve(userCwd(env), p);
 }
 
 export function readHitboxes(path = fromRepo(HITBOXES_JSON)): HitboxesFile {

@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Document } from "@gltf-transform/core";
-import { CONTRACT, PLACEHOLDER_GLB, fromRepo, readGlb, readHitboxes } from "../src/assets/gltf";
+import { CONTRACT, PLACEHOLDER_GLB, fromRepo, readGlb, readHitboxes, userCwd, userPath } from "../src/assets/gltf";
+import { repoPath } from "../src/root";
 import { clipNameHint, levenshtein, validateDocument, validateFile, validateGlb, type Issue } from "../src/assets/validate";
 
 const glbPath = fromRepo(PLACEHOLDER_GLB);
@@ -145,5 +147,22 @@ describe("clip name hints", () => {
   it("does not hint unrelated names", () => {
     expect(clipNameHint("idle", ["Action", "entrance_2"])).toBeUndefined();
     expect(clipNameHint("walk_fwd", ["walk_back"])).toBeUndefined();
+  });
+});
+
+describe("command-line paths", () => {
+  it("resolve against CF_CWD, then INIT_CWD, then the process cwd, skipping empty values", () => {
+    expect(userCwd({ CF_CWD: "/user/dir", INIT_CWD: "/repo" })).toBe("/user/dir");
+    expect(userCwd({ CF_CWD: "", INIT_CWD: "/repo" })).toBe("/repo");
+    expect(userCwd({ INIT_CWD: "" })).toBe(process.cwd());
+    expect(userPath("../a.glb", { CF_CWD: "/repo/docs", INIT_CWD: "/repo" })).toBe("/repo/a.glb");
+  });
+
+  const hasPnpm = spawnSync("pnpm", ["--version"]).status === 0;
+  it.skipIf(!hasPnpm)("the root wrapper resolves a path relative to where the user ran it, not the repo root", () => {
+    // The wrapper's nested pnpm resets INIT_CWD to the repo root; the wrapper forwards the user's directory as CF_CWD.
+    const run = spawnSync("pnpm", ["-s", "assets:validate", `../${PLACEHOLDER_GLB}`, "--json"], { cwd: repoPath("docs"), encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ file: PLACEHOLDER_GLB, ok: true });
   });
 });
