@@ -10,7 +10,7 @@ every non-obvious choice is in `docs/decisions.md`. Phases stop for review; one 
 - `pnpm verify` = lint + typecheck + test + assets:validate + assets:bake --check + build.
 - `pnpm replay:golden [--bless]` — golden replay hashes (CI diffs them across x64 Linux and arm64 macOS).
 - `pnpm assets:placeholder` rebuilds the placeholder chicken with headless Blender, then validates and bakes hitboxes.
-- `pnpm test:e2e` — Playwright against a production build on :3100.
+- `pnpm test:e2e` — Playwright against a production build on :3130 (`E2E_PORT` to change; `PLAYWRIGHT_BASE_URL` targets an already-running server and skips the build).
 
 ## Layout
 - `packages/sim` — THE game. Pure deterministic integer simulation shared by server (authoritative) and client (prediction). `step(prev, b1, b2, R)` is pure. Data in `data/{moves,hitboxes,chicken.contract}.json`.
