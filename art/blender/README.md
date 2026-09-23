@@ -54,6 +54,11 @@ hitboxes.json, re-bless the golden replays (`rulesHash` covers the baked tables)
   a `cf_phases` custom property equal to the contract's phases.
 - **No root motion.** `root` is a Deform bone at the origin and never moves;
   the sim owns position. Move `body` instead.
+- **Centered on the origin.** The sim places the fighter at the model origin,
+  so model the chicken around it: `root`'s head sits exactly at the origin, and
+  at idle frame 0 `hurt_body` is within 0.02 of it in x and z (both are
+  errors). The export and `assets:validate` check the root; `assets:validate`
+  checks the body and warns if the mesh is off-center left-right.
 - **One skinned mesh.** Everything the chicken draws is one mesh with an
   Armature modifier (at most 15k triangles). An extra mesh fails the export and
   `assets:validate`, even one parented to a bone: join it in (Ctrl+J) and

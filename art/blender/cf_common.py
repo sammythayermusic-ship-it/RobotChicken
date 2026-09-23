@@ -159,6 +159,13 @@ def check_scene(contract):
         raise ExportError(f"'{rig_name}' needs a top-level bone named '{contract['rig']['rootBone']}'")
     if not root.use_deform:
         raise ExportError(f"bone '{root.name}' must be marked Deform (export_def_bones drops non-deform bones)")
+    # Armature space is world space here (Rig is identity). The sim places the fighter by the origin.
+    if root.head_local.length > 1e-4:
+        x, y, z = root.head_local
+        raise ExportError(
+            f"bone '{root.name}' must sit at the origin, but its head is at ({x:.3f}, {y:.3f}, {z:.3f}); "
+            "move the whole chicken (mesh and rig) there, then apply transforms"
+        )
 
     meshes = [o for o in rig.children_recursive if o.type == "MESH"]
     skinned = [o for o in meshes if any(m.type == "ARMATURE" and m.object == rig for m in o.modifiers)]

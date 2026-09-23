@@ -55,6 +55,8 @@ export const ALLOWED_EXTENSIONS = [
 const EPS = 1e-4;
 const ROOT_MOTION_EPS = 1e-3;
 const LOOP_ANGLE_DEG = 2;
+/** How far (units) the body may sit off the origin at idle frame 0; 0.02 = 20 mu. */
+const CENTER_EPS = 0.02;
 /** TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN. */
 const TRIANGLE_MODES = [4, 5, 6];
 
@@ -177,6 +179,9 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
   if (!rigNode) err("rig", `expected one node named "${contract.rig.armature}" (the armature), found ${rigNodes.length}`);
   else if (!isIdentityTRS(rigNode)) err("rig", `"${contract.rig.armature}" must have identity transforms (Ctrl+A > All Transforms in Blender)`);
 
+  const rig = buildRig(doc);
+  const restWorld = poseWorld(rig, [], 0);
+
   // Meshes. The chicken is one skinned mesh (the spec's budget). Every mesh node
   // is drawn, so all of them count toward the triangle budget and the material
   // slots: an extra mesh cannot slip past either.
@@ -222,7 +227,9 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
       hi = hi.map((v, i) => Math.max(v, pos.getMax([0, 0, 0])[i] as number));
     }
     const width = (hi[0] as number) - (lo[0] as number);
+    const midX = ((hi[0] as number) + (lo[0] as number)) / 2;
     if (!(width >= 0.5 && width <= 2)) warn("bounds", `the chicken is ${width.toFixed(2)} units wide; expected 0.5..2 (wrong units or scale?)`);
+    if (Math.abs(midX) > 0.05) warn("bounds", `the chicken is centered at x=${midX.toFixed(3)}; it should be centered left-right on x=0`);
     if (Math.abs(lo[1] as number) > 0.05) warn("bounds", `the lowest vertex is at y=${(lo[1] as number).toFixed(3)}; the feet should rest on y=0`);
   }
   if (!rootJoint || !joints.includes(rootJoint)) {
@@ -233,11 +240,14 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
     for (const j of joints) {
       if (j !== rootJoint && !ancestors(j).includes(rootJoint)) err("root", `joint "${j.getName()}" is not under "${contract.rig.rootBone}"`);
     }
+    // The sim places the fighter by the model origin; a rotated rest is harmless (children are posed through it).
+    const at = transformPoint(restWorld[rig.index.get(rootJoint)!]!, [0, 0, 0]);
+    if (!near(at, [0, 0, 0])) {
+      err("root", `"${contract.rig.rootBone}" rests at (${at.map((v) => v.toFixed(3)).join(", ")}); it must sit at the origin (move the whole chicken there and apply transforms)`);
+    }
   }
 
   // Hitbox helpers.
-  const rig = buildRig(doc);
-  const restWorld = poseWorld(rig, [], 0);
   const helperIdx: Record<string, number> = {};
   for (const [name, spec] of Object.entries(contract.helpers)) {
     const found = byName(name);
@@ -306,13 +316,20 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
     checkClip(anim, clip, rig, { contract, rigNode, rootJoint, jointSet, helperNodes, helperIdx }, err, warn);
   }
 
-  // Facing: at idle sample 0 the beak must be in front of the body.
+  // Centering and facing at idle sample 0: the body sits over the origin (where
+  // the sim puts the fighter, even when root is there too) and the beak is in front of it.
   const idle = byClip.get("idle");
   const hurtName = Object.keys(contract.helpers).find((k) => contract.helpers[k]?.shape === "capsule");
   const hitNames = Object.keys(contract.helpers).filter((k) => contract.helpers[k]?.shape === "sphere");
   if (idle && hurtName && helperIdx[hurtName] !== undefined) {
     const w = poseWorld(rig, tracksOf(rig, idle), 0);
-    const bodyZ = transformPoint(w[helperIdx[hurtName]]!, [0, 0, 0])[2];
+    const [bodyX, , bodyZ] = transformPoint(w[helperIdx[hurtName]]!, [0, 0, 0]);
+    if (Math.abs(bodyX) > CENTER_EPS || Math.abs(bodyZ) > CENTER_EPS) {
+      err(
+        "center",
+        `at idle frame 0 "${hurtName}" is centered at x=${bodyX.toFixed(3)} z=${bodyZ.toFixed(3)}; the chicken's body must sit over the origin (within ${CENTER_EPS})`,
+      );
+    }
     for (const h of hitNames) {
       if (helperIdx[h] === undefined) continue;
       const z = transformPoint(w[helperIdx[h]]!, [0, 0, 0])[2];

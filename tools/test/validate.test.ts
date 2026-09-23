@@ -155,6 +155,45 @@ describe("mutated copies fail", () => {
     expect(errs.find((e) => e.code === "mesh")!.message).toContain('mesh node "crest" is not skinned (it follows bone "head" rigidly)');
   });
 
+  it("a chicken modeled off the origin (root and its keys moved forward) is an error", async () => {
+    const doc = await readGlb(bytes);
+    const root = node(doc, "root");
+    root.setTranslation([0, 0, 0.3]);
+    // Clips may share one output accessor: shift each accessor once.
+    const outputs = new Set(
+      doc
+        .getRoot()
+        .listAnimations()
+        .flatMap((a) => a.listChannels())
+        .filter((c) => c.getTargetNode() === root && c.getTargetPath() === "translation")
+        .map((c) => c.getSampler()!.getOutput()!),
+    );
+    expect(outputs.size).toBeGreaterThan(0);
+    for (const out of outputs) out.setArray(Float32Array.from(out.getArray() as Float32Array, (v, i) => (i % 3 === 2 ? v + 0.3 : v)));
+    const errs = errorsOf(doc);
+    expect(errs.map((e) => e.code).sort()).toEqual(["center", "root"]);
+    expect(errs.find((e) => e.code === "root")!.message).toContain('"root" rests at (0.000, 0.000, 0.300); it must sit at the origin');
+  });
+
+  it("a body off-center over a root at the origin is an error", async () => {
+    const doc = await readGlb(bytes);
+    const hurt = node(doc, "hurt_body");
+    const [x, y, z] = hurt.getTranslation();
+    hurt.setTranslation([x, y, z + 0.1]);
+    const errs = errorsOf(doc);
+    expect(errs.map((e) => e.code)).toEqual(["center"]);
+    expect(errs[0]!.message).toContain('at idle frame 0 "hurt_body" is centered at x=0.000 z=0.100');
+  });
+
+  it("a mesh off-center left-right is a warning", async () => {
+    const doc = await readGlb(bytes);
+    const positions = new Set(doc.getRoot().listMeshes().flatMap((m) => m.listPrimitives().map((p) => p.getAttribute("POSITION")!)));
+    for (const pos of positions) pos.setArray(Float32Array.from(pos.getArray() as Float32Array, (v, i) => (i % 3 === 0 ? v + 0.1 : v)));
+    const r = validateDocument(doc);
+    expect(errors(r.issues)).toEqual([]);
+    expect(r.issues.map((i) => i.message)).toEqual(["the chicken is centered at x=0.100; it should be centered left-right on x=0"]);
+  });
+
   it("a stale hitboxes.json sha256 is an error", async () => {
     const hitboxes = { ...readHitboxes(), source: { file: PLACEHOLDER_GLB, sha256: "0".repeat(64) } };
     const r = await validateGlb(bytes, { file: PLACEHOLDER_GLB, hitboxes });
