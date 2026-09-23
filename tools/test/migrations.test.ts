@@ -31,7 +31,9 @@ const TABLES = [
   "players",
   "pool_snapshots",
 ] as const;
-const VIEWS = ["leaderboard_v", "pool_v"] as const;
+const VIEWS = ["leaderboard_v", "match_replay_v", "pool_v"] as const;
+/** Columns no relation readable by the web keys may ever have. input_log is public on purpose (match_replay_v). */
+const PRIVATE_COLUMNS = ["ip_hash", "fingerprint", "flags", "flag", "username_sig", "details"] as const;
 const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN"] as const;
 
 // Real 32-byte addresses (system program ids), so they are valid base58 too.
@@ -298,7 +300,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   }
 
-  it("creates exactly the 9 tables and 2 views, owned by postgres", async () => {
+  it("creates exactly the 9 tables and 3 views, owned by postgres", async () => {
     const rels = await rows(
       db,
       `select c.relname, c.relkind, pg_get_userbyid(c.relowner) as owner from pg_class c
@@ -309,6 +311,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       [
         ...TABLES.map((relname) => ({ relname, relkind: "r", owner: "postgres" })),
         { relname: "leaderboard_v", relkind: "m", owner: "postgres" },
+        { relname: "match_replay_v", relkind: "v", owner: "postgres" },
         { relname: "pool_v", relkind: "v", owner: "postgres" },
       ].sort((a, b) => a.relname.localeCompare(b.relname)),
     );
@@ -332,6 +335,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, at ${ts}!`,
       fee_swaps: `swap_sig sol_signature!, fee_claim_id uuid!, lamports bigint!, at ${ts}!`,
       leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint`,
+      match_replay_v: `id uuid, p1 sol_address, p2 sol_address, p1_name text, p2_name text, winner sol_address, reason text, rounds jsonb, input_log bytea, result_hash text, started_at ${ts}, ended_at ${ts}`,
       matches: `id uuid!, p1 sol_address!, p2 sol_address!, region text!, started_at ${ts}!, ended_at ${ts}, winner sol_address, reason text, rounds jsonb!, input_log bytea, result_hash text, net_quality_p1 real, net_quality_p2 real, payout_lamports bigint!, flag text`,
       payouts: `id uuid!, kind text!, idem_key text!, match_id uuid, to_address sol_address!, lamports bigint!, status text!, tx_sig sol_signature, attempts integer!, next_attempt_at ${ts}, last_error text, created_at ${ts}!, paid_at ${ts}`,
       players: `address sol_address!, username text, username_sig sol_signature, elo integer!, tier text, first_seen ${ts}!, last_seen ${ts}!, flags jsonb!`,
@@ -363,6 +367,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       players: { anon: [], authenticated: [], service_role: readWrite },
       pool_snapshots: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
       leaderboard_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT", "MAINTAIN"] },
+      match_replay_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
       pool_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
     };
     const actual: Record<string, Record<string, string[]>> = {};
@@ -402,9 +407,10 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   });
 
-  it("lets anon and authenticated read both views, which expose no private columns", async () => {
+  it("lets anon and authenticated read the public views, which expose no private columns", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       expect(await as(db, role, () => rows(db, "select * from public.leaderboard_v"))).toEqual([]);
+      expect(await as(db, role, () => rows(db, "select * from public.match_replay_v"))).toEqual([]);
       const pool = await as(db, role, () => rows(db, "select * from public.pool_v"));
       expect(pool).toHaveLength(1);
       expect(pool[0]).toMatchObject({
@@ -416,18 +422,70 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         player_share_lamports_24h: 0,
       });
     }
-    const cols = await rows<{ c: string }>(
-      db,
-      `select attname as c from pg_attribute
-       where attrelid in ('public.leaderboard_v'::regclass, 'public.pool_v'::regclass) and attnum > 0`,
-    );
-    const exposed = cols.map((r) => r.c);
-    for (const secret of ["ip_hash", "fingerprint", "flags", "username_sig", "input_log", "details"]) {
-      expect(exposed).not.toContain(secret);
+    // Every relation the web keys can read, whatever a later migration adds:
+    // exactly the public views, none of them with a private column.
+    for (const role of ["anon", "authenticated"]) {
+      const readable = await rows<{ rel: string; cols: string[] }>(
+        db,
+        `select c.relname as rel, array_agg(a.attname::text order by a.attnum) as cols
+         from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+         where c.relnamespace = 'public'::regnamespace and has_table_privilege($1, c.oid, 'SELECT')
+         group by c.relname order by c.relname`,
+        [role],
+      );
+      expect(readable.map((r) => r.rel), role).toEqual([...VIEWS]);
+      for (const r of readable) {
+        for (const secret of PRIVATE_COLUMNS) expect(r.cols, `${role} ${r.rel}`).not.toContain(secret);
+      }
     }
-    // pool_v reads with its owner's rights on purpose (not security_invoker).
-    expect(await one(db, "select reloptions from pg_class where oid = 'public.pool_v'::regclass")).toEqual({
-      reloptions: ["security_barrier=true"],
+    // The plain views read with their owner's rights on purpose (not security_invoker).
+    for (const v of ["pool_v", "match_replay_v"]) {
+      expect(await one(db, "select reloptions from pg_class where oid = $1::regclass", [`public.${v}`]), v).toEqual({
+        reloptions: ["security_barrier=true"],
+      });
+    }
+  });
+
+  it("serves finished matches to anon for replays, input log included", async () => {
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN, CHICK);
+      await c.query("update public.players set username = 'Rooster', username_sig = $1 where address = $2", [sig("4"), ROOSTER]);
+      const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN, reason: "ringout", rounds: [{ winner: 1 }, { winner: 1 }] });
+      const drawn = await addMatch(c, { p1: HEN, p2: CHICK, winner: null, reason: "draw", rounds: [{}, {}, {}, {}, {}] });
+      const live = await addMatch(c, { p1: ROOSTER, p2: CHICK, endedAgo: null });
+      await c.query("update public.matches set flag = 'lag_switch', net_quality_p1 = 0.5 where id = $1", [won]);
+      await c.query("insert into public.abuse_events (address, fingerprint, ip_hash, kind, match_id) values ($1, 'fp', 'ih', 'lag_switch', $2)", [HEN, won]);
+
+      const replay = await as(c, "anon", () =>
+        one<Row & { input_log: Uint8Array }>(c, "select * from public.match_replay_v where id = $1", [won]),
+      );
+      expect(replay).toMatchObject({
+        id: won,
+        p1: ROOSTER,
+        p2: HEN,
+        p1_name: "Rooster",
+        p2_name: `anon-${HEN.slice(-4)}`,
+        winner: HEN,
+        reason: "ringout",
+        rounds: [{ winner: 1 }, { winner: 1 }],
+        result_hash: "ab".repeat(32),
+      });
+      expect(Array.from(replay.input_log)).toEqual([1, 2, 3]);
+      expect(Object.keys(replay)).not.toContain("flag");
+      // Draws are replayable too; a match still in progress is not listed.
+      const listed = await as(c, "anon", () => rows<{ id: string }>(c, "select id from public.match_replay_v"));
+      expect(listed.map((r) => r.id).sort()).toEqual([won, drawn].sort());
+      expect(listed.map((r) => r.id)).not.toContain(live);
+      // A lookup by id is pushed through the security barrier into an index condition.
+      const plan = await as(c, "anon", async () => {
+        await c.exec("set enable_seqscan = off");
+        try {
+          return (await rows<{ "QUERY PLAN": string }>(c, "explain select * from public.match_replay_v where id = $1", [won])).map((r) => r["QUERY PLAN"]).join("\n");
+        } finally {
+          await c.exec("reset enable_seqscan");
+        }
+      });
+      expect(plan).toMatch(/Index Scan using \w+ on matches m\b.*\n\s+Index Cond: \(id = /);
     });
   });
 

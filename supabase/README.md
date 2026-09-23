@@ -51,7 +51,8 @@ Requirements:
   - `balance_checks` and `pool_snapshots` also allow DELETE, for retention;
   - TRUNCATE is never granted.
 - **Reads for the web app:** `anon` and `authenticated` can SELECT
-  `leaderboard_v` and `pool_v`, and nothing else.
+  `leaderboard_v`, `pool_v` and `match_replay_v`, and nothing else. A test
+  lists every relation they can read and fails on anything else.
 - **RLS:** enabled on every table, with no policies. Even if a table grant
   leaked to `anon`, it would see no rows.
 - **Why the grants are explicit.** Projects created before 2026-05-30
@@ -74,8 +75,10 @@ Requirements:
 2. `enable row level security` on every new table.
 3. Grant `service_role` only what it needs, if the defaults are too broad.
 4. A new public view must never expose `ip_hash`, `fingerprint`, `flags`,
-   `username_sig`, `input_log` or `details`. Decide whether it is an
-   owner-rights or an invoker view (see `pool_v` below).
+   `flag`, `username_sig` or `details` (the test's `PRIVATE_COLUMNS`), and must
+   be added to the test's `VIEWS`. `input_log` is public on purpose (see
+   `match_replay_v`). Decide whether it is an owner-rights or an invoker view
+   (see `pool_v` below).
 5. Nothing Postgres 18 only (`uuidv7()`, virtual generated columns, …): PGlite
    runs 18, Supabase runs 17.
 6. `pnpm vitest run --project tools migrations` must pass.
@@ -182,11 +185,31 @@ restarts on the first refresh after 00:00 UTC.
 **`pool_v`** (a plain view, always exactly one row). It holds the latest
 `pool_snapshots` row (all null until the worker writes one) and trailing-24h
 totals from `fee_claims` (with a claim transaction), their `fee_swaps`, and
-paid `payouts`. The 24 h window is by claim time, like B₂₄ₕ. It runs with its owner's rights
-(`security_invoker` off) on purpose. `anon` has no grant on the base tables, and
-RLS would hide their rows anyway, so an invoker view could not work. The view is
-safe because every column is a public aggregate. The front page polls it:
-Realtime cannot push changes from RLS-protected tables to `anon`.
+paid `payouts`. The 24 h window is by claim time, like B₂₄ₕ. It runs with
+its owner's rights (`security_invoker` off) on purpose. `anon` has no grant on
+the base tables, and RLS would hide their rows anyway, so an invoker view
+could not work. The view is safe because every column is a public aggregate.
+The front page polls it: Realtime cannot push changes from RLS-protected
+tables to `anon`.
+
+**`match_replay_v`** (a plain view, one row per finished match). The data
+behind the public replay page `/m/[id]`: `id`, `p1`, `p2`, `p1_name` and
+`p2_name` (the username or `anon-XXXX`, as on the leaderboard), `winner`,
+`reason`, `rounds`, `input_log`, `result_hash`, `started_at`, `ended_at`.
+Matches still in progress are left out, and so are `region`, net quality,
+`payout_lamports` and the abuse `flag`. Like `pool_v` it runs with its owner's
+rights and has `security_barrier`; a lookup by `id` still uses the primary
+key (a test checks the plan). Fetch one match by `id`; select a list without
+`input_log`, which can be up to 1 MiB per row.
+
+*Decision: replays are served from this view.* The spec requires a public
+replay page for any match ("deterministic playback from the input log") and
+also says the web app reads public views only, with the service-role key
+kept to apps/game and apps/worker. The input log is two arrays of `{t, b}`
+(tick, buttons) and holds nothing private, so it is exposed here rather than
+through an HTTP endpoint on apps/game or a Storage bucket. The rule for public
+views is therefore about `ip_hash`, `fingerprint`, `flags`, `flag`,
+`username_sig` and `details`, never about `input_log`.
 
 ## Expected Supabase advisor findings
 
@@ -195,11 +218,11 @@ These are intentional; do not "fix" them.
 | Lint | Level | Object | Why it is fine |
 |---|---|---|---|
 | `rls_enabled_no_policy` | Info | all 9 tables | Deny-by-default for the web keys is the design. `service_role` bypasses RLS. |
-| `security_definer_view` | Error | `pool_v` | It has to read tables `anon` cannot. It exposes only aggregates, and it has `security_barrier`. |
+| `security_definer_view` | Error | `pool_v`, `match_replay_v` | They have to read tables `anon` cannot. `pool_v` exposes only aggregates, `match_replay_v` only public match data, and both have `security_barrier`. |
 | `materialized_view_in_api` | Warn | `leaderboard_v` | The leaderboard is public by design and has no private columns. |
 | `unused_index` | Info | several | Until real traffic arrives. |
 
-If the `security_definer_view` error has to go, the alternative is an invoker
+If the `security_definer_view` errors have to go, the alternative is an invoker
 view over a `security definer` function in an unexposed schema, with a pinned
 `search_path` and EXECUTE granted only to `anon`/`authenticated`.
 
@@ -226,10 +249,12 @@ The harness recreates what the migrations depend on:
 - `anon`, `authenticated` and `service_role` have Supabase's attributes.
 - The grant mode is either `legacy` (auto-grants) or `strict` (none).
 
-The schema tests run in both modes: RLS, the privilege matrix, denied access, both
-views as `anon`, service-role writes, draws, payout idempotency, every check
-constraint, leaderboard aggregates after a concurrent refresh, FK indexes, and
-the cron guard.
+The schema tests run in both modes: RLS, the privilege matrix, denied access,
+every relation `anon` can read and its columns, the public views as `anon`
+(replays included), service-role writes, draws and every match reason, payout
+idempotency (including a daily retry that re-ranks), fee swaps, every check
+constraint, leaderboard aggregates after a concurrent refresh and a refresh
+that rewrites nothing, FK indexes, and the cron guard.
 
 Gaps, each checked some other way where possible:
 - **Postgres version.** PGlite is 18 and Supabase is 17. A test scans the SQL

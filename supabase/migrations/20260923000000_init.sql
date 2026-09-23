@@ -1,8 +1,8 @@
 -- COCKFIGHT schema v1: the spec's data model (tables, indexes, views).
 --
 -- Access model. apps/game and apps/worker write everything with the service
--- role; the web app's publishable ("anon") key reads two public views and
--- nothing else. RLS is enabled on every table with no policies, so even a
+-- role; the web app's publishable ("anon") key reads the three public views
+-- (leaderboard_v, pool_v, match_replay_v) and nothing else. RLS is enabled on every table with no policies, so even a
 -- leaked table grant returns no rows to anon/authenticated. Grants are spelled
 -- out because projects created after 2026-05-30 no longer auto-grant the API
 -- roles, while older projects auto-grant ALL: the end state here is the same
@@ -259,7 +259,8 @@ alter table public.pool_snapshots enable row level security;
 alter table public.abuse_events   enable row level security;
 
 -- Public views ----------------------------------------------------------------
--- Neither view may ever expose ip_hash, fingerprint, flags, username_sig or input_log.
+-- No public view may ever expose ip_hash, fingerprint, flags, flag,
+-- username_sig or details. input_log is public on purpose (match_replay_v).
 
 -- Per-address standings, refreshed every minute (see 20260923000100_cron.sql).
 -- Windows: _today is the current UTC day (the daily leaderboard), _7d the
@@ -377,6 +378,34 @@ left join lateral (
 comment on view public.pool_v is
   'Public pool numbers for the front page: latest snapshot plus trailing-24h fee and payout totals.';
 
+-- Finished matches for the public replay page (/m/[id]). The spec plays any
+-- match back client-side from its input log, and the web app reads public
+-- views only, so input_log is public: two arrays of {t, b} (tick, buttons),
+-- nothing private. Unfinished matches are left out, and so are region, net
+-- quality, payout and the abuse flag. Owner's rights and security_barrier,
+-- like pool_v (anon has no grant on matches). Fetch one match by id; list
+-- matches without selecting input_log (up to 1 MiB each).
+create view public.match_replay_v with (security_barrier = true) as
+select
+  m.id,
+  m.p1,
+  m.p2,
+  coalesce(a.username, 'anon-' || right(m.p1, 4)) as p1_name,
+  coalesce(b.username, 'anon-' || right(m.p2, 4)) as p2_name,
+  m.winner,
+  m.reason,
+  m.rounds,
+  m.input_log,
+  m.result_hash,
+  m.started_at,
+  m.ended_at
+from public.matches m
+join public.players a on a.address = m.p1
+join public.players b on b.address = m.p2
+where m.ended_at is not null;
+comment on view public.match_replay_v is
+  'Public replay data for every finished match: players, result and the input log.';
+
 -- Privileges ------------------------------------------------------------------
 -- Start every object from zero (legacy projects auto-granted ALL to the API
 -- roles), then grant exactly what each caller needs. TRUNCATE is never granted.
@@ -384,7 +413,7 @@ comment on view public.pool_v is
 revoke all on table
   public.players, public.balance_checks, public.matches, public.payouts,
   public.daily_rewards, public.fee_claims, public.fee_swaps, public.pool_snapshots,
-  public.abuse_events, public.leaderboard_v, public.pool_v
+  public.abuse_events, public.leaderboard_v, public.pool_v, public.match_replay_v
 from anon, authenticated, service_role;
 
 -- service_role: the game server and the worker. Money and audit rows are
@@ -399,13 +428,13 @@ grant select, insert, update         on table public.fee_claims     to service_r
 grant select, insert                 on table public.fee_swaps      to service_role;
 grant select, insert, update, delete on table public.pool_snapshots to service_role;
 grant select, insert, update         on table public.abuse_events   to service_role;
-grant select on table public.leaderboard_v, public.pool_v to service_role;
+grant select on table public.leaderboard_v, public.pool_v, public.match_replay_v to service_role;
 -- MAINTAIN (Postgres 17+) lets the worker refresh the leaderboard where
 -- pg_cron is unavailable, or right before it reads it.
 grant maintain on table public.leaderboard_v to service_role;
 
--- The web app's keys: the two public views, read-only.
-grant select on table public.leaderboard_v, public.pool_v to anon, authenticated;
+-- The web app's keys: the three public views, read-only.
+grant select on table public.leaderboard_v, public.pool_v, public.match_replay_v to anon, authenticated;
 
 -- Future tables and sequences created by postgres (migrations, the SQL
 -- editor) start the same way: service_role may read and write, the web keys
