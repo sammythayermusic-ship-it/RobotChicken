@@ -46,10 +46,13 @@ test.describe("local fight", () => {
     const problems = await watchProblems(page);
     await openFight(page, "mode=demo&difficulty=hard&manual=1&debug=1&seed=e2e-cpu");
     expect(await fightCall<number>(page, "clips")).toBe(21);
+    // Rendering is slow under CI's software GL: step 60 ticks per rendered frame
+    // only until the first round ends (for its capture), then 600 at a time.
+    test.setTimeout(240_000);
     let s = await snap(page);
     let shotKo = false;
     for (let i = 0; i < 400 && s.matchWinner < 0; i++) {
-      await stepTicks(page, 60);
+      await stepTicks(page, shotKo ? 600 : 60);
       s = await snap(page);
       if (!shotKo && s.phase === 2) {
         await page.screenshot({ path: CAP("round-end.png") });

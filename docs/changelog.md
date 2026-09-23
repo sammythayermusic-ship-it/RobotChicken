@@ -12,6 +12,14 @@
 - **Hero import**: `pnpm assets:import --blend <file>` exports with the scripted exporter, fixes or explains UI-authored mistakes, validates (v2: active-frame reach, textures, arena, first-load budget) and bakes hitboxes. A Blender export preset ships in `art/blender/presets/`.
 - **Perf**: `/play?bench=1` (copyable percentiles for a real phone), `pnpm test:perf` (desktop + Pixel 7 proxy); budgets on draw calls, triangles and shader compiles.
 - **Determinism across engines**: golden replays hash identically in Node (x64 + arm64), Chromium, Firefox and WebKit; CI runs all of them.
+- **Review fixes** (50 confirmed findings):
+  - Sim and balance: shove ring-outs are exact, dash taps and buffered moves read what was pressed, and cancels happen on hit only. Wake-up is invulnerable for 2 ticks and the dive kick is reactable. At full Heat, away+Space pecks.
+  - CPU: rebuilt with ordered levels, and walk-and-peck no longer beats it.
+  - Client: rematches no longer leak engines, the HUD resets between fights, the shake setting and reduced motion hold, the menus work from the keyboard, and P2 doesn't spin at the start.
+  - Camera: both fighters and a full jump stay in frame at every aspect, including portrait.
+  - Arena: the crowd doesn't strobe, low quality trims the arena, the lip is flush, and there is one env map with no leaks.
+  - Audio: sound starts on autostart links.
+  - Tools: textures convert correctly, imports are atomic, the arena anchors are validated, and the UI preset is complete.
 
 ## Phase 0: scaffold
 

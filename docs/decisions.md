@@ -27,7 +27,7 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | Hitbox helpers are baked offline | `tools` samples every clip at 60 Hz and writes integer tables to `packages/sim/data/hitboxes.json`. The sim and server never read a glb (determinism, no DOM). Helper sizes come from custom properties `cf_radius` / `cf_half_height`, because glTF does not export an empty's display size. |
 | Sim frame f = clip sample f | Clip frame counts in `chicken.contract.json` equal the move's startup+active+recovery. Clips authored with a different split carry `cf_phases` and are remapped piecewise. |
 | Tiers are runtime material swaps | Not `KHR_materials_variants`: GLTFLoader doesn't apply variants, and packing all tiers into one glb would defeat lazy loading. |
-| Textures via `ktx create` (KTX-Software 4.4) | `toktx` is deprecated and not installable via Homebrew. Phase 1 uses flat materials, so `tools/textures.sh` only explains how to install it. |
+| Textures via `ktx create` (KTX-Software 4.4) | `toktx` is deprecated. `pnpm textures` converts `art/textures/<tier>/*.png`: colour maps ETC1S (sRGB, BT.709), data maps UASTC + RDO + zstd (linear, never gamma-decoded), normals as plain RGB (not `--normal-mode`, which three.js can't read). `--dry-run` output is tested; validate rejects two-channel normals. |
 
 ## Gameplay defaults (data in `packages/sim/data/moves.json`)
 
@@ -75,15 +75,15 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | Tier cosmetics | Chrome: dash light trail. Gold: double sparks on hits. Diamond: iridescent physical material. Mirror matches tint P2 (hue shift, or copper for grey tiers). Gold's KO sting and Diamond's name chant / entrance wait for Sammy's sound pack and hero model. |
 | Perf is measured from FIGHT | Loading and shader warm-up don't count. `/play?bench=1` runs a fixed-seed CPU match on any device and prints copyable percentiles. |
 | Determinism is checked in three JS engines | The golden replays run in Chromium, Firefox and WebKit (e2e) as well as Node on x64 and arm64 (CI). |
-| Audio renders on the FIGHT click (or the first key/tap) | WebAudio needs a user gesture; the first-exchange sounds are ready ~40–110 ms after it, all 30 within ~370 ms. One variant per sound plus deterministic pitch jitter. |
+| Audio renders on the FIGHT click; autostart links create it at mount | WebAudio needs a user gesture. From the picker, FIGHT creates and starts it (first-exchange sounds ready ~40–110 ms later, all 30 within ~370 ms). Autostart links (`/play?mode=…`) create it under LOADING and start it on the first key, tap or click. Bench and manual runs are silent. |
 | Every sound is loudness-levelled after rendering | Peak ≤ 0.89 or a fixed short-term loudness, whichever is quieter, so `SOUND_SPECS` gains compare like with like; the KO moment is deliberately the loudest. Heavy thumps start at 140–170 Hz so phone and laptop speakers reproduce them. |
 | Sound pack drop-in: `public/audio/manifest.json` | `{"hit_light": "hit_light.m4a"}`; listed files replace recipes, failures fall back to the recipe. No 404 probing. |
 | Arena shaders are custom (three's fog / tone-mapping chunks) | Static light is baked into vertex attributes, but the fire light is per-pixel from shared uniforms, so walls and floor flicker in sync with the fighters' point lights. 7 draw calls, ~17k triangles. |
 | The env-map scene is brighter behind the camera | Otherwise chrome / gold reflect the dark pit and read as black paint. |
-| Fog follows the camera distance | Portrait views pull the camera 45–60 u back; fixed fog would swallow the fighters. |
+| Fog and the far plane follow the camera distance | Portrait views pull the camera ~75–95 u back to keep both fighters in frame; fixed fog would swallow them. |
 | Hero import resamples authored attack phases onto the contract | The sim reads frames and phases from the contract, so a hero clip with a different `cf_phases` split is retimed phase by phase at export. `--retime` stretches 24 fps clips within one authored frame of the contract length. |
 | Dive kick without `cf_phases` is checked against its 30-frame clip | Its active window has no fixed length in the sim (active until landing). |
-| First load = glb + decoders + audio overrides that load before FIGHT | Must stay ≤ 12 MB; non-Rust tiers and arena extras are lazy. |
+| First load = art assets that load before FIGHT (glb, decoders, audio overrides) | Must stay ≤ 12 MB. App JS/CSS/fonts are excluded, so leave headroom; non-Rust tiers and arena extras are lazy. |
 ## Phase 0 review outcomes
 
 An adversarial review (5 area reviewers, each finding independently re-verified) confirmed 32 low/medium issues; all were fixed before PR #1. The choices worth remembering:
@@ -106,3 +106,27 @@ An adversarial review (5 area reviewers, each finding independently re-verified)
 | New `public` functions are not executable by anon/authenticated by default | A test fails if any function outside an (empty) allowlist is. |
 | Landing showcase: pause button; reduced motion shows still frames | WCAG 2.2.2. Play under reduced motion animates the chickens but keeps the camera still. |
 | Disposing a renderer also disposes three's shared DFG LUT texture | r186 keeps a listener per renderer on it, which leaked every disposed canvas. Recheck on a three upgrade. |
+
+## Phase 1 review outcomes
+
+A second adversarial review (6 areas including a data-driven balance critic, every finding re-verified) confirmed 50 issues (2 high, 12 medium); all were fixed before PR #2. ★ = Sammy's call.
+
+| Decision | Why |
+|---|---|
+| ★ At full Heat, away+Space is a peck; the super is Space with no direction (or up) | Poking no longer burns a full meter by accident, and "away+Space peck, then Space" is a working peck → super cancel. |
+| ★ The dive kick stays unblockable but is reactable | It can start only from the 14th air tick (was 4) and its landing recovery is 24 (was 14); the spec's 6-frame startup is unchanged. It now connects 21–24 ticks after the jump press. Making it blockable remains an option. |
+| Wake-up is invulnerable for 2 ticks | A meaty dive kick used to beat every wake-up option except the super. |
+| The peck cancels only into the super, and only on a clean hit | Cancels on block made blocked pecks safe; the peck → shove cancel whiffed or was punishable at most ranges. |
+| A buffered Space remembers the directions held at the press; dash taps read the raw keys | Short taps no longer turn shoves into pecks, and SOCD cleaning no longer invents a dash in the wrong direction. |
+| Shoves move exactly 2 units; anyone shoved past 8.0 u rings out | The slide's last tick used to be wall-clamped. |
+| ★ Slam launch stays [160, 180] | Ring-outs end 21% of rounds between reactive bots, half of them by slam; [100, 180] would make it 15%. |
+| CPU rebuilt: ordered, beatable, not trivially exploitable | Levels keep the plan's reaction delays (22 / 14 / 8 ticks) and block rates; each harder level beats the easier one 100%. Walk-and-peck used to win 100% against every level; now 30–58% vs Easy, 3–45% vs Normal, 0% vs Hard. Hard is the patient level. |
+| Camera: a hard fit on top of an eased composition | Both bodies, the feet and the top of a jump stay between the frame edges and the HUD band (a fixed CSS height, `hudBand.ts`, measured in e2e) at every aspect including portrait. Jumps raise the look target before pulling back. |
+| The shake setting scales everything that moves the view | Trauma shake, the per-hit kick, the punch zoom and the super's FOV kick. Off really is off. |
+| Quality "low" also trims the arena | Drops embers, smoke, the crowd flash pass and the haze, with no rebuild or recompile. |
+| The ring lip is flush with the floor | A shove that falls short leaves a fighter standing up to x = 10. |
+| A fight engine resets the HUD and drops its callbacks | Rematches and restarts used to keep every earlier engine alive (6 WebGL contexts after 5 restarts; now 1) and could show a stale pause menu. Renderers are disposed through `disposeRenderer`. |
+| Game keys ignore focused controls and are off while paused | The pause menu and match-end buttons work from the keyboard; keys pressed while paused don't fire after resume. |
+| The arena rules run whenever `arena.glb` exists | `ringedge_L/R` empties are required at x = ∓10 (±0.05); missing fire / crowd / flood groups are warnings (the procedural layout fills in). |
+| Hero import is staged in `art/blender/out/` and swapped in atomically | The glb and `hitboxes.json` are renamed in, `hitboxes.json` last; Ctrl-C cleans up. A dry run never overwrites the glb the game loads. |
+| The Blender UI preset is generated and sets every exporter option | Applying a preset only sets what it lists, so a partial preset didn't guarantee the scripted settings. |

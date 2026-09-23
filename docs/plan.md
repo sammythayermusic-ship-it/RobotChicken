@@ -69,7 +69,7 @@ Each one goes in `docs/decisions.md`. A ★ means Sammy should confirm it at the
    - Export goes through one scripted `export_chicken()`, and the UI checklist becomes the fallback.
 4. **Hitbox helpers are baked offline into integer JSON.** A tool writes `packages/sim/data/hitboxes.json`, so the sim never reads a glb. Helper sizes come from custom properties (`cf_radius`, `cf_half_height`), because glTF doesn't export an empty's display size.
 5. **Tiers are material swaps done at runtime,** not `KHR_materials_variants`.
-6. **Textures use `ktx create` (KTX-Software 4.4),** not `toktx`, which is deprecated. Phase 1 uses flat materials, so `tools/textures.sh` only prints install instructions.
+6. **Textures use `ktx create` (KTX-Software 4.4),** not `toktx`, which is deprecated. `pnpm textures` (`tools/textures.sh`) converts tier textures once KTX-Software is installed; Phase 1's placeholder uses flat materials.
 7. **Supabase grants go to `service_role` explicitly.** New projects require it.
 8. **New env vars, documented only:** `JUPITER_API_KEY` (Price v2 is deprecated; v3 needs a key), `REDIS_URL` (the Colyseus driver needs TCP `rediss://`), `ALLOWED_ORIGINS`, `PAYOUTS_ENABLED=false`.
 
