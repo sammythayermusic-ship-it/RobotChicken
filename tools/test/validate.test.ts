@@ -243,8 +243,12 @@ describe("command-line paths", () => {
   const hasPnpm = spawnSync("pnpm", ["--version"]).status === 0;
   it.skipIf(!hasPnpm)("the root wrapper resolves a path relative to where the user ran it, not the repo root", () => {
     // The wrapper's nested pnpm resets INIT_CWD to the repo root; the wrapper forwards the user's directory as CF_CWD.
-    const run = spawnSync("pnpm", ["-s", "assets:validate", `../${PLACEHOLDER_GLB}`, "--json"], { cwd: repoPath("docs"), encoding: "utf8" });
+    // On GitHub Actions pnpm wraps filtered output in ::group:: annotations, so
+    // drop that env for the child (and read the JSON document, not stray lines).
+    const env = { ...process.env, GITHUB_ACTIONS: "", CI: "" };
+    const run = spawnSync("pnpm", ["-s", "assets:validate", `../${PLACEHOLDER_GLB}`, "--json"], { cwd: repoPath("docs"), encoding: "utf8", env });
     expect(run.status, run.stderr).toBe(0);
-    expect(JSON.parse(run.stdout)).toMatchObject({ file: PLACEHOLDER_GLB, ok: true });
+    const json = run.stdout.slice(run.stdout.indexOf("{"), run.stdout.lastIndexOf("}") + 1);
+    expect(JSON.parse(json)).toMatchObject({ file: PLACEHOLDER_GLB, ok: true });
   });
 });
