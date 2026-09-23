@@ -13,6 +13,12 @@ import { rng } from "./rng";
  * B = rim (top edges catching the floodlights). The vertex shader bobs and
  * flaps them from uHype (0.2 idle .. 1 on a KO), and when the crowd is hot a
  * few instances fire camera flashes. Per frame only uniforms change.
+ *
+ * The hop and flap RATES follow hype, so their PHASES are integrated on the
+ * CPU (advanceCrowd) and passed in as uBob / uFlap. Computing them in the
+ * shader as uTime * rate(hype) would jump the phase by t * d(rate) whenever
+ * hype moves: every silhouette would snap to a random wing frame after each
+ * hit, worse the longer the match runs.
  */
 const CELL = 256;
 
@@ -22,6 +28,8 @@ attribute vec3 aPos;   // feet
 attribute vec4 aMeta;  // body (0/1), phase, scale, seed
 uniform float uTime;
 uniform float uHype;
+uniform float uBob;   // hop phase, radians in [0, 2pi)
+uniform float uFlap;  // wing cycle phase in [0, 1)
 float h11(float p) {
   p = fract(p * 0.1031);
   p *= p + 33.33;
@@ -35,10 +43,10 @@ float flashNow() {
   float chance = smoothstep(0.5, 1.0, uHype) * 0.08;
   return step(h11(slot * 1.37 + aMeta.w * 91.7), chance) * (1.0 - smoothstep(0.1, 0.45, inSlot));
 }
-// A hop whose height and rate grow with hype.
+// A hop whose height (here) and rate (advanceCrowd) grow with hype.
 float bob() {
   float h = uHype;
-  return h * h * abs(sin(uTime * (3.0 + 7.0 * h) + aMeta.y * 6.2831)) * 0.22 * aMeta.z;
+  return h * h * abs(sin(uBob + aMeta.y * 6.2831)) * 0.22 * aMeta.z;
 }
 `;
 
@@ -55,9 +63,8 @@ void main() {
   float scale = aMeta.z;
   // A slow sway even when bored.
   float sway = sin(uTime * (0.9 + aMeta.w) + ph * 1.7) * 0.035;
-  // Wings up for a hype-driven share of a hype-driven cycle (cheering).
-  float flapRate = 0.35 + 3.4 * h;
-  float up = step(fract(uTime * flapRate + aMeta.y * 3.1), 0.08 + 0.55 * h * h);
+  // Wings up for a hype-driven share of a hype-driven cycle (cheering; the rate is in advanceCrowd).
+  float up = step(fract(uFlap + aMeta.y * 3.1), 0.08 + 0.55 * h * h);
   float frame = aMeta.x * 2.0 + up;
   vec2 cell = vec2(mod(frame, 2.0), floor(frame * 0.5));
   vUv = (uv + cell) * 0.5;
@@ -244,12 +251,35 @@ export function drawCrowdAtlas(canvas: HTMLCanvasElement): void {
   g.putImageData(img, 0, 0);
 }
 
+/** The crowd's hop and wing-flap phases (radians, cycles). */
+export interface CrowdClock {
+  bob: number;
+  flap: number;
+}
+
+const TAU = Math.PI * 2;
+/** Hop rate (rad/s) and wing-flap rate (cycles/s) at a hype level. */
+export const hopRate = (hype: number) => 3 + 7 * hype;
+export const flapRate = (hype: number) => 0.35 + 3.4 * hype;
+
+/**
+ * Advance the phases by dt at the current hype's rates. Integrating keeps the
+ * motion continuous when hype jumps (a KO takes it from ~0.3 to 1 in a few
+ * frames), and the wrap keeps float precision flat over a long match.
+ */
+export function advanceCrowd(c: CrowdClock, dt: number, hype: number): void {
+  c.bob = (c.bob + dt * hopRate(hype)) % TAU;
+  c.flap = (c.flap + dt * flapRate(hype)) % 1;
+}
+
 export interface Crowd {
   mesh: Mesh<InstancedBufferGeometry, ShaderMaterial>;
   /** Camera flashes: same geometry, additive. */
   flashes: Mesh<InstancedBufferGeometry, ShaderMaterial>;
   texture: CanvasTexture;
   count: number;
+  /** Per frame: advance the hop / flap phases at the current hype (writes two uniforms). */
+  update(dt: number, hype: number): void;
 }
 
 export function buildCrowd(
@@ -290,11 +320,15 @@ export function buildCrowd(
   geo.setAttribute("aMeta", new InstancedBufferAttribute(new Float32Array(meta), 4));
   geo.instanceCount = count;
 
+  // Owned by the crowd, shared by both passes (the flash rides the hop too).
+  const uBob = { value: 0 };
+  const uFlap = { value: 0 };
+  const clock: CrowdClock = { bob: 0, flap: 0 };
   const mat = new ShaderMaterial({
     name: "arena-crowd",
     vertexShader: VERT,
     fragmentShader: FRAG,
-    uniforms: withFog({ uTime: shared.uTime, uHype: shared.uHype, uAtlas: { value: texture } }),
+    uniforms: withFog({ uTime: shared.uTime, uHype: shared.uHype, uBob, uFlap, uAtlas: { value: texture } }),
     fog: true,
   });
   const mesh = new Mesh(geo, mat);
@@ -306,7 +340,7 @@ export function buildCrowd(
       name: "arena-crowd-flash",
       vertexShader: FLASH_VERT,
       fragmentShader: FLASH_FRAG,
-      uniforms: { uTime: shared.uTime, uHype: shared.uHype },
+      uniforms: { uTime: shared.uTime, uHype: shared.uHype, uBob, uFlap },
       transparent: true,
       depthWrite: false,
       blending: AdditiveBlending,
@@ -315,5 +349,15 @@ export function buildCrowd(
   flashes.name = "arena-crowd-flash";
   flashes.frustumCulled = false;
   flashes.renderOrder = 17;
-  return { mesh, flashes, texture, count };
+  return {
+    mesh,
+    flashes,
+    texture,
+    count,
+    update(dt, hype) {
+      advanceCrowd(clock, dt, hype);
+      uBob.value = clock.bob;
+      uFlap.value = clock.flap;
+    },
+  };
 }

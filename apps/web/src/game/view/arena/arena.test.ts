@@ -2,6 +2,7 @@ import { BoxGeometry, Group, Matrix4, Object3D, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { RULES } from "@cockfight/sim";
 import { GeoBuilder } from "./builder";
+import { advanceCrowd, flapRate, hopRate, type CrowdClock } from "./crowd";
 import { buildFloor } from "./floor";
 import { anchorsFromScene, checkRingEdges, HAZARD_IN, LIP_IN, PROCEDURAL_ANCHORS, RING_EDGE } from "./layout";
 import { createUniforms, flicker } from "./lighting";
@@ -150,5 +151,43 @@ describe("fire flicker", () => {
     expect(lo).toBeGreaterThan(0.55);
     expect(hi).toBeLessThanOrEqual(1);
     expect(hi - lo).toBeGreaterThan(0.2); // it actually flickers
+  });
+});
+
+describe("crowd motion", () => {
+  /** Wrapped distance between two phases on a circle of length `period`. */
+  const step = (a: number, b: number, period: number) => {
+    const d = Math.abs(b - a) % period;
+    return Math.min(d, period - d);
+  };
+
+  it("keeps the hop and wing phases continuous when hype jumps late in a match", () => {
+    const dt = 1 / 60;
+    const c: CrowdClock = { bob: 0, flap: 0 };
+    // 100 s of a bored crowd, then a KO slams hype from 0.2 to 1 and it eases back down.
+    for (let i = 0; i < 6000; i++) advanceCrowd(c, dt, 0.2);
+    let hype = 1;
+    let worstFlap = 0;
+    let worstBob = 0;
+    for (let i = 0; i < 600; i++) {
+      const before = { ...c };
+      advanceCrowd(c, dt, hype);
+      worstFlap = Math.max(worstFlap, step(before.flap, c.flap, 1));
+      worstBob = Math.max(worstBob, step(before.bob, c.bob, Math.PI * 2));
+      hype = Math.max(0.2, hype - 0.01);
+    }
+    // A frame never moves further than the fastest rate allows. (The old shader form,
+    // fract(uTime * rate(hype)), jumped by t * d(rate): 272 wing cycles in the KO frame here.)
+    expect(worstFlap).toBeLessThanOrEqual(flapRate(1) * dt + 1e-9);
+    expect(worstBob).toBeLessThanOrEqual(hopRate(1) * dt + 1e-9);
+    expect(c.flap).toBeGreaterThanOrEqual(0);
+    expect(c.flap).toBeLessThan(1);
+    expect(c.bob).toBeLessThan(Math.PI * 2);
+  });
+
+  it("stands still while paused (dt = 0) whatever hype does", () => {
+    const c: CrowdClock = { bob: 1.2, flap: 0.4 };
+    advanceCrowd(c, 0, 1);
+    expect(c).toEqual({ bob: 1.2, flap: 0.4 });
   });
 });

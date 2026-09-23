@@ -65,10 +65,11 @@ export async function createJunkyard(renderer: WebGLRenderer, anchors: ArenaAnch
     setHype(h: number) {
       u.uHype.value = h < 0 ? 0 : h > 1 ? 1 : h;
     },
-    update(_dt: number, t: number) {
+    update(dt: number, t: number) {
       const fl = flicker(11, t);
       const fr = flicker(23, t);
       u.uTime.value = t;
+      crowd.update(dt, u.uHype.value);
       u.uFlick.value.set(fl, fr);
       fireL.set(FIRE_COL.r, FIRE_COL.g, FIRE_COL.b).multiplyScalar(FIRE_I * fl);
       fireR.set(FIRE_COL.r, FIRE_COL.g, FIRE_COL.b).multiplyScalar(FIRE_I * fr);
