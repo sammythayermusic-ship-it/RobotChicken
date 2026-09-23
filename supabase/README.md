@@ -1,0 +1,188 @@
+# Supabase
+
+The database schema for COCKFIGHT, as plain SQL migrations for the Supabase
+CLI. The tests run the migrations on PGlite (Postgres in WASM), so neither
+Docker nor the CLI is needed to develop or test them.
+
+| File | What it does |
+|---|---|
+| `config.toml` | CLI settings: project id `cockfight`, Postgres 17, no seed |
+| `migrations/20260923000000_init.sql` | The 8 tables, indexes, RLS, the two public views, and all grants |
+| `migrations/20260923000100_cron.sql` | pg_cron: refresh `leaderboard_v` every minute, purge old cron logs |
+
+## Applying to a Supabase project
+
+Unverified: the CLI is not installed here, so these commands have not been run
+against a real project.
+
+```sh
+pnpm dlx supabase login
+pnpm dlx supabase link --project-ref <project-ref>   # asks for the database password
+pnpm dlx supabase db push --dry-run                  # lists the migrations it would apply
+pnpm dlx supabase db push
+```
+
+`db push` applies, in version order, every file in `migrations/` that is not yet
+recorded in `supabase_migrations.schema_migrations`, connecting as `postgres`.
+Applied migrations are never edited: change the schema with a new file.
+
+After the first push, check in the SQL editor:
+
+```sql
+select jobname, schedule, command from cron.job;          -- two cockfight_* jobs
+select * from public.pool_v;                                 -- exactly one row
+set role anon; select count(*) from public.payouts; reset role;  -- permission denied
+```
+
+Requirements:
+- **Postgres 17 or later.** `grant maintain` does not exist before 17.
+- **`public` exposed in the Data API** (Settings, API). It is by default.
+- **Keys.** The web app uses the publishable key (the `anon` role); apps/game
+  and apps/worker use the secret key (the `service_role` role). The env names
+  keep the spec's `*_ANON_KEY` / `*_SERVICE_ROLE_KEY`.
+
+## Access model
+
+- **Writes:** `service_role` only (apps/game and apps/worker). It has
+  BYPASSRLS. Per table it gets exactly what it needs:
+  - money and audit rows (`payouts`, `matches`, `fee_claims`, `daily_rewards`,
+    `abuse_events`, `players`) can be inserted and updated but never deleted;
+  - `balance_checks` and `pool_snapshots` also allow DELETE, for retention;
+  - TRUNCATE is never granted.
+- **Reads for the web app:** `anon` and `authenticated` can SELECT
+  `leaderboard_v` and `pool_v`, and nothing else.
+- **RLS:** enabled on every table, with no policies. Even if a table grant
+  leaked to `anon`, it would see no rows.
+- **Why the grants are explicit.** Projects created before 2026-05-30
+  auto-grant ALL on new public tables to `anon`, `authenticated` and
+  `service_role`. Newer projects grant nothing. The init migration revokes
+  everything and then grants per object, so both kinds of project end up the
+  same. The tests check this in both modes.
+- **Future tables and sequences** created by `postgres` in `public` default to
+  the same model: `service_role` gets SELECT/INSERT/UPDATE/DELETE (USAGE/SELECT
+  on sequences), and `anon`/`authenticated` get nothing.
+- **Functions are the exception.** Postgres grants EXECUTE on every new
+  function to PUBLIC, and a per-schema default cannot undo that. Any function
+  added to `public` must run `revoke execute on function … from public, anon,
+  authenticated` itself, unless the web app is meant to call it.
+
+### Checklist for a new migration
+
+1. Name it `<YYYYMMDDHHMMSS>_<snake_name>.sql`. The CLI silently skips other
+   names; the test harness rejects them.
+2. `enable row level security` on every new table.
+3. Grant `service_role` only what it needs, if the defaults are too broad.
+4. A new public view must never expose `ip_hash`, `fingerprint`, `flags`,
+   `username_sig`, `input_log` or `details`. Decide whether it is an
+   owner-rights or an invoker view (see `pool_v` below).
+5. Nothing Postgres 18 only (`uuidv7()`, virtual generated columns, …): PGlite
+   runs 18, Supabase runs 17.
+6. `pnpm vitest run --project tools migrations` must pass.
+
+## Tables
+
+All money is `bigint` lamports; token amounts are `numeric(40,0)` raw base
+units. Addresses and signatures use the `sol_address` and `sol_signature`
+domains (text with a base58 check). Enumerations are text with a check
+constraint, so zod can mirror them and adding a value is a one-line migration.
+
+| Table | Purpose | Notes |
+|---|---|---|
+| `players` | One row per pasted wallet address | `tier` is null until the address passes the gate. A username needs its signed message (`username_sig`). Usernames are unique case-insensitively. |
+| `balance_checks` | Audit trail for the $COCK holding gate | No FK to `players`: the gate checks an address before its row exists. |
+| `matches` | One row per match; `input_log` makes it replayable | Can be written at match start (`ended_at`, `reason`, `winner` null) or at the end. A finished match has 1–5 rounds, and a forfeit records the round it ended in. `reason = 'draw'` has `winner` null; every other reason has a winner. |
+| `payouts` | SOL payouts, one per win and one per daily rank | `idem_key` is unique: the match id for a win, `YYYY-MM-DD:rank` for daily. A win payout must go to that match's winner (a composite FK to `matches (id, winner)`), so a drawn or unfinished match cannot be paid, and once a match has a win payout its winner cannot change. `sent`/`paid` need `tx_sig`; `paid` exactly when `paid_at` is set. |
+| `daily_rewards` | Each UTC day's top 10 and what each rank was paid | One row per rank and per address per day. |
+| `fee_claims` | Every fee claim and swap | Feeds B₂₄ₕ and the fee ticker. `claim_sig`/`swap_sig` are unique, so a claim recorded twice cannot inflate payouts. |
+| `pool_snapshots` | One row per minute for the live chart | `at` must be a whole minute (UTC); the worker upserts on it. |
+| `abuse_events` | The admin review queue | `resolved_by` and `resolved_at` are set together. |
+
+The spec's indexes are all present: `matches (winner, ended_at desc)`,
+`matches (p1, p2, ended_at desc)` for the pairing caps, and
+`payouts (status, created_at)` for the worker's poll. Every foreign key also
+has an index.
+
+## Public views
+
+**`leaderboard_v`** (materialized, refreshed every minute by pg_cron). One row
+per address with at least one finished match. Columns:
+- `display_name`: the username, or `anon-XXXX` (the address's last 4 characters);
+- `elo`, `tier`;
+- `wins_*` and `matches_*` for three windows: `_today` (the current UTC day,
+  for the daily leaderboard), `_7d` (the trailing 7 days) and `_all` (all time);
+- `win_rate_7d` and `win_rate_all` (4 decimals, null with no matches);
+- `earned_lamports_7d` and `earned_lamports_all`: paid payouts of both kinds;
+- `refreshed_at`.
+
+A draw counts as a match for both players and a win for neither. The unique
+index on `address` is what allows `refresh materialized view concurrently`, so
+readers are never blocked. Where pg_cron is unavailable, the worker (as
+`service_role`, which holds MAINTAIN on the view) can run that refresh itself.
+The daily reward job must rank a closed day from `matches` directly: `_today`
+restarts on the first refresh after 00:00 UTC.
+
+**`pool_v`** (a plain view, always exactly one row). It holds the latest
+`pool_snapshots` row (all null until the worker writes one) and trailing-24h
+totals from `fee_claims` and paid `payouts`. It runs with its owner's rights
+(`security_invoker` off) on purpose. `anon` has no grant on the base tables, and
+RLS would hide their rows anyway, so an invoker view could not work. The view is
+safe because every column is a public aggregate. The front page polls it:
+Realtime cannot push changes from RLS-protected tables to `anon`.
+
+## Expected Supabase advisor findings
+
+These are intentional; do not "fix" them.
+
+| Lint | Level | Object | Why it is fine |
+|---|---|---|---|
+| `rls_enabled_no_policy` | Info | all 8 tables | Deny-by-default for the web keys is the design. `service_role` bypasses RLS. |
+| `security_definer_view` | Error | `pool_v` | It has to read tables `anon` cannot. It exposes only aggregates, and it has `security_barrier`. |
+| `materialized_view_in_api` | Warn | `leaderboard_v` | The leaderboard is public by design and has no private columns. |
+| `unused_index` | Info | several | Until real traffic arrives. |
+
+If the `security_definer_view` error has to go, the alternative is an invoker
+view over a `security definer` function in an unexposed schema, with a pinned
+`search_path` and EXECUTE granted only to `anon`/`authenticated`.
+
+## pg_cron
+
+`20260923000100_cron.sql` enables pg_cron (in `pg_catalog`, as Supabase
+documents) and schedules two jobs as `postgres`:
+- `cockfight_refresh_leaderboard_v`, every minute;
+- `cockfight_purge_cron_history`, daily at 03:17 UTC, which deletes
+  `cron.job_run_details` rows older than 7 days (the refresh alone logs 1,440
+  rows a day).
+
+`cron.schedule` replaces a job with the same name, so re-running is safe. Where
+pg_cron is not in `pg_available_extensions` (PGlite, plain Postgres), the
+migration only raises a NOTICE.
+
+## Tests
+
+`tools/test/migrations.test.ts` runs on PGlite through `tools/src/db/harness.ts`.
+The harness recreates what the migrations depend on:
+- `supabase_admin` is the superuser, and `postgres` is not (as on Supabase).
+  Migrations run as `postgres`, each in a transaction, and any WARNING fails
+  the run.
+- `anon`, `authenticated` and `service_role` have Supabase's attributes.
+- The grant mode is either `legacy` (auto-grants) or `strict` (none).
+
+The schema tests run in both modes: RLS, the privilege matrix, denied access, both
+views as `anon`, service-role writes, draws, payout idempotency, every check
+constraint, leaderboard aggregates after a concurrent refresh, FK indexes, and
+the cron guard.
+
+Gaps, each checked some other way where possible:
+- **Postgres version.** PGlite is 18 and Supabase is 17. A test scans the SQL
+  for 18-only features.
+- **pg_cron.** PGlite has no pg_cron, so the scheduled branch never runs in
+  tests. The refresh command itself is executed as `postgres`.
+- **Real roles.** Supabase's own roles and the CLI's transaction handling are
+  emulated, not the real thing.
+
+```sh
+pnpm vitest run --project tools migrations
+```
+
+Phase 3 idempotency tests can reuse `freshDb(mode)` and `as(db, role, fn)` from
+the harness.
