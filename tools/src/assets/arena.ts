@@ -1,20 +1,27 @@
 /**
- * Arena rules (`pnpm assets:validate --arena [file]`), for Sammy's arena.glb
- * when it exists; the procedural junkyard needs no files, so no arena file is
- * a clean skip.
+ * Arena rules, run by every `pnpm assets:validate` (and so CI) on Sammy's
+ * arena.glb when it exists (`--arena=<file>` for another file); the procedural
+ * junkyard needs no files, so no arena file is a clean skip.
  *
  * Budgets (spec): at most 60k triangles in total, counting every node that
  * draws a mesh and every GPU instance; lighting baked into one lightmap of at
  * most 4096 px, read through TEXCOORD_1 (three.js: `material.lightMap` with
  * `texture.channel = 1`). The lightmap is either arena_lightmap.ktx2 next to
  * the glb or a texture the glb reads through TEXCOORD_1.
+ *
+ * Anchors: the game places its fires, crowd and floodlights, and checks the
+ * ring edges, from named empties (apps/web/src/game/view/arena/layout.ts
+ * anchorsFromScene). `ringedge_L` / `ringedge_R` must exist at x = -10 / +10
+ * (the sim decides ring-outs there); a missing fire, crowd or flood group only
+ * falls back to the procedural layout, so it is a warning.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Document, Node } from "@gltf-transform/core";
 import type { InstancedMesh } from "@gltf-transform/extensions";
 import { getGLPrimitiveCount } from "@gltf-transform/functions";
 import validator from "gltf-validator";
-import { CONTRACT, readGlb, sha256, toRepo, type Contract } from "./gltf";
+import { ARENA_GLB, CONTRACT, fromRepo, readGlb, sha256, toRepo, type Contract } from "./gltf";
 import { imageInfo, isPowerOfTwo } from "./images";
 import { checkDocumentTextures } from "./textures";
 import { ALLOWED_EXTENSIONS, type Issue, type ValidateReport } from "./validate";
@@ -22,10 +29,61 @@ import { ALLOWED_EXTENSIONS, type Issue, type ValidateReport } from "./validate"
 /** GPU instancing is fine for an arena (three's GLTFLoader builds InstancedMesh from it). */
 const ARENA_EXTENSIONS = [...ALLOWED_EXTENSIONS, "EXT_mesh_gpu_instancing"];
 
+/** Ring-out edge in game units (moves.json ringEdge = 10000 mu; layout.ts RING_EDGE). */
+export const RING_EDGE = 10;
+/** How far a ringedge_* empty may sit from ±RING_EDGE (layout.ts checkRingEdges). */
+export const RING_EDGE_TOLERANCE = 0.05;
+
 /** How many times a node draws its mesh: its GPU instance count, else 1. */
 function instances(n: Node): number {
   const ext = n.getExtension<InstancedMesh>("EXT_mesh_gpu_instancing");
   return ext?.listAttributes()[0]?.getCount() ?? 1;
+}
+
+/** A node name as three's GLTFLoader hands it to anchorsFromScene (PropertyBinding.sanitizeNodeName). */
+const sanitize = (name: string) => name.replace(/\s/g, "_").replace(/[[\].:/]/g, "");
+
+/** The anchor empties anchorsFromScene reads: ring edges (errors), fire / crowd / flood groups (warnings). */
+export function checkArenaAnchors(doc: Document): Issue[] {
+  const issues: Issue[] = [];
+  const err = (message: string) => issues.push({ severity: "error", code: "anchors", message });
+  const warn = (message: string) => issues.push({ severity: "warning", code: "anchors", message });
+  const byName = new Map<string, Node>();
+  for (const n of doc.getRoot().listNodes()) if (n.getName()) byName.set(sanitize(n.getName()), n);
+  const names = [...byName.keys()].sort();
+
+  for (const [name, x] of [
+    ["ringedge_L", -RING_EDGE],
+    ["ringedge_R", RING_EDGE],
+  ] as const) {
+    const node = byName.get(name);
+    if (!node) {
+      err(`no empty named ${name}: add one at x = ${x} (the ring edge; the game would silently assume it, and the sim rings fighters out there)`);
+      continue;
+    }
+    const at = node.getWorldTranslation()[0];
+    if (Math.abs(at - x) > RING_EDGE_TOLERANCE) err(`${name} is at x = ${at.toFixed(3)}; it must be at x = ${x} (±${RING_EDGE_TOLERANCE}), where the sim rings fighters out`);
+  }
+
+  for (const side of ["L", "R"]) {
+    if (!names.some((n) => n.startsWith(`fire_${side}`))) warn(`no fire_${side}* empties (one per oil drum): the ${side === "L" ? "left" : "right"} fire cluster falls back to the procedural drums`);
+  }
+
+  const crowd = names.filter((n) => /^crowd_\d+_a$/.test(n));
+  for (const a of crowd) {
+    const b = a.replace(/_a$/, "_b");
+    if (!byName.has(b)) warn(`${a} has no ${b}: that crowd row is skipped`);
+    const count = byName.get(a)!.getExtras()["count"];
+    if (count !== undefined && !(typeof count === "number" && Number.isFinite(count) && count > 0)) {
+      warn(`${a} has count = ${JSON.stringify(count)}; it must be a positive number (the row uses 30)`);
+    }
+  }
+  if (!crowd.some((a) => byName.has(a.replace(/_a$/, "_b")))) warn("no crowd_<n>_a / crowd_<n>_b pairs: the crowd falls back to the procedural bleachers");
+
+  const floods = names.filter((n) => /^flood_\d+$/.test(n));
+  for (const f of floods) if (!byName.has(`${f}_target`)) warn(`${f} has no ${f}_target: that floodlight is skipped`);
+  if (!floods.some((f) => byName.has(`${f}_target`))) warn("no flood_<n> / flood_<n>_target pairs: the floodlights fall back to the procedural towers");
+  return issues;
 }
 
 /** Document rules; `lightmap` is the bytes of arena_lightmap.ktx2 when that file exists. */
@@ -84,6 +142,7 @@ export function validateArenaDocument(
   } else if (drawn.length) {
     warn("lightmap", "no lightmap (arena_lightmap.ktx2 next to the glb, or a texture read through TEXCOORD_1): the spec bakes the arena's lighting into one");
   }
+  issues.push(...checkArenaAnchors(doc));
   return { issues, triangles };
 }
 
@@ -124,4 +183,15 @@ export async function validateArenaGlb(
 export async function validateArenaFile(path: string, lightmapPath: string, contract: Contract = CONTRACT): Promise<ValidateReport> {
   const lightmap = existsSync(lightmapPath) ? { file: toRepo(lightmapPath), bytes: new Uint8Array(readFileSync(lightmapPath)) } : null;
   return validateArenaGlb(new Uint8Array(readFileSync(path)), { file: toRepo(path), contract, lightmap });
+}
+
+/**
+ * The arena step of `pnpm assets:validate`: the arena at `path` (default
+ * apps/web/public/models/arena.glb) with arena_lightmap.ktx2 next to it, or a
+ * skip when there is no such file. It runs on every validate, not only with
+ * --arena, so CI checks an arena as soon as one is committed.
+ */
+export async function validateArenaIfPresent(path: string = fromRepo(ARENA_GLB)): Promise<{ report: ValidateReport } | { skipped: string }> {
+  if (!existsSync(path)) return { skipped: `arena: no ${toRepo(path)} (the procedural junkyard needs no files); arena rules skipped` };
+  return { report: await validateArenaFile(path, join(dirname(path), "arena_lightmap.ktx2")) };
 }

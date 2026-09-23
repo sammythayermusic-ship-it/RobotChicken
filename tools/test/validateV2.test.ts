@@ -64,7 +64,7 @@ describe("validate v2: the committed placeholder", () => {
     expect(load.lazy).toEqual([]);
 
     const text = formatReport(r);
-    expect(text).toContain("first load (raw bytes; budget 12.00 MB)");
+    expect(text).toContain("first load, art assets (raw bytes, app code excluded; budget 12.00 MB)");
     expect(text).toContain("textures: none embedded (texture rules skipped)");
     expect(text).toMatch(/animations: [\d.]+ KB of keyframe data/);
   });

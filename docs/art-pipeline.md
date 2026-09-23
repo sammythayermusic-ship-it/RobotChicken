@@ -142,10 +142,10 @@ above replace it. A manual export gets none of the fixes above, so the file must
 clean. Then run `pnpm assets:validate apps/web/public/models/<file>.glb` and
 `pnpm assets:bake apps/web/public/models/<file>.glb`.
 
-## Validation: `pnpm assets:validate [glb] [--json] [--arena[=file]]`
+## Validation: `pnpm assets:validate [glb] [--json] [--arena=<file>]`
 
-Validates the glb `hitboxes.json` tracks (or the one given). CI runs it on every push and never
-needs Blender. It checks:
+Validates the glb `hitboxes.json` tracks (or the one given), and the arena whenever there is
+one (below). CI runs it on every push and never needs Blender. It checks:
 
 - the contract: rig, root bone, one skinned mesh, joints, triangles, material slots, helpers and
   their extras, the 21 clips with their exact frame counts, no root motion, facing;
@@ -158,12 +158,14 @@ needs Blender. It checks:
   `--normal-mode` layout); the same for the tier sets below;
 - `hitboxes.json` was baked from exactly this file (sha256).
 
-It also prints each clip's animation size and the **first-load table**: every file a new player
-downloads before the first fight, in raw bytes, which must stay ≤ 12 MB. That is the chicken
-glb, the Draco decoder, the Rust tier textures (plus the Basis transcoder once there is any
-KTX2), Sammy's arena and lightmap when they exist, and any audio overrides in
-`apps/web/public/audio/`. The Chrome, Gold and Diamond tier sets load lazily and are listed
-separately.
+It also prints each clip's animation size and the **first-load table**: the art assets a new
+player downloads before the first fight, in raw bytes, which must stay ≤ 12 MB. That is the
+chicken glb, the Draco decoder, the Rust tier textures (plus the Basis transcoder once there is
+any KTX2), Sammy's arena and lightmap when they exist, and any audio overrides in
+`apps/web/public/audio/`. The app's own code (the Next.js and three.js JavaScript, CSS and
+fonts) is not in the table: the 12 MB is the art budget (`docs/decisions.md`, "First load"), so
+leave headroom under the spec's 12 MB on the wire for it. The Chrome, Gold and Diamond tier sets
+load lazily and are listed separately.
 
 ## Textures (later)
 
@@ -205,9 +207,21 @@ The placeholder uses flat materials, so nothing needs converting yet.
 The fight uses a procedural junkyard that needs no files. A hand-made arena goes to
 `apps/web/public/models/arena.glb`, with its baked lighting in
 `apps/web/public/models/arena_lightmap.ktx2` (or as a texture the glb reads through its second
-UV map). `pnpm assets:validate --arena` checks it: at most 60k triangles counting every GPU
-instance, a lightmap of at most 4096, and every mesh has `TEXCOORD_1` for it. With no arena file
-it skips cleanly.
+UV map). `pnpm assets:validate` checks it whenever that file exists (so CI does too;
+`--arena=<file>` checks another file): at most 60k triangles counting every GPU instance, a
+lightmap of at most 4096, every mesh has `TEXCOORD_1` for it, and the anchor empties below. With
+no arena file it skips cleanly.
+
+The game keeps its fires, crowd and floodlights and checks the ring edges from **named empties**
+in the glb (`anchorsFromScene` in `apps/web/src/game/view/arena/layout.ts`; empties export as
+glTF nodes, and three.js drops `.` from names, so `fire_L.001` works):
+
+| Empty | What it marks | If it is missing |
+|---|---|---|
+| `ringedge_L`, `ringedge_R` | the ring edges; **must sit at x = −10 / +10** (±0.05), where the sim rings fighters out. Beyond them the floor must drop away | error |
+| `fire_L*`, `fire_R*` (at least one per side) | one per oil drum, at its base centre; each side's fire light sits 2.1 above the drums' mean, flames 0.95 above each drum | warning: that side uses the procedural drums |
+| `crowd_<n>_a`, `crowd_<n>_b` | the two ends of crowd row *n*, at seat (feet) height; custom property `count` (a positive number, default 30) | warning: the procedural bleachers' crowd |
+| `flood_<n>` + `flood_<n>_target` | a floodlight bank and where its beam lands | warning: the procedural towers' lights |
 
 ## Budgets (checked by `assets:validate`)
 
@@ -216,7 +230,7 @@ it skips cleanly.
 | Chicken | ≤ 15k triangles, one skinned mesh, ≤ 40 joints |
 | Chicken textures | 2k (2048) KTX2, one set per tier |
 | Arena | ≤ 60k triangles, lightmap ≤ 4k (in `TEXCOORD_1`) |
-| First load | ≤ 12 MB; non-Rust tiers and arena extras lazy-load |
+| First load (art assets; app code excluded) | ≤ 12 MB raw; non-Rust tiers and arena extras lazy-load |
 
 ## Testing the pipeline itself
 
