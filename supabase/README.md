@@ -94,12 +94,30 @@ constraint, so zod can mirror them and adding a value is a one-line migration.
 |---|---|---|
 | `players` | One row per pasted wallet address | `tier` is null until the address passes the gate. A username needs its signed message (`username_sig`). Usernames are unique case-insensitively. |
 | `balance_checks` | Audit trail for the $COCK holding gate | No FK to `players`: the gate checks an address before its row exists. `tokens` is raw base units and `decimals` the mint's, so the UI amount is `tokens / 10^decimals`. |
-| `matches` | One row per match; `input_log` makes it replayable | Can be written at match start (`ended_at`, `reason`, `winner` null) or at the end. A finished match has 1–5 rounds, and a forfeit records the round it ended in. `reason = 'draw'` has `winner` null; every other reason has a winner. |
+| `matches` | One row per match; `input_log` makes it replayable | Can be written at match start (`ended_at`, `reason`, `winner` null) or at the end. A finished match has 1–5 rounds, and a forfeit records the round it ended in. `reason = 'draw'` has `winner` null; every other reason has a winner. See [Match reasons](#match-reasons). |
 | `payouts` | SOL payouts, one per win and one per daily rank | `idem_key` is unique: the match id for a win, `YYYY-MM-DD:rank` for daily. A win payout must go to that match's winner (a composite FK to `matches (id, winner)`), so a drawn or unfinished match cannot be paid, and once a match has a win payout its winner cannot change. `sent`/`paid` need `tx_sig`; `paid` exactly when `paid_at` is set. |
 | `daily_rewards` | Each UTC day's top 10 and what each rank was paid | One row per rank and per address per day. |
 | `fee_claims` | Every fee claim and swap | Feeds B₂₄ₕ and the fee ticker. `claim_sig`/`swap_sig` are unique, so a claim recorded twice cannot inflate payouts. |
 | `pool_snapshots` | One row per minute for the live chart | `at` must be a whole minute (UTC); the worker upserts on it. |
 | `abuse_events` | The admin review queue | `resolved_by` and `resolved_at` are set together. |
+
+### Match reasons
+
+`matches.reason` extends the spec's `ko/ringout/timeout/forfeit` with the ways
+the sim can also end a match. The writer maps the sim's final state (the
+mapping belongs in `packages/shared`, next to the row types):
+
+| Final state | `reason` | `winner` |
+|---|---|---|
+| `matchWinner = 2` (double KO, sudden-death expiry, or level at the round cap) | `draw` | null |
+| The loser disconnected past the grace period | `forfeit` | the connected player |
+| The winner won the final round | that round's reason: `ko`, `ringout`, `timeout`, or `sudden_death` (sim `suddenDeath`) | the winner |
+| Won on round count at the round cap, the final round drawn | `decision` | the winner |
+
+The sim's final state keeps the last round's reason, so a match won in round
+1 whose rounds 2–5 were all drawn ends with `sdExpired` and a winner. Mapping
+that straight to `draw` violates `matches_winner_iff_decisive`, and since the
+result and its payout are written in one transaction, it would lose both.
 
 The spec's indexes are all present: `matches (winner, ended_at desc)`,
 `matches (p1, p2, ended_at desc)` for the pairing caps, and

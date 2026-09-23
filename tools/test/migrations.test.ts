@@ -499,14 +499,21 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       const draw = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: null, reason: "draw", rounds: [{}, {}, {}, {}, {}] });
       expect(await one(c, "select winner, reason from public.matches where id = $1", [draw])).toEqual({ winner: null, reason: "draw" });
       await addMatch(c, { p1: ROOSTER, p2: HEN, endedAgo: null }); // unfinished: no result yet
+      // Every decisive way a match can end has a reason that goes with a winner.
+      for (const reason of ["ko", "ringout", "timeout", "sudden_death", "decision", "forfeit"]) {
+        await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN, reason });
+      }
 
       const bad: [MatchInput, string][] = [
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "draw" }, "matches_winner_iff_decisive"],
         [{ p1: ROOSTER, p2: HEN, winner: null, reason: "ko" }, "matches_winner_iff_decisive"],
         [{ p1: ROOSTER, p2: HEN, winner: null, reason: "forfeit" }, "matches_winner_iff_decisive"],
+        [{ p1: ROOSTER, p2: HEN, winner: null, reason: "decision" }, "matches_winner_iff_decisive"],
+        [{ p1: ROOSTER, p2: HEN, winner: null, reason: "sudden_death" }, "matches_winner_iff_decisive"],
         [{ p1: ROOSTER, p2: HEN, winner: CHICK, reason: "ko" }, "matches_winner_is_player"],
         [{ p1: ROOSTER, p2: ROOSTER, winner: ROOSTER }, "matches_distinct_players"],
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "doubleko" }, "matches_reason_check"],
+        [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "suddenDeath" }, "matches_reason_check"],
         [{ p1: ROOSTER, p2: HEN, winner: null, reason: "draw", endedAgo: null }, "matches_ended_has_reason"],
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: null }, "matches_ended_has_reason"],
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, rounds: [] }, "matches_rounds_shape"],
@@ -516,6 +523,32 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       for (const [m, constraint] of bad) {
         await expect(addMatch(c, m), JSON.stringify(m)).rejects.toMatchObject({ code: "23514", constraint });
       }
+    });
+  });
+
+  it("stores a match won on rounds at the cap whose final round was drawn, with its win payout", async () => {
+    // Sim end state: P1 took round 1, rounds 2-5 were drawn (sdExpired), so
+    // round = 5, w1 = 1, w2 = 0, matchWinner = 0, and the final reason is the
+    // drawn round's. The result and its payout are written in one transaction
+    // (spec: Payouts), so a rejected result would lose the payout too.
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN);
+      await c.exec("begin");
+      const rounds = [{ winner: 0, reason: "timeout" }, ...Array.from({ length: 4 }, () => ({ winner: 2, reason: "sdExpired" }))];
+      const id = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "decision", rounds });
+      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 29000000)", [id, id, ROOSTER]);
+      await c.exec("commit");
+      expect(await one(c, "select m.winner, m.reason, jsonb_array_length(m.rounds) as n, p.lamports from public.matches m join public.payouts p on p.match_id = m.id")).toEqual({
+        winner: ROOSTER,
+        reason: "decision",
+        n: 5,
+        lamports: 29000000,
+      });
+      // Mapping that final round's draw straight to the match reason is the bug this guards against.
+      await expect(addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "draw", rounds })).rejects.toMatchObject({
+        code: "23514",
+        constraint: "matches_winner_iff_decisive",
+      });
     });
   });
 

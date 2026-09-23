@@ -71,8 +71,18 @@ create table public.matches (
   started_at      timestamptz not null default now(),
   ended_at        timestamptz,
   winner          public.sol_address references public.players (address),
-  -- 'draw': double KO, sudden-death expiry, or the 5-round cap (sim matchWinner = 2).
-  reason          text check (reason in ('ko', 'ringout', 'timeout', 'forfeit', 'draw')),
+  -- How the match ended, from the sim's final state (Reason in packages/sim):
+  --   matchWinner = 2 (no winner)            -> 'draw' (winner null)
+  --   the loser disconnected past the grace  -> 'forfeit'
+  --   the winner won the final round         -> that round's reason: 'ko',
+  --                                             'ringout', 'timeout', or
+  --                                             'sudden_death' (suddenDeath)
+  --   otherwise (won on round count at the   -> 'decision'
+  --   round cap; the final round was drawn)
+  -- The final state keeps the last round's reason, so a match won in round 1
+  -- whose later rounds were all drawn ends with sdExpired or doubleKo and a
+  -- winner: that is a 'decision', never a 'draw'.
+  reason          text check (reason in ('ko', 'ringout', 'timeout', 'sudden_death', 'decision', 'forfeit', 'draw')),
   rounds          jsonb not null default '[]',
   -- Replay source. A 5-round match is about 28.5k ticks, so 1 MiB is ample.
   input_log       bytea check (octet_length(input_log) <= 1048576),
