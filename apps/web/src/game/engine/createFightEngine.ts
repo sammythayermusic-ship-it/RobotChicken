@@ -1,5 +1,4 @@
 import { ACESFilmicToneMapping, SRGBColorSpace, WebGLRenderer } from "three";
-import hitboxes from "@cockfight/sim/data/hitboxes.json" with { type: "json" };
 import { B, RULES, stateHash, type CpuLevel, type MatchState, type SimEvent } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import type { AudioSink } from "../fx/director";
@@ -13,9 +12,11 @@ import type { ArenaView } from "../view/FightView";
 import { FightView } from "../view/FightView";
 import { loadGltf } from "./assets";
 import { FixedLoop, STEP_MS } from "./loop";
+import { chickenModelUrl } from "./models";
 import { PerfMeter, type PerfSnapshot } from "./perf";
 import { qualitySettings, type QualityTier } from "./quality";
 
+export { chickenModelUrl };
 export type FightMode = "cpu" | "2p" | "demo";
 
 export interface FightOptions {
@@ -52,13 +53,6 @@ export interface FightEngine {
   dispose(): void;
 }
 
-/** Model URL + cache-busting version from the baked hitboxes (visuals and hitboxes can't drift apart). */
-export function chickenModelUrl(): string {
-  const file = hitboxes.source.file || "apps/web/public/models/chicken_placeholder.glb";
-  const path = file.replace(/^apps\/web\/public/, "");
-  const v = hitboxes.source.sha256 ? `?v=${hitboxes.source.sha256.slice(0, 8)}` : "";
-  return `${path}${v}`;
-}
 
 interface DebugFight {
   /** True once the model is loaded, shaders are compiled and the loop runs. */

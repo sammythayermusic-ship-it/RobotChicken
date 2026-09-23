@@ -41,10 +41,12 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { loadGltf, type GLTF } from "../engine/assets";
 import { installDebug, type ShowcaseDebug } from "../engine/debug";
 import { disposeRenderer } from "../engine/disposeRenderer";
+import { chickenModelUrl } from "../engine/models";
 import { buildBoxChicken, type BoxChicken } from "./boxChicken";
 import { BACKDROP, buildStage, type Stage } from "./stage";
 
-export const SHOWCASE_MODEL_URL = "/models/chicken_placeholder.glb";
+/** The same glb the fight loads (the hero once imported). */
+export const SHOWCASE_MODEL_URL = chickenModelUrl();
 
 export interface ShowcaseMotion {
   /** Held still: no render loop, just a settled frame when the picture changes. */

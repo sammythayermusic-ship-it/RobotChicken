@@ -84,7 +84,12 @@ export class FightView {
   /** Mount an arena (replaces the placeholder floor) and rebuild the env map from it. */
   setArena(arena: ArenaView): void {
     this.arena?.dispose();
-    for (const m of this.placeholder) m.removeFromParent();
+    for (const m of this.placeholder) {
+      m.removeFromParent();
+      m.geometry.dispose();
+      (m.material as MeshStandardMaterial).dispose();
+    }
+    this.placeholder.length = 0;
     this.arena = arena;
     this.scene.add(arena.root);
     this.setEnvironment(arena.envScene ?? null);
@@ -129,6 +134,11 @@ export class FightView {
     }
     this.arena?.update(dt, this.time);
     this.camera.render(alpha);
+    // Fog starts past the fighters wherever the camera is (portrait pulls it far back).
+    const fog = this.scene.fog as Fog;
+    const d = this.camera.camera.position.z;
+    fog.near = d + 8;
+    fog.far = d + 55;
     this.renderer.render(this.scene, this.camera.camera);
     this.ko.apply(this.renderer);
   }

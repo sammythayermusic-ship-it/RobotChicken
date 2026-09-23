@@ -100,6 +100,39 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   useEffect(() => audio.current?.setMuted(muted), [muted]);
   useEffect(() => () => audio.current?.dispose(), []);
 
+  // Autostart links (/play?mode=cpu, bench, e2e) skip the FIGHT click, so the
+  // first key press or tap is the gesture that may start audio.
+  const audioPending = useRef(false);
+  useEffect(() => {
+    if (!engine || audio.current || params.manual) return;
+    const unlock = () => {
+      if (audio.current || audioPending.current) return;
+      audioPending.current = true;
+      void createAudio()
+        .then((a) => {
+          audio.current = a;
+          if (a) {
+            a.setMuted(muted);
+            void engine.ready.then(() => engine.setAudio(a));
+          }
+        })
+        .catch(() => {
+          audio.current = null;
+        })
+        .finally(() => {
+          audioPending.current = false;
+        });
+    };
+    window.addEventListener("keydown", unlock, { once: true });
+    window.addEventListener("pointerdown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("pointerdown", unlock);
+    };
+  }, [engine, params.manual, muted]);
+
+  const uiSound = useCallback((name: "pause" | "ui_select" | "ui_back") => audio.current?.play(name), []);
+
   const start = useCallback(
     async (c: PlayConfig) => {
       // The FIGHT click is the user gesture that lets audio start.
@@ -123,9 +156,14 @@ export default function PlayClient({ params }: { params: PlayParams }) {
 
   const togglePause = useCallback(() => {
     if (!engine || cold.matchWinner >= 0) return;
-    if (engine.paused) engine.resume();
-    else engine.pause();
-  }, [engine, cold.matchWinner]);
+    if (engine.paused) {
+      uiSound("ui_select");
+      engine.resume();
+    } else {
+      uiSound("pause");
+      engine.pause();
+    }
+  }, [engine, cold.matchWinner, uiSound]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -183,10 +221,17 @@ export default function PlayClient({ params }: { params: PlayParams }) {
         <div className="absolute inset-0 grid place-items-center bg-black/60" role="dialog" aria-modal="true" aria-label="Paused">
           <div className="flex w-72 flex-col gap-2 rounded-xl border border-zinc-700 bg-zinc-950/95 p-5">
             <h2 className="font-display text-3xl">PAUSED</h2>
-            <button type="button" autoFocus className="rounded bg-amber-400 py-2 font-display text-black" onClick={() => engine?.resume()}>
+            <button type="button" autoFocus className="rounded bg-amber-400 py-2 font-display text-black" onClick={togglePause}>
               RESUME
             </button>
-            <button type="button" className="rounded border border-zinc-600 py-2 font-display" onClick={() => setRound((r) => r + 1)}>
+            <button
+              type="button"
+              className="rounded border border-zinc-600 py-2 font-display"
+              onClick={() => {
+                uiSound("ui_select");
+                setRound((r) => r + 1);
+              }}
+            >
               RESTART
             </button>
             <label className="flex items-center justify-between text-sm text-zinc-300">
@@ -229,7 +274,10 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             type="button"
             autoFocus
             className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 px-6 py-3 font-display text-xl tracking-wider shadow-[0_4px_0_#7c2d12]"
-            onClick={() => setRound((r) => r + 1)}
+            onClick={() => {
+              uiSound("ui_select");
+              setRound((r) => r + 1);
+            }}
           >
             REMATCH (R)
           </button>
