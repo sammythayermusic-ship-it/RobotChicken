@@ -2,11 +2,11 @@
 --
 -- Access model. apps/game and apps/worker write everything with the service
 -- role; the web app's publishable ("anon") key reads the three public views
--- (leaderboard_v, pool_v, match_replay_v) and nothing else. RLS is enabled on every table with no policies, so even a
--- leaked table grant returns no rows to anon/authenticated. Grants are spelled
--- out because projects created after 2026-05-30 no longer auto-grant the API
--- roles, while older projects auto-grant ALL: the end state here is the same
--- on both.
+-- (leaderboard_v, pool_v, match_replay_v) and nothing else. RLS is enabled
+-- on every table with no policies, so even a leaked table grant returns no
+-- rows to anon/authenticated. Grants are spelled out because projects
+-- created after 2026-05-30 no longer auto-grant the API roles, while older
+-- projects auto-grant ALL: the end state here is the same on both.
 --
 -- Portability. Supabase runs Postgres 17 and the PGlite tests run 18, so
 -- nothing 18-only (no uuidv7(), no virtual generated columns). Enumerations
@@ -247,7 +247,7 @@ comment on table public.abuse_events is 'Admin review queue.';
 
 -- Row level security: on everywhere, no policies. service_role has BYPASSRLS;
 -- the owner (postgres) is exempt as owner, which the views below rely on.
--- Do not FORCE row level security, or pool_v and leaderboard_v go empty.
+-- Do not FORCE row level security, or the public views go empty.
 alter table public.players        enable row level security;
 alter table public.balance_checks enable row level security;
 alter table public.matches        enable row level security;

@@ -210,8 +210,8 @@ behind the public replay page `/m/[id]`: `id`, `p1`, `p2`, `p1_name` and
 `reason`, `rounds`, `input_log`, `result_hash`, `started_at`, `ended_at`.
 Matches still in progress are left out, and so are `region`, net quality,
 `payout_lamports` and the abuse `flag`. Like `pool_v` it runs with its owner's
-rights and has `security_barrier`; a lookup by `id` still uses the primary
-key (a test checks the plan). Fetch one match by `id`; select a list without
+rights and has `security_barrier`; a lookup by `id` still becomes an index
+condition on `matches` behind the barrier (a test checks the plan). Fetch one match by `id`; select a list without
 `input_log`, which can be up to 1 MiB per row.
 
 *Decision: replays are served from this view.* The spec requires a public
