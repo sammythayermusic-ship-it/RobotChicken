@@ -31,6 +31,8 @@ export interface FightOptions {
   debug?: boolean;
   /** Build the procedural arena (loaded lazily); off for the fastest tests. */
   arena?: (renderer: WebGLRenderer) => Promise<ArenaView>;
+  /** Bench mode: keep every frame time of the match (not a rolling window). */
+  bench?: boolean;
   /** Attach an audio engine once the user has interacted. */
   audio?: () => Promise<AudioSink | null>;
   onMatchEnd?: (winner: number, replayHash: string) => void;
@@ -45,6 +47,8 @@ export interface FightEngine {
   setShake(amount: number): void;
   setAudio(a: AudioSink | null): void;
   perf(): PerfSnapshot;
+  /** Forget frame times so far (e.g. loading and shader warm-up). */
+  resetPerf(): void;
   dispose(): void;
 }
 
@@ -87,7 +91,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   renderer.toneMappingExposure = 1.05;
   renderer.info.autoReset = false;
   let quality = qualitySettings(opts.quality, window.devicePixelRatio || 1);
-  const perf = new PerfMeter();
+  const perf = new PerfMeter(opts.bench ? 60 * 60 * 15 : 240);
 
   const resize = () => {
     const w = Math.max(1, host.clientWidth);
@@ -124,6 +128,8 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       const events = match.tick();
       view.tick(match.cur);
       director.tick(match.cur, events);
+      // Frame times from the loading screen and countdown aren't gameplay: measure from FIGHT.
+      if (events.some((e) => e.kind === "fight") && match.cur.round === 1) perf.reset();
       if (!ended && match.cur.matchWinner >= 0) {
         ended = true;
         opts.onMatchEnd?.(match.cur.matchWinner, stateHash(match.cur));
@@ -238,6 +244,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       if (director) director.audio = a;
     },
     perf: () => perf.snapshot(renderer.getPixelRatio(), quality.tier),
+    resetPerf: () => perf.reset(),
     dispose() {
       disposed = true;
       loop.stop();

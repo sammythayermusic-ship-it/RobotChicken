@@ -25,6 +25,7 @@ export class PerfMeter {
   programs = 0;
   gpu = "";
 
+  /** Rolling window by default; a bench passes a large window to keep a whole match. */
   constructor(windowFrames = 240) {
     this.cap = windowFrames;
   }

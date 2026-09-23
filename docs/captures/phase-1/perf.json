@@ -1,0 +1,32 @@
+{
+  "desktop": {
+    "fps": 119.99999999999999,
+    "p50": 8.299999999999272,
+    "p95": 9.200000000000728,
+    "p99": 9.30000000000291,
+    "over16": 0,
+    "frames": 240,
+    "drawCalls": 16,
+    "triangles": 5228,
+    "programs": 8,
+    "dpr": 1,
+    "tier": "high",
+    "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "programsAtFight": 8
+  },
+  "mobileProxy": {
+    "fps": 119.98800119988019,
+    "p50": 8.30000000000291,
+    "p95": 9.200000000000728,
+    "p99": 9.200000000000728,
+    "over16": 0,
+    "frames": 240,
+    "drawCalls": 16,
+    "triangles": 5228,
+    "programs": 8,
+    "dpr": 1.25,
+    "tier": "medium",
+    "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
+    "programsAtFight": 8
+  }
+}

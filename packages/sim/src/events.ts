@@ -48,7 +48,8 @@ export function deriveEvents(prev: MatchState, next: MatchState, heatMax: number
   if (next.phase === Phase.countdown) {
     // 3, 2, 1 on the second boundaries of the countdown.
     const secs = (t: number) => ((t + 59) / 60) | 0;
-    if (secs(next.phaseT) !== secs(prev.phaseT) || next.round !== prev.round) {
+    // The first number shows on the countdown's first tick (match start or a new round).
+    if (secs(next.phaseT) !== secs(prev.phaseT) || next.round !== prev.round || prev.tick === 0) {
       const n = secs(next.phaseT);
       if (n >= 1 && n <= 3) ev.push({ kind: "countdown", n });
     }

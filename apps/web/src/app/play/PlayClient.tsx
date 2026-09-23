@@ -11,6 +11,7 @@ import { createAudio } from "@/game/audio";
 import type { FightEngine, FightMode } from "@/game/engine/createFightEngine";
 import { defaultTier, loadTier, saveTier, type QualityTier } from "@/game/engine/quality";
 import { HudStore } from "@/game/hud/hudStore";
+import { BenchPanel } from "./BenchPanel";
 import { ModePicker, type PlayConfig } from "./ModePicker";
 
 const FightCanvas = dynamic(() => import("@/game/react/FightCanvas"), {
@@ -141,6 +142,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
           quality,
           manual: params.manual,
           debug: params.debug,
+          bench: params.bench,
           arena: params.arena
             ? (renderer) => import("@/game/view/arena/Junkyard").then((m) => m.createJunkyard(renderer))
             : undefined,
@@ -218,6 +220,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
         </div>
       ) : null}
       {params.fps ? <FpsOverlay engine={engine} /> : null}
+      {params.bench ? <BenchPanel engine={engine} done={cold.matchWinner >= 0} /> : null}
     </main>
   );
 }

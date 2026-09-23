@@ -46,6 +46,14 @@ export default defineConfig({
       testIgnore: /perf\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, launchOptions: { args: GPU_ARGS } },
     },
+    {
+      // Local only (pnpm test:perf): real-time frame timing needs a real GPU.
+      name: "perf",
+      testMatch: /perf\.spec\.ts/,
+      timeout: 240_000,
+      retries: 0,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, launchOptions: { args: GPU_ARGS } },
+    },
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined

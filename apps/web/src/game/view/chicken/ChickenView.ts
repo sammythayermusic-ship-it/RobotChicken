@@ -134,10 +134,12 @@ export class ChickenView {
     }
     this.mixer.update(0);
 
-    const f = this.flash > 0 ? 1 : 0;
+    // Hit flash: a hot orange-white tint for two ticks, strong enough to read
+    // on every tier without blowing the chicken out to a flat white shape.
+    const f = this.flash > 0;
     for (const m of this.flashMats) {
       const base = m.userData.baseEmissive as MeshStandardMaterial["emissive"] | undefined;
-      if (f) m.emissive.setRGB(1, 1, 1);
+      if (f) m.emissive.setRGB(0.55, 0.38, 0.22);
       else if (base) m.emissive.copy(base);
     }
   }
