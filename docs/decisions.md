@@ -75,6 +75,15 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | Tier cosmetics | Chrome: dash light trail. Gold: double sparks on hits. Diamond: iridescent physical material. Mirror matches tint P2 (hue shift, or copper for grey tiers). Gold's KO sting and Diamond's name chant / entrance wait for Sammy's sound pack and hero model. |
 | Perf is measured from FIGHT | Loading and shader warm-up don't count. `/play?bench=1` runs a fixed-seed CPU match on any device and prints copyable percentiles. |
 | Determinism is checked in three JS engines | The golden replays run in Chromium, Firefox and WebKit (e2e) as well as Node on x64 and arm64 (CI). |
+| Audio renders on the FIGHT click (or the first key/tap) | WebAudio needs a user gesture; the first-exchange sounds are ready ~40–110 ms after it, all 30 within ~370 ms. One variant per sound plus deterministic pitch jitter. |
+| Every sound is loudness-levelled after rendering | Peak ≤ 0.89 or a fixed short-term loudness, whichever is quieter, so `SOUND_SPECS` gains compare like with like; the KO moment is deliberately the loudest. Heavy thumps start at 140–170 Hz so phone and laptop speakers reproduce them. |
+| Sound pack drop-in: `public/audio/manifest.json` | `{"hit_light": "hit_light.m4a"}`; listed files replace recipes, failures fall back to the recipe. No 404 probing. |
+| Arena shaders are custom (three's fog / tone-mapping chunks) | Static light is baked into vertex attributes, but the fire light is per-pixel from shared uniforms, so walls and floor flicker in sync with the fighters' point lights. 7 draw calls, ~17k triangles. |
+| The env-map scene is brighter behind the camera | Otherwise chrome / gold reflect the dark pit and read as black paint. |
+| Fog follows the camera distance | Portrait views pull the camera 45–60 u back; fixed fog would swallow the fighters. |
+| Hero import resamples authored attack phases onto the contract | The sim reads frames and phases from the contract, so a hero clip with a different `cf_phases` split is retimed phase by phase at export. `--retime` stretches 24 fps clips within one authored frame of the contract length. |
+| Dive kick without `cf_phases` is checked against its 30-frame clip | Its active window has no fixed length in the sim (active until landing). |
+| First load = glb + decoders + audio overrides that load before FIGHT | Must stay ≤ 12 MB; non-Rust tiers and arena extras are lazy. |
 ## Phase 0 review outcomes
 
 An adversarial review (5 area reviewers, each finding independently re-verified) confirmed 32 low/medium issues; all were fixed before PR #1. The choices worth remembering:
