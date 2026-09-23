@@ -28,3 +28,6 @@ art/blender/out/
 .DS_Store
 .vscode/
 .idea/
+
+# Claude Code worktrees / local settings
+.claude/

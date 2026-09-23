@@ -9,6 +9,9 @@ allowBuilds:
   unrs-resolver: true
   msgpackr-extract: false
 
+# Filtered installs (CI replay job, Docker) must not trigger an automatic full reinstall on `pnpm run`.
+verifyDepsBeforeRun: false
+
 # Shared versions. Keep lower bounds at releases that are at least a day old
 # (pnpm 11's default minimumReleaseAge holds back anything newer). Do not set minimumReleaseAge.
 catalog:

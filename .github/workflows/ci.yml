@@ -1,0 +1,108 @@
+name: ci
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+
+jobs:
+  check:
+    name: lint, typecheck, test, assets, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm assets:validate
+      - run: pnpm assets:bake --check
+      - run: pnpm --filter @cockfight/web build
+      - run: pnpm --filter @cockfight/game build
+      - run: pnpm --filter @cockfight/game smoke
+      - run: pnpm --filter @cockfight/worker build
+
+  # "Replay of a recorded input log yields an identical state hash on two
+  # machines": the golden replays run on x64 Linux and arm64 macOS, and a
+  # third job diffs the two outputs.
+  replay:
+    name: golden replay (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # Only the sim and its dev tools: macOS minutes are billed at 10x.
+      - run: pnpm install --frozen-lockfile --filter "@cockfight/sim..."
+      # Run tsx directly: a filtered install has no root deps, so avoid pnpm's pre-run dependency check.
+      - run: packages/sim/node_modules/.bin/tsx packages/sim/scripts/replay-golden.ts > replay-hashes.txt
+      - run: cat replay-hashes.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: replay-hashes-${{ matrix.os }}
+          path: replay-hashes.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  replay-compare:
+    name: golden replay hashes match across machines
+    needs: replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: replay-hashes-*
+          path: hashes
+      - run: |
+          set -euo pipefail
+          files=(hashes/*/replay-hashes.txt)
+          [ "${#files[@]}" -eq 2 ] || { echo "expected 2 hash files, got ${#files[@]}"; exit 1; }
+          [ -s "${files[0]}" ] || { echo "empty hash file"; exit 1; }
+          { echo '### Golden replay hashes'; echo '```'; cat "${files[0]}"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          diff -u "${files[0]}" "${files[1]}"
+
+  docker:
+    name: docker images boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: build game image
+        run: docker build -f apps/game/Dockerfile -t cockfight-game .
+      - name: build worker image
+        run: docker build -f apps/worker/Dockerfile -t cockfight-worker .
+      - name: game serves /health
+        run: |
+          docker run -d --rm -p 2567:2567 --name game cockfight-game
+          for i in $(seq 1 30); do curl -fsS localhost:2567/health && exit 0; sleep 1; done
+          docker logs game; exit 1
+      - name: worker serves /health
+        run: |
+          docker run -d --rm -p 8080:8080 --name worker cockfight-worker
+          for i in $(seq 1 30); do curl -fsS localhost:8080/health && exit 0; sleep 1; done
+          docker logs worker; exit 1
