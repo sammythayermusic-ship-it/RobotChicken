@@ -1,0 +1,50 @@
+# Fly.io config for the Colyseus game server. Deploy from the REPO ROOT (the
+# Dockerfile's build context):
+#   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile
+#
+# Regions: fly.toml only names the primary region. Add Frankfurt once, after the
+# first deploy (scale one region per command):
+#   fly scale count 1 --region fra --config apps/game/fly.toml
+# Before that serves players, Phase 2 must pin each WebSocket to the machine that
+# holds its room (the anycast hostname routes to the nearest machine): reply with
+# fly-replay, or run one app per region.
+
+app = "cockfight-game"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+# Fly's maximum. Phase 0 drains in milliseconds; Phase 2's onBeforeShutdown
+# uses the window to let a live match finish before the machine stops.
+kill_timeout = 300
+
+[env]
+  NODE_ENV = "production"
+  PORT = "2567"
+  # The web app's origin(s), comma-separated. The default (http://localhost:3000)
+  # only suits local dev; the server logs a warning if it is left in production.
+  # ALLOWED_ORIGINS = "https://<web domain>"
+
+[http_service]
+  internal_port = 2567
+  force_https = true
+  # Rooms live in memory: a stopped machine ends every match on it.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Each player holds one WebSocket (a match is two), so limit by connections.
+  # Without this block Fly's default hard limit is 25 connections per machine.
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 400
+    hard_limit = 500
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
