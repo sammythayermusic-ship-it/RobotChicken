@@ -9,6 +9,14 @@
  * Unlike the fight view, the showcase runs its AnimationMixers on wall-clock
  * time (`mixer.update(dt)`): nothing here is gameplay, so there is no sim
  * state to derive poses from.
+ *
+ * Motion (WCAG 2.2.2): the hero is decorative and would otherwise animate
+ * forever, so it can be paused (`setPaused`, wired to a button on the page),
+ * and under `prefers-reduced-motion: reduce` it starts paused, with the camera
+ * sway off even if the viewer presses play. Paused means no render loop at
+ * all: one settled frame is drawn whenever the canvas would otherwise be out
+ * of date (first load, resize, a preference change). The media query is
+ * followed live.
  */
 import {
   ACESFilmicToneMapping,
@@ -38,10 +46,23 @@ import { BACKDROP, buildStage, type Stage } from "./stage";
 
 export const SHOWCASE_MODEL_URL = "/models/chicken_placeholder.glb";
 
+export interface ShowcaseMotion {
+  /** Held still: no render loop, just a settled frame when the picture changes. */
+  readonly paused: boolean;
+  /** The viewer's `prefers-reduced-motion: reduce`, followed live. */
+  readonly reducedMotion: boolean;
+}
+
 export interface ShowcaseOptions {
   modelUrl?: string;
   /** Device-pixel-ratio cap; the hero is decorative, so fill rate matters more than crispness. */
   maxPixelRatio?: number;
+  /**
+   * Called once the first frame is on screen, then whenever `paused` or
+   * `reducedMotion` changes, so a pause/play control can mirror the state.
+   * Never called after `dispose()`.
+   */
+  onMotionChange?: (motion: ShowcaseMotion) => void;
 }
 
 interface Status {
@@ -49,6 +70,7 @@ interface Status {
   fallback: boolean;
   clips: string[];
   error: string | null;
+  frames: number;
 }
 
 /** Materials left alone when recolouring the second chicken (read as eyes and beak on both). */
@@ -66,11 +88,17 @@ export class Showcase {
   private readonly camera = new PerspectiveCamera(VFOV, 1, 0.05, 200);
   private readonly mixers: AnimationMixer[] = [];
   private readonly bobbers: { chicken: BoxChicken; phase: number }[] = [];
-  private readonly status: Status = { ready: false, fallback: false, clips: [], error: null };
+  private readonly status: Status = { ready: false, fallback: false, clips: [], error: null, frames: 0 };
   private readonly io: IntersectionObserver;
   private readonly ro: ResizeObserver;
   private readonly uninstallDebug: () => void;
-  private readonly reducedMotion: boolean;
+  private readonly motionQuery: MediaQueryList;
+  private readonly onMotionChange: ((motion: ShowcaseMotion) => void) | undefined;
+  private reducedMotion: boolean;
+  /** The viewer's own pause/play choice; null follows prefers-reduced-motion. */
+  private userPaused: boolean | null = null;
+  /** The canvas does not show the current scene: nothing drawn yet, resized, or re-posed. */
+  private stale = true;
   private stage: Stage | null = null;
   /** Chicken height in world units; the stage and camera scale with it. */
   private unit = 1;
@@ -108,9 +136,12 @@ export class Showcase {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, opts.maxPixelRatio ?? 1.5));
     this.renderer.setClearColor(BACKDROP, 1);
     this.scene.background = new Color(BACKDROP);
-    this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    this.reducedMotion = this.motionQuery.matches;
+    this.onMotionChange = opts.onMotionChange;
 
     const status = this.status;
+    const motion = () => this.motion;
     this.uninstallDebug = installDebug("showcase", {
       get ready() {
         return status.ready;
@@ -124,6 +155,15 @@ export class Showcase {
       get error() {
         return status.error;
       },
+      get paused() {
+        return motion().paused;
+      },
+      get reducedMotion() {
+        return motion().reducedMotion;
+      },
+      get frames() {
+        return status.frames;
+      },
     } satisfies ShowcaseDebug);
 
     this.resize();
@@ -136,9 +176,31 @@ export class Showcase {
     });
     this.io.observe(host);
     document.addEventListener("visibilitychange", this.updateRunning);
+    this.motionQuery.addEventListener("change", this.onMotionQuery);
 
     void this.load(opts.modelUrl ?? SHOWCASE_MODEL_URL);
     this.updateRunning();
+  }
+
+  get paused(): boolean {
+    return this.userPaused ?? this.reducedMotion;
+  }
+
+  get motion(): ShowcaseMotion {
+    return { paused: this.paused, reducedMotion: this.reducedMotion };
+  }
+
+  /**
+   * The page's pause/play control. The choice holds until the viewer changes
+   * their reduced-motion preference, which then takes over again.
+   */
+  setPaused(paused: boolean): void {
+    if (this.disposed) return;
+    const was = this.paused;
+    this.userPaused = paused;
+    if (paused === was) return;
+    this.updateRunning();
+    this.emitMotion();
   }
 
   dispose(): void {
@@ -147,6 +209,7 @@ export class Showcase {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
     document.removeEventListener("visibilitychange", this.updateRunning);
+    this.motionQuery.removeEventListener("change", this.onMotionQuery);
     this.io.disconnect();
     this.ro.disconnect();
     for (const mixer of this.mixers) {
@@ -281,22 +344,46 @@ export class Showcase {
     if (this.disposed) return;
     const w = Math.max(1, this.host.clientWidth);
     const h = Math.max(1, this.host.clientHeight);
+    // Setting the canvas size, even to the same value, blanks the drawing buffer.
     this.renderer.setSize(w, h, false);
+    this.stale = true;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     if (this.hasChickens) this.frameCamera();
+    this.updateRunning();
   }
 
-  /** Render only while on screen and the tab is visible. */
+  private readonly onMotionQuery = (e: MediaQueryListEvent): void => {
+    if (this.disposed) return;
+    this.reducedMotion = e.matches;
+    // The newest word from the viewer replaces an earlier click on the control.
+    this.userPaused = null;
+    // The camera sway depends on it, so a still frame must be re-posed too.
+    this.stale = true;
+    this.updateRunning();
+    this.emitMotion();
+  };
+
+  private emitMotion(): void {
+    if (this.status.ready && !this.disposed) this.onMotionChange?.(this.motion);
+  }
+
+  /**
+   * Nothing is drawn while off screen or in a hidden tab. Otherwise the render
+   * loop runs unless paused; paused, one settled frame is drawn, and only when
+   * the canvas is stale.
+   */
   private readonly updateRunning = (): void => {
-    const want = !this.disposed && this.hasChickens && this.onScreen && !document.hidden;
-    if (want && !this.raf) {
+    const visible = !this.disposed && this.hasChickens && this.onScreen && !document.hidden;
+    const loop = visible && !this.paused;
+    if (loop && !this.raf) {
       this.last = -1;
       this.raf = requestAnimationFrame(this.frame);
-    } else if (!want && this.raf) {
+    } else if (!loop && this.raf) {
       cancelAnimationFrame(this.raf);
       this.raf = 0;
     }
+    if (visible && !loop && this.stale) this.render(0);
   };
 
   private readonly frame = (now: number): void => {
@@ -304,6 +391,11 @@ export class Showcase {
     // Clamp so a long stall (breakpoint, throttled tab) does not jump the idle.
     const dt = this.last < 0 ? 0 : Math.min((now - this.last) / 1000, 0.1);
     this.last = now;
+    this.render(dt);
+  };
+
+  /** Advances the scene `dt` seconds (0 re-poses it where it stands) and draws it. */
+  private render(dt: number): void {
     this.time += dt;
     const t = this.time;
 
@@ -315,11 +407,14 @@ export class Showcase {
     this.stage?.update(t);
     this.poseCamera(t);
     this.renderer.render(this.scene, this.camera);
+    this.status.frames++;
+    this.stale = false;
     if (!this.status.ready) {
       this.status.ready = true;
       this.canvas.style.opacity = "1";
+      this.emitMotion();
     }
-  };
+  }
 }
 
 /**

@@ -12,6 +12,12 @@ export interface ShowcaseDebug {
   /** Clip names in the loaded glb (empty for the fallback). */
   readonly clips: readonly string[];
   readonly error: string | null;
+  /** Held still, by the page's pause control or by prefers-reduced-motion. */
+  readonly paused: boolean;
+  /** prefers-reduced-motion: reduce, as the showcase currently sees it. */
+  readonly reducedMotion: boolean;
+  /** Frames drawn so far. It stays put while the showcase holds still. */
+  readonly frames: number;
 }
 
 export interface CockfightDebug {
