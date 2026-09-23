@@ -11,7 +11,8 @@ these scripts and `tools/src/assets/validate.ts` both read it.
 | `build_placeholder_chicken.py` | Builds the boxy placeholder robot chicken (16 bones, ~1.6k triangles, 21 clips) from the contract and exports it. Also renders the contact sheet. |
 | `export_chicken.py` | The hero export: run on an artist's .blend (`pnpm assets:import --blend <file>` does, then validates and bakes). `--retime` rescales a file not authored at 60 fps. |
 | `make_messy_fixture.py` | Builds the placeholder with UI-authored habits (`--habits all\|fixable\|<list>`) into `out/`, to test the hero export. |
-| `presets/cockfight_glb.py` | The same settings as a glTF-exporter UI preset; where to install it is in `docs/art-pipeline.md`. |
+| `presets/cockfight_glb.py` | The same settings as a glTF-exporter UI preset (every exporter setting: `EXPORT_KWARGS` plus the exporter's defaults); where to install it is in `docs/art-pipeline.md`. Generated: don't edit it by hand. |
+| `make_preset.py` | Regenerates `presets/cockfight_glb.py` from `EXPORT_KWARGS` for the running Blender. |
 
 Blender 5.2 (tested with 5.2.1) is needed only to rebuild art. CI never runs
 it: the glb and `packages/sim/data/hitboxes.json` are committed.
@@ -81,8 +82,17 @@ hitboxes.json, re-bless the golden replays (`rulesHash` covers the baked tables)
 ## Exporter settings
 
 `EXPORT_KWARGS` in `cf_common.py` is the source of truth; `presets/cockfight_glb.py`
-is the same settings as a UI preset (a test keeps them equal). If you must export by
-hand from the UI (File > Export > glTF 2.0) without the preset, match it:
+is the same settings as a UI preset. Applying a preset sets only what it lists (the dialog
+keeps its last-used value for anything else), so the preset lists every exporter setting,
+the rest at the exporter's defaults. After changing `EXPORT_KWARGS`, or on a new Blender,
+regenerate it (`heroImport.test.ts` fails until you do):
+
+```sh
+pnpm --filter @cockfight/tools run blender art/blender/make_preset.py
+```
+
+If you must export by hand from the UI (File > Export > glTF 2.0) without the preset,
+start from **Operator Defaults** in the dialog's preset menu, then match:
 
 - Format glTF Binary; Include: Selected Objects, Custom Properties; Transform: +Y Up
 - Data > Mesh: Apply Modifiers, UVs, Normals; Materials: Export; Images: None

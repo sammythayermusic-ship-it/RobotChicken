@@ -124,8 +124,11 @@ Install the exporter preset once: copy `art/blender/presets/cockfight_glb.py` to
 | Linux | `~/.config/blender/5.2/scripts/presets/operator/export_scene.gltf/` |
 
 Then select `Rig` and everything parented to it, File → Export → glTF 2.0 (.glb), and pick
-**Cockfight Glb** from the preset menu at the top of the dialog. It sets exactly the scripted
-exporter's settings (a test checks the two stay equal and export the same bytes):
+**Cockfight Glb** from the preset menu at the top of the dialog. It sets every exporter setting
+(all but the file path): the ones below, and every other one at the exporter's default, which is
+what the scripted export uses, so nothing from an earlier export or a remembered setting carries
+over. It is generated from the scripted settings by `art/blender/make_preset.py`, and a test
+checks it is complete and exports the same bytes as the scripted export:
 
 | Setting | Value |
 |---|---|
