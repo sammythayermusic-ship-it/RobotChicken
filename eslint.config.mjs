@@ -100,6 +100,7 @@ export default defineConfig([
   },
   globalIgnores([
     "**/node_modules/**",
+    ".claude/**",
     "**/.next/**",
     "**/dist/**",
     "**/out/**",
