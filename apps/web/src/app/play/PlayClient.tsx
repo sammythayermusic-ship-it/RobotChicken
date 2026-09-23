@@ -72,7 +72,16 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   useEffect(() => engine?.setQuality(quality), [engine, quality]);
   useEffect(() => engine?.setShake(shake), [engine, shake]);
   useEffect(() => {
-    if (engine && audio.current) engine.setAudio(audio.current);
+    // The engine's director exists only once it is ready (model loaded), so attach then.
+    const a = audio.current;
+    if (!engine || !a) return;
+    let live = true;
+    void engine.ready.then(() => {
+      if (live) engine.setAudio(a);
+    });
+    return () => {
+      live = false;
+    };
   }, [engine]);
   useEffect(() => audio.current?.setMuted(muted), [muted]);
   useEffect(() => () => audio.current?.dispose(), []);
