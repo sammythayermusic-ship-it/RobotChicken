@@ -28,11 +28,11 @@ import {
   type Material,
   type Object3D,
   type SkinnedMesh,
-  type Texture,
 } from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { loadGltf, type GLTF } from "../engine/assets";
 import { installDebug, type ShowcaseDebug } from "../engine/debug";
+import { disposeRenderer } from "../engine/disposeRenderer";
 import { buildBoxChicken, type BoxChicken } from "./boxChicken";
 import { BACKDROP, buildStage, type Stage } from "./stage";
 
@@ -153,9 +153,8 @@ export class Showcase {
       mixer.stopAllAction();
       mixer.uncacheRoot(mixer.getRoot());
     }
-    releaseGpu(this.scene);
-    this.renderer.dispose();
-    this.renderer.forceContextLoss();
+    // Not just renderer.dispose(): see disposeRenderer for what three r186 keeps.
+    disposeRenderer(this.renderer, this.scene);
     this.canvas.remove();
     this.uninstallDebug();
   }
@@ -347,31 +346,5 @@ function recolour(root: Object3D, clone: boolean): void {
     const mesh = o as Mesh;
     if (!mesh.isMesh) return;
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(tint) : tint(mesh.material);
-  });
-}
-
-/**
- * Frees the GPU side of everything under `root`: geometries, materials, their
- * textures and skeleton bone textures. CPU data is untouched, and three
- * re-uploads on next use, so the cached glTF these clones share stays valid
- * for the next showcase.
- */
-function releaseGpu(root: Object3D): void {
-  const seen = new Set<{ dispose(): void }>();
-  const release = (r: { dispose(): void } | null | undefined) => {
-    if (r && !seen.has(r)) {
-      seen.add(r);
-      r.dispose();
-    }
-  };
-  root.traverse((o) => {
-    const mesh = o as Mesh & Partial<SkinnedMesh>;
-    if (!mesh.isMesh) return;
-    release(mesh.geometry);
-    if (mesh.isSkinnedMesh) release(mesh.skeleton);
-    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-      for (const v of Object.values(m)) if ((v as Texture | null)?.isTexture) release(v as Texture);
-      release(m);
-    }
   });
 }

@@ -28,6 +28,32 @@ function showcase(page: Page): Promise<ShowcaseDebug | null> {
   });
 }
 
+/**
+ * How many objects built by the page's `ctor` are still alive after a full
+ * garbage collection (Chromium only: it asks V8 through CDP). The results are
+ * held in an object group that is released before returning, so counting
+ * never keeps anything alive itself.
+ */
+async function liveObjects(page: Page, ctor: string): Promise<number> {
+  const cdp = await page.context().newCDPSession(page);
+  const objectGroup = "live-objects";
+  try {
+    await cdp.send("HeapProfiler.collectGarbage");
+    const { result: proto } = await cdp.send("Runtime.evaluate", { expression: `${ctor}.prototype`, objectGroup });
+    const { objects } = await cdp.send("Runtime.queryObjects", { prototypeObjectId: proto.objectId as string, objectGroup });
+    const { result } = await cdp.send("Runtime.callFunctionOn", {
+      objectId: objects.objectId as string,
+      functionDeclaration: "function () { return this.length; }",
+      returnByValue: true,
+      objectGroup,
+    });
+    return result.value as number;
+  } finally {
+    await cdp.send("Runtime.releaseObjectGroup", { objectGroup });
+    await cdp.detach();
+  }
+}
+
 async function expectShowcaseReady(page: Page, modelPresent: boolean): Promise<void> {
   await page.waitForFunction(() => window.__cockfight?.showcase?.ready === true, null, { timeout: 30_000 });
   const state = await showcase(page);
@@ -115,6 +141,28 @@ test.describe("landing", () => {
 
     expect(problems.errors).toEqual([]);
     expect(await problems.cspViolations()).toEqual([]);
+  });
+
+  test("round trips through /play leave no dead renderer, canvas or context alive", async ({ page, request, browserName }) => {
+    test.skip(browserName !== "chromium", "counts live objects through CDP");
+    // three r186 keeps one module-level DFG LUT texture, and every renderer
+    // that uploads it adds a 'dispose' listener capturing its own GL state.
+    // renderer.dispose() never removes it, so without disposeRenderer() each
+    // visit to the landing page left one canvas and one context behind.
+    const model = await modelState(request);
+    await page.goto("/");
+    await expectShowcaseReady(page, model.present);
+    const trips = 3;
+    for (let i = 0; i < trips; i++) {
+      await page.getByRole("link", { name: "FIGHT" }).click();
+      await expect(page).toHaveURL(/\/play$/);
+      await expect(page.locator("canvas")).toHaveCount(0);
+      await page.goBack();
+      await expectShowcaseReady(page, model.present);
+    }
+    // Only the showcase on screen now.
+    expect(await liveObjects(page, "HTMLCanvasElement")).toBe(1);
+    expect(await liveObjects(page, "WebGL2RenderingContext")).toBe(1);
   });
 });
 
