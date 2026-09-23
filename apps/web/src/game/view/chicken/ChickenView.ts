@@ -1,7 +1,7 @@
 import {
   AnimationMixer, Group, Mesh, MeshStandardMaterial, type AnimationAction, type AnimationClip, type Material, type Object3D,
 } from "three";
-import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { CLIP_NAMES, HitKind, RULES, St, clipFor, sampleFor, type ClipRules, type FighterState, type Rules } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import { TIER_SLOTS, tierMaterials } from "./materials";
