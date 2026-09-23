@@ -60,13 +60,19 @@ Requirements:
   `service_role`. Newer projects grant nothing. The init migration revokes
   everything and then grants per object, so both kinds of project end up the
   same. The tests check this in both modes.
-- **Future tables and sequences** created by `postgres` in `public` default to
-  the same model: `service_role` gets SELECT/INSERT/UPDATE/DELETE (USAGE/SELECT
-  on sequences), and `anon`/`authenticated` get nothing.
-- **Functions are the exception.** Postgres grants EXECUTE on every new
-  function to PUBLIC, and a per-schema default cannot undo that. Any function
-  added to `public` must run `revoke execute on function … from public, anon,
-  authenticated` itself, unless the web app is meant to call it.
+- **Future tables, sequences and functions** created by `postgres` in `public`
+  default to the same model: `service_role` gets SELECT/INSERT/UPDATE/DELETE
+  (USAGE/SELECT on sequences, EXECUTE on functions), and `anon`/`authenticated`
+  get nothing.
+- **Functions need a global default.** Postgres grants EXECUTE on every new
+  function to PUBLIC, which every role has. A per-schema default cannot undo
+  that; the global one (`alter default privileges for role postgres revoke
+  execute on functions from public`, no `in schema`) does. It therefore also
+  applies to functions `postgres` creates in *other* schemas: grant EXECUTE on
+  those explicitly to whoever calls them (an RLS helper, for example, to
+  `anon`/`authenticated`). A test fails if `anon` or `authenticated` can
+  execute any function in `public` that is not on its allowlist (empty
+  today).
 
 ### Checklist for a new migration
 
@@ -79,9 +85,15 @@ Requirements:
    be added to the test's `VIEWS`. `input_log` is public on purpose (see
    `match_replay_v`). Decide whether it is an owner-rights or an invoker view
    (see `pool_v` below).
-5. Nothing Postgres 18 only (`uuidv7()`, virtual generated columns, …): PGlite
+5. Functions: `anon`/`authenticated` get no EXECUTE by default; grant it only
+   to a function the web app must call, and add it to the test's
+   `ANON_CALLABLE`. Prefer `security invoker` (the default): the worker calls
+   as `service_role`, which already has the grants and bypasses RLS. A
+   `security definer` function needs `set search_path = ''` and belongs in a
+   schema the Data API does not expose.
+6. Nothing Postgres 18 only (`uuidv7()`, virtual generated columns, …): PGlite
    runs 18, Supabase runs 17.
-6. `pnpm vitest run --project tools migrations` must pass.
+7. `pnpm vitest run --project tools migrations` must pass.
 
 ## Tables
 
@@ -249,7 +261,8 @@ The harness recreates what the migrations depend on:
 - `anon`, `authenticated` and `service_role` have Supabase's attributes.
 - The grant mode is either `legacy` (auto-grants) or `strict` (none).
 
-The schema tests run in both modes: RLS, the privilege matrix, denied access,
+The schema tests run in both modes: RLS, the privilege matrix, default
+privileges for later tables, sequences and functions, denied access,
 every relation `anon` can read and its columns, the public views as `anon`
 (replays included), service-role writes, draws and every match reason, payout
 idempotency (including a daily retry that re-ranks), fee swaps, every check

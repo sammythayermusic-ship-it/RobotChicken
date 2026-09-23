@@ -436,12 +436,22 @@ grant maintain on table public.leaderboard_v to service_role;
 -- The web app's keys: the three public views, read-only.
 grant select on table public.leaderboard_v, public.pool_v, public.match_replay_v to anon, authenticated;
 
--- Future tables and sequences created by postgres (migrations, the SQL
--- editor) start the same way: service_role may read and write, the web keys
--- get nothing until a migration grants it. Functions are not covered: Postgres
--- grants EXECUTE to PUBLIC globally, which a per-schema default cannot undo,
--- so a function added to public must revoke it itself (see supabase/README.md).
+-- Future tables, sequences and functions created by postgres (migrations,
+-- the SQL editor) start the same way: service_role may use them, the web keys
+-- get nothing until a migration grants it.
 alter default privileges for role postgres in schema public revoke all on tables from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public revoke all on sequences from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public grant select, insert, update, delete on tables to service_role;
 alter default privileges for role postgres in schema public grant usage, select on sequences to service_role;
+
+-- Functions (and procedures). Postgres grants EXECUTE on every new function
+-- to PUBLIC, which every role has, anon included. A per-schema default cannot
+-- take that back; the global default (no IN SCHEMA) does, so this first
+-- statement also covers functions postgres creates in other schemas: those
+-- must grant EXECUTE explicitly to whoever calls them (e.g. an RLS helper).
+-- Legacy projects also grant EXECUTE in public to the API roles by default,
+-- which the second statement undoes. A function the web keys may call needs
+-- its own GRANT EXECUTE, and a test fails on any other.
+alter default privileges for role postgres revoke execute on functions from public;
+alter default privileges for role postgres in schema public revoke all on functions from anon, authenticated;
+alter default privileges for role postgres in schema public grant execute on functions to service_role;

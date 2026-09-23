@@ -393,6 +393,49 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     });
   });
 
+  it("lets the web keys execute no function in public (allowlist: none)", async () => {
+    // Catches a function a later migration adds without revoking EXECUTE,
+    // whatever the default privileges are by then.
+    const ANON_CALLABLE: string[] = [];
+    const callable = await rows<{ fn: string; role: string }>(
+      db,
+      `select p.oid::regprocedure::text as fn, r.role
+       from pg_proc p cross join unnest(array['anon', 'authenticated']) as r(role)
+       where p.pronamespace = 'public'::regnamespace and has_function_privilege(r.role, p.oid, 'EXECUTE')
+       order by 1, 2`,
+    );
+    expect(callable.filter((r) => !ANON_CALLABLE.includes(r.fn))).toEqual([]);
+  });
+
+  it("makes later functions callable by service_role only, in public and other schemas", async () => {
+    await scratch(async (c) => {
+      await as(c, "postgres", () =>
+        c.exec(`
+          create function public.later_invoker() returns int language sql as 'select count(*)::int from public.payouts';
+          create function public.later_definer() returns int language sql security definer set search_path = ''
+            as 'select count(*)::int from public.payouts';
+          create procedure public.later_proc() language sql as 'select 1';
+          create schema private;
+          create function private.helper() returns int language sql as 'select 1';
+        `),
+      );
+      const can = async (role: string, fn: string) =>
+        (await one<{ ok: boolean }>(c, "select has_function_privilege($1, $2, 'EXECUTE') as ok", [role, fn])).ok;
+      for (const fn of ["public.later_invoker()", "public.later_definer()", "public.later_proc()"]) {
+        expect(await can("anon", fn), `anon ${fn}`).toBe(false);
+        expect(await can("authenticated", fn), `authenticated ${fn}`).toBe(false);
+        expect(await can("service_role", fn), `service_role ${fn}`).toBe(true);
+      }
+      // The global default: no PUBLIC EXECUTE outside public either.
+      expect(await can("anon", "private.helper()")).toBe(false);
+      expect(await can("service_role", "private.helper()")).toBe(false);
+      // A SECURITY DEFINER function would read payouts with its owner's rights.
+      await expect(as(c, "anon", () => c.query("select public.later_definer()"))).rejects.toMatchObject({ code: "42501" });
+      await expect(as(c, "authenticated", () => c.query("call public.later_proc()"))).rejects.toMatchObject({ code: "42501" });
+      expect(await as(c, "service_role", () => one(c, "select public.later_invoker() as n"))).toEqual({ n: 0 });
+    });
+  });
+
   it("denies anon and authenticated every base table, even to read", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       for (const t of TABLES) {
