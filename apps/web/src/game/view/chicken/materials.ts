@@ -39,9 +39,15 @@ export const TIER_LOOKS: Record<Tier, Look> = {
 /** Build the three tier materials; `hueShift` gives P2 a readable alternate palette in mirror matches. */
 export function tierMaterials(tier: Tier, hueShift = 0): Record<(typeof TIER_SLOTS)[number], Material> {
   const look = TIER_LOOKS[tier];
+  // Mirror matches need two readable chickens. A hue shift works for colourful
+  // tiers; greys (chrome, diamond) don't have a hue, so tint them copper instead.
+  const hsl = { h: 0, s: 0, l: 0 };
   const shift = (hex: number) => {
     const c = new Color(hex);
-    if (hueShift) c.offsetHSL(hueShift, 0, 0);
+    if (!hueShift) return c;
+    c.getHSL(hsl);
+    if (hsl.s < 0.25) c.lerp(new Color(0xd9824f), 0.45);
+    else c.offsetHSL(hueShift, 0, 0);
     return c;
   };
   const shell =
