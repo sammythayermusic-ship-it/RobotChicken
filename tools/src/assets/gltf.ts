@@ -9,6 +9,7 @@ import { NodeIO, type Document } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import draco3d from "draco3dgltf";
 import contractJson from "@cockfight/sim/data/chicken.contract.json" with { type: "json" };
+import movesJson from "@cockfight/sim/data/moves.json" with { type: "json" };
 import { REPO_ROOT, repoPath } from "../root";
 
 export interface ContractClip {
@@ -33,16 +34,41 @@ export interface Contract {
   clips: ContractClip[];
   helpers: Record<string, ContractHelper>;
   materials: string[];
-  budgets: { chickenTriangles: number; joints: number };
+  budgets: {
+    chickenTriangles: number;
+    joints: number;
+    /** Largest chicken texture side (px). */
+    textureSize: number;
+    arenaTriangles: number;
+    /** Largest arena lightmap side (px). */
+    lightmapSize: number;
+    /** Everything fetched before the first fight, raw bytes. */
+    firstLoadBytes: number;
+  };
 }
 
 /** packages/sim/data/chicken.contract.json: the single source of truth for clips, helpers, slots and budgets. */
 export const CONTRACT = contractJson as Contract;
 
+/** The parts of packages/sim/data/moves.json the asset tools read. Move names are clip names (rules.ts moveClip). */
+export interface MovesFile {
+  moves: Record<string, { startup: number; active: number; recovery: number; hitNode?: string }>;
+}
+
+export const MOVES = movesJson as MovesFile;
+
 /** Repo-relative (posix) paths. */
 export const PLACEHOLDER_GLB = "apps/web/public/models/chicken_placeholder.glb";
+/** Where `pnpm assets:import` writes the hero chicken by default. */
+export const HERO_GLB = "apps/web/public/models/chicken.glb";
 export const HITBOXES_JSON = "packages/sim/data/hitboxes.json";
 export const PLACEHOLDER_SCRIPT = "art/blender/build_placeholder_chicken.py";
+export const EXPORT_SCRIPT = "art/blender/export_chicken.py";
+/** The web app's static root: a glb must live under it for the game to load it. */
+export const PUBLIC_DIR = "apps/web/public";
+/** Sammy's arena, when it exists (the procedural junkyard needs no files), and its baked lightmap. */
+export const ARENA_GLB = "apps/web/public/models/arena.glb";
+export const ARENA_LIGHTMAP = "apps/web/public/models/arena_lightmap.ktx2";
 
 /** The shape of packages/sim/data/hitboxes.json (what packages/sim/src/rules.ts compileRules reads). */
 export interface ClipBoxes {
@@ -76,6 +102,17 @@ export function getIO(): Promise<NodeIO> {
 
 export async function readGlb(bytes: Uint8Array): Promise<Document> {
   return (await getIO()).readBinary(bytes);
+}
+
+/** The JSON chunk of a GLB, without decoding anything (null if it is not a GLB). */
+export function readGlbJson(bytes: Uint8Array): { extensionsUsed?: string[]; asset?: { generator?: string } } | null {
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (view.getUint32(0, true) !== 0x46546c67) return null; // "glTF"
+    return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + view.getUint32(12, true)))) as { extensionsUsed?: string[] };
+  } catch {
+    return null;
+  }
 }
 
 export function sha256(bytes: Uint8Array): string {
