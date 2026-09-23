@@ -326,7 +326,7 @@ export const ringout: Recipe = {
       [0, 0],
       [0.06, 0.4],
       [fall * 0.8, 0.4],
-      [fall, 0.1],
+      [fall - 0.01, 0],
     ]);
     chain(w, wg, wet);
 
