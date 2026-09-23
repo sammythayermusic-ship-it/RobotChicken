@@ -1,3 +1,4 @@
+import { enter } from "./fighter";
 import type { Rules } from "./rules";
 import { resetRound } from "./state";
 import { Phase, Reason, St, type MatchState, type ReasonId } from "./types";
@@ -13,7 +14,12 @@ export function endRound(s: MatchState, winner: 0 | 1 | 2, reason: ReasonId, R: 
   else if (winner === 1) s.w2 += 1;
   if (winner === 0 || winner === 1) {
     const w = s.f[winner];
-    if (w.st !== St.ko && w.st !== St.ringOut) w.st = St.win;
+    if (w.st !== St.ko && w.st !== St.ringOut) {
+      enter(w, St.win);
+      // A ring-out push or launch still carrying the winner (a trade, or the
+      // timer running out mid-shove) stops at the wall: winners stay in the pit.
+      w.roAble = 0;
+    }
   }
 }
 

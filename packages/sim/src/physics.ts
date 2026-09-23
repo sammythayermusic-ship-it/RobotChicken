@@ -19,13 +19,14 @@ export function wallClamp(f: FighterState, oldX: number, R: Rules): void {
 export function integrate(f: FighterState, R: Rules): void {
   const oldX = f.x;
   let dx = f.vx;
+  let slideEnded = false;
   if (f.slideRem > 0) {
     const mag = Math.min(Math.abs(f.slideV), f.slideRem);
     dx += sgn(f.slideV) * mag;
     f.slideRem -= mag;
     if (f.slideRem === 0) {
       f.slideV = 0;
-      if (f.grounded && f.st !== St.ringOut) f.roAble = 0;
+      slideEnded = true;
     }
   }
   f.x += dx;
@@ -34,6 +35,9 @@ export function integrate(f: FighterState, R: Rules): void {
   // Past the ring edge there is no floor: whoever is out there falls.
   const offStage = Math.abs(f.x) > R.match.ringEdge;
   if (offStage) f.grounded = 0;
+  // A ring-out push stops being one only after its last step has moved (and
+  // possibly carried the fighter off the stage): the wall must not clamp it.
+  if (slideEnded && f.grounded && f.st !== St.ringOut) f.roAble = 0;
   if (!f.grounded) {
     f.y += f.vy;
     if (usesGravity(f)) f.vy -= R.fighter.gravity;

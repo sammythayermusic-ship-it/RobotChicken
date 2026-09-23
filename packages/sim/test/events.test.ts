@@ -47,6 +47,29 @@ describe("deriveEvents", () => {
     expect(kinds).toContain("land");
     expect(kinds).toContain("dash");
   });
+  it("places a hit on the defender: a full-screen super's sparks are not mid-arena", () => {
+    for (const [x0, x1, heat] of [
+      [-8000, 8000, RULES.heat.max],
+      [-550, 550, 0],
+    ] as const) {
+      let s = createMatch({ matchId: "hitx" });
+      while (s.phase !== Phase.fighting) s = step(s, 0, 0);
+      s.f[0].x = x0;
+      s.f[1].x = x1;
+      s.f[0].heat = heat;
+      let hit: Extract<SimEvent, { kind: "hit" }> | undefined;
+      for (let t = 0; t < 30 && !hit; t++) {
+        const next = step(s, t === 0 ? B.S : 0, 0);
+        hit = deriveEvents(s, next, RULES.heat.max).find((e) => e.kind === "hit") as typeof hit;
+        s = next;
+      }
+      expect(hit, `hit from ${x0}`).toBeDefined();
+      expect(hit!.move).toBe(heat ? Mv.super : Mv.peck);
+      // On the defender's side of the gap, within its body (hurt capsule radius ~0.35 u).
+      expect(Math.abs(hit!.x - s.f[1].x)).toBeLessThan(500);
+      expect(hit!.x).toBeGreaterThan(s.f[0].x);
+    }
+  });
   it("reports a KO, the round end and its reason", () => {
     let s = createMatch({ matchId: "ko" });
     while (s.phase !== Phase.fighting) s = step(s, 0, 0);

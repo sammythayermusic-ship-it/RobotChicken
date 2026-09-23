@@ -66,6 +66,7 @@ function startAttack(f: FighterState, id: MvId, R: Rules): void {
   f.move = id;
   f.hitDone = 0;
   f.bufS = 0;
+  f.bufDir = 0;
   f.vx = 0;
   if (mv.heatCost > 0) f.heat = 0;
   if (id === Mv.dive_kick) {
@@ -78,10 +79,14 @@ function heatFull(f: FighterState, R: Rules): boolean {
   return f.heat >= R.heat.max;
 }
 
-/** Grounded Space priority: super (full Heat, neutral) > slam (down) > shove (toward) > peck. */
+/**
+ * Grounded Space priority: super (full Heat, neither down nor toward) > slam (down) > shove (toward) > peck.
+ * Reads the directions latched when Space was pressed (`bufDir`), so a buffered press
+ * fires the move that was input even if the direction was already released.
+ */
 function groundAttackFor(f: FighterState, R: Rules): MvId {
-  const down = (f.held & B.D) !== 0;
-  const fwd = holdsFwd(f);
+  const down = (f.bufDir & B.D) !== 0;
+  const fwd = (f.bufDir & (f.facing > 0 ? B.R : B.L)) !== 0;
   if (heatFull(f, R) && !down && !fwd) return Mv.super;
   if (down) return Mv.slam;
   if (fwd) return Mv.shove;
@@ -127,10 +132,10 @@ function neutral(f: FighterState, R: Rules): void {
   }
 }
 
-/** Cancel a connected attack into another move inside its cancel window. */
+/** Cancel an attack that hit (not one that was blocked) into another move inside its cancel window. */
 function tryCancel(f: FighterState, R: Rules): boolean {
   const mv = moveOf(f, R);
-  if (!f.hitDone || mv.cancelMask === 0 || f.bufS === 0) return false;
+  if (f.hitDone !== 1 || mv.cancelMask === 0 || f.bufS === 0) return false;
   if (f.stTick < mv.cancelFrom || f.stTick > mv.cancelTo) return false;
   const want = groundAttackFor(f, R);
   if ((mv.cancelMask & (1 << want)) === 0) return false;

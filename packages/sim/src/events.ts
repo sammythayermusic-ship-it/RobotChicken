@@ -63,7 +63,6 @@ export function deriveEvents(prev: MatchState, next: MatchState, heatMax: number
   for (let i = 0; i < 2; i++) {
     const a = prev.f[i] as FighterState;
     const b = next.f[i] as FighterState;
-    const o = next.f[1 - i] as FighterState;
     if (b.st === St.attack && (a.st !== St.attack || a.move !== b.move || b.stTick < a.stTick)) {
       ev.push({ kind: "attack", side: side(i), move: b.move });
     }
@@ -75,7 +74,7 @@ export function deriveEvents(prev: MatchState, next: MatchState, heatMax: number
         move: b.hitMv,
         blocked: b.hitKind === HitKind.block,
         damage: Math.max(0, a.hp - b.hp),
-        x: (b.x + o.x) >> 1,
+        x: b.hitX,
         y: b.y + 800,
       });
     }

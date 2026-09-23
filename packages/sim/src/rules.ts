@@ -17,7 +17,7 @@ import { Mv, MOVE_NAMES, type MoveName, type MvId } from "./types";
  * commit re-blesses the golden replays), so an old replay can't silently run
  * against new logic.
  */
-export const SIM_VERSION = 2;
+export const SIM_VERSION = 3;
 
 /** The 21 animation clips every chicken must ship, in contract order. */
 export const CLIP_NAMES = [

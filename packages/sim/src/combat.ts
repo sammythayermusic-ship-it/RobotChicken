@@ -64,6 +64,19 @@ function blocks(d: FighterState, mv: MoveRules): boolean {
   return mv.blockable && d.grounded === 1 && (d.st === St.block || d.st === St.blockStun);
 }
 
+/**
+ * Where attacker `a`'s hit lands on defender `d` (x, mu): the hit sphere's
+ * centre pulled into the defender's hurt capsule. A full-screen super lands
+ * on the defender's near side, not halfway across the arena.
+ */
+export function contactX(a: FighterState, d: FighterState, mv: MoveRules, R: Rules): number {
+  const h = hurtOf(d, R);
+  const lo = Math.min(h.ax, h.bx) - h.r;
+  const hi = Math.max(h.ax, h.bx) + h.r;
+  const x = hitOf(a, mv, R)[0];
+  return x < lo ? lo : x > hi ? hi : x;
+}
+
 interface Slide {
   dist: number;
   speed: number;
@@ -85,8 +98,13 @@ export function applyHits(s: MatchState, hits: [boolean, boolean], R: Rules): vo
   // the first hit changes the other fighter's state.
   const mvs: [MoveRules, MoveRules] = [moveOf(s.f[0], R), moveOf(s.f[1], R)];
   const blocked: [boolean, boolean] = [false, false];
+  const at: [number, number] = [0, 0];
   for (let i = 0; i < 2; i++) {
-    if (hits[i]) blocked[1 - i] = blocks(s.f[1 - i] as FighterState, mvs[i] as MoveRules);
+    if (!hits[i]) continue;
+    const a = s.f[i] as FighterState;
+    const d = s.f[1 - i] as FighterState;
+    blocked[1 - i] = blocks(d, mvs[i] as MoveRules);
+    at[i] = contactX(a, d, mvs[i] as MoveRules, R);
   }
 
   for (let i = 0; i < 2; i++) {
@@ -147,12 +165,13 @@ export function applyHits(s: MatchState, hits: [boolean, boolean], R: Rules): vo
       sd.speed = Math.max(sd.speed, speed);
     }
 
-    a.hitDone = 1;
+    a.hitDone = isBlocked ? 2 : 1;
     a.hitstop = Math.max(a.hitstop, stop);
     d.hitstop = Math.max(d.hitstop, stop);
     d.hitT = s.tick;
     d.hitMv = mv.id;
     d.hitKind = isBlocked ? HitKind.block : HitKind.hit;
+    d.hitX = at[i] as number;
 
     if (mv.id === Mv.dive_kick && !hits[1 - i]) {
       // Bounce off the target (not in a trade: getting hit wins over bouncing).

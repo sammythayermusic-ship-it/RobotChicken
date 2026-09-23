@@ -161,6 +161,64 @@ describe("peck on hit and on block", () => {
   });
 });
 
+describe("cancels and the Space buffer", () => {
+  /**
+   * P1 pecks P2 (blocking or not) with Heat just short of full, then presses Space
+   * again on peck frame 8. Did the super replace the peck mid-move (a cancel)?
+   */
+  function peckThenSpace(b2: number): { cancelled: boolean; heatFull: boolean; contact: number } {
+    let s = placed(1100, "cancel");
+    s.f[0].heat = RULES.heat.max - 100; // the peck's +480 (or +180 when blocked) fills it
+    s = attack(s, 0, b2);
+    let cancelled = false;
+    let heatFull = false;
+    for (let t = 0; t < 40; t++) {
+      const inPeck = s.f[0].st === St.attack && s.f[0].move === Mv.peck;
+      const press = inPeck && s.f[0].stTick === 8 && s.f[0].hitstop === 0;
+      const next = step(s, press ? B.S : 0, b2);
+      if (inPeck && next.f[0].st === St.attack && next.f[0].move === Mv.super) cancelled = true;
+      heatFull ||= next.f[0].heat >= RULES.heat.max;
+      s = next;
+    }
+    return { cancelled, heatFull, contact: s.f[1].hitKind };
+  }
+
+  it("a peck that hits cancels into the super inside frames 5-10", () => {
+    const r = peckThenSpace(0);
+    expect(r.contact).toBe(HitKind.hit);
+    expect(r.cancelled).toBe(true);
+  });
+
+  it("a blocked peck does not cancel (cancels are on hit only)", () => {
+    const r = peckThenSpace(B.D);
+    expect(r.contact).toBe(HitKind.block);
+    expect(r.heatFull).toBe(true); // the block filled the meter, so only the on-hit rule stops the cancel
+    expect(r.cancelled).toBe(false);
+  });
+
+  it("a buffered press fires the move held when Space went down, not what is held when it fires", () => {
+    // Full Heat, down+Space buffered in a shove's recovery, down released 2 ticks later: slam, and the meter is kept.
+    let s = placed(8000, "buf");
+    s.f[0].heat = RULES.heat.max;
+    s = attack(s, B.R);
+    expect(s.f[0].move).toBe(Mv.shove);
+    while (s.f[0].stTick < mv(Mv.shove).total - 3) s = step(s, 0, 0);
+    s = step(s, B.D | B.S, 0);
+    s = step(s, B.D, 0);
+    while (s.f[0].st === St.attack && s.f[0].move === Mv.shove) s = step(s, 0, 0);
+    expect(s.f[0].move).toBe(Mv.slam);
+    expect(s.f[0].heat).toBe(RULES.heat.max);
+
+    // Toward+Space pressed late in a whiffed peck, toward held for a single tick: a shove, not a second peck.
+    let p = placed(8000, "buf2");
+    p = attack(p, 0);
+    while (p.f[0].stTick < mv(Mv.peck).total - 2) p = step(p, 0, 0);
+    p = step(p, B.R | B.S, 0);
+    while (p.f[0].st === St.attack && p.f[0].move === Mv.peck) p = step(p, 0, 0);
+    expect(p.f[0].move).toBe(Mv.shove);
+  });
+});
+
 describe("slam", () => {
   it("is unblockable, launches, then knockdown 40 and an invulnerable get-up of 20", () => {
     let s = placed(1200);
@@ -242,6 +300,37 @@ describe("shove and ring-outs", () => {
     }
     expect(p.f[1].x).toBeLessThanOrEqual(M.wallEdge);
     expect(p.f[1].st).not.toBe(St.ringOut);
+  });
+
+  it("the last step of a shove is not walled: from 8.1 units it rings out", () => {
+    for (const x of [8001, 8100, 8200]) {
+      let s = placed(1200, `edge-${x}`);
+      s.f[1].x = x;
+      s.f[0].x = x - 1200;
+      s = attack(s, B.R);
+      for (let t = 0; t < 60 && s.phase === Phase.fighting; t++) s = step(s, 0, 0);
+      expect(s.reason, `shove hit at ${x}`).toBe(Reason.ringout);
+      expect(s.f[1].st).toBe(St.ringOut);
+    }
+  });
+
+  it("a shove that falls short still moves exactly 2 units, and the fighter stays beyond the wall", () => {
+    let s = placed(1200);
+    s.f[1].x = 7600;
+    s.f[0].x = 6400;
+    s = attack(s, B.R);
+    for (let t = 0; t < 20 && s.f[1].hitKind === 0; t++) s = step(s, 0, 0);
+    const x0 = s.f[1].x;
+    s = run(s, 40);
+    expect(s.phase).toBe(Phase.fighting);
+    expect(s.f[1].x - x0).toBe(2000);
+    expect(s.f[1].x).toBeGreaterThan(M.wallEdge);
+    expect(s.f[1].roAble).toBe(0);
+    // ...and can walk back in (but not further out).
+    s = run(s, 10, 0, B.R);
+    expect(s.f[1].x).toBe(x0 + 2000);
+    s = run(s, 10, 0, B.L);
+    expect(s.f[1].x).toBeLessThan(x0 + 2000);
   });
 
   it("slam from 6.5 units rings out", () => {
