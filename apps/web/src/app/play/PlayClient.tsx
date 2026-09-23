@@ -3,11 +3,12 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { WebGLRenderer } from "three";
 import { RULES, runReplay, type CpuLevel, type Replay } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import FightHud from "@/components/hud/FightHud";
 import { useHud } from "@/components/hud/useHud";
-import { createAudio } from "@/game/audio";
+import { createAudio, type GameAudio } from "@/game/audio";
 import type { FightEngine, FightMode } from "@/game/engine/createFightEngine";
 import { defaultTier, loadTier, saveTier, type QualityTier } from "@/game/engine/quality";
 import { HudStore } from "@/game/hud/hudStore";
@@ -18,6 +19,21 @@ const FightCanvas = dynamic(() => import("@/game/react/FightCanvas"), {
   ssr: false,
   loading: () => <div className="absolute inset-0 grid place-items-center font-display text-zinc-400">LOADING…</div>,
 });
+
+/**
+ * Builds the junkyard arena for a fight. Module scope on purpose: an inline
+ * arrow in PlayClient would share the render's closure scope, which also
+ * holds the `engine` state (the previous fight), so every engine would keep
+ * the one before it alive, canvas and WebGL context included.
+ */
+const buildJunkyard = (renderer: WebGLRenderer) => import("@/game/view/arena/Junkyard").then((m) => m.createJunkyard(renderer));
+
+/**
+ * Events that can carry the user activation audio needs. A browser grants it
+ * on keydown (but not Esc), a mouse press and a tap's release; pointerup and
+ * click come after a mouse press, when the activation is already there.
+ */
+const GESTURES = ["keydown", "pointerup", "click"] as const;
 
 export interface PlayParams {
   mode: FightMode | null;
@@ -32,7 +48,6 @@ export interface PlayParams {
   arena: boolean;
 }
 
-type Audio = Awaited<ReturnType<typeof createAudio>>;
 type ActiveConfig = Omit<PlayConfig, "mode"> & { mode: FightMode };
 
 const noSubscribe = () => () => {};
@@ -54,6 +69,10 @@ function useReducedMotion(): boolean {
 
 export default function PlayClient({ params }: { params: PlayParams }) {
   const autostart = params.mode !== null;
+  // Autostart links (/play?mode=cpu) have no FIGHT click to start audio. e2e
+  // runs (manual) stay silent, and so does a bench, so that its frame times
+  // never include audio work.
+  const autoAudio = autostart && !params.manual && !params.bench;
   const [cfg, setCfg] = useState<ActiveConfig | null>(
     autostart ? { mode: params.mode as FightMode, difficulty: params.difficulty, tier: params.tier } : null,
   );
@@ -66,7 +85,15 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   const [muted, setMuted] = useState(false);
   const [chosenShake, setShake] = useState<number | null>(null);
   const shake = chosenShake ?? (reducedMotion ? 0.3 : 1);
-  const audio = useRef<Audio>(null);
+  const audio = useRef<GameAudio | null>(null);
+  const audioStart = useRef<Promise<GameAudio | null> | null>(null);
+  // Latest values for callbacks that finish later (audio creation).
+  const engineRef = useRef<FightEngine | null>(null);
+  const mutedRef = useRef(muted);
+  useEffect(() => {
+    engineRef.current = engine;
+    mutedRef.current = muted;
+  });
   const hud = useMemo(() => new HudStore(), []);
 
   // Debug: expose the sim's replay runner so e2e can check determinism in every browser engine.
@@ -85,6 +112,45 @@ export default function PlayClient({ params }: { params: PlayParams }) {
 
   useEffect(() => engine?.setQuality(quality), [engine, quality]);
   useEffect(() => engine?.setShake(shake), [engine, shake]);
+
+  /**
+   * Creates the audio once; later calls share it. createAudio builds the
+   * AudioContext synchronously, so called from a gesture it starts at once.
+   */
+  const getAudio = useCallback((): Promise<GameAudio | null> => {
+    if (audioStart.current) return audioStart.current;
+    const p: Promise<GameAudio | null> = createAudio()
+      .catch(() => null)
+      .then((a) => {
+        // The page let go of it meanwhile (unmounted).
+        if (audioStart.current !== p) {
+          a?.dispose();
+          return null;
+        }
+        audio.current = a;
+        if (a) {
+          a.setMuted(mutedRef.current);
+          const e = engineRef.current;
+          if (e) {
+            void e.ready.then(() => {
+              if (engineRef.current === e) e.setAudio(a);
+            });
+          }
+        }
+        return a;
+      });
+    audioStart.current = p;
+    return p;
+  }, []);
+  useEffect(
+    () => () => {
+      audio.current?.dispose();
+      audio.current = null;
+      audioStart.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
     // The engine's director exists only once it is ready (model loaded), so attach then.
     const a = audio.current;
@@ -98,55 +164,52 @@ export default function PlayClient({ params }: { params: PlayParams }) {
     };
   }, [engine]);
   useEffect(() => audio.current?.setMuted(muted), [muted]);
-  useEffect(() => () => audio.current?.dispose(), []);
 
-  // Autostart links (/play?mode=cpu, bench, e2e) skip the FIGHT click, so the
-  // first key press or tap is the gesture that may start audio.
-  const audioPending = useRef(false);
+  // Autostart links: create the audio right away, under LOADING, where the
+  // AudioContext constructor's ~130 ms stall does not show (on a first key
+  // press it froze the fight for about 8 frames). With no gesture yet the
+  // context waits suspended.
   useEffect(() => {
-    if (!engine || audio.current || params.manual) return;
+    if (autoAudio) void getAudio();
+  }, [autoAudio, getAudio]);
+
+  // ...and the first real gesture starts it. Esc, or a touch's pointerdown,
+  // carries no user activation, so listening only once would leave the
+  // context suspended for the whole session: keep listening until it runs.
+  useEffect(() => {
+    if (!engine || !autoAudio || audio.current?.running) return;
     const unlock = () => {
-      if (audio.current || audioPending.current) return;
-      audioPending.current = true;
-      void createAudio()
-        .then((a) => {
-          audio.current = a;
-          if (a) {
-            a.setMuted(muted);
-            void engine.ready.then(() => engine.setAudio(a));
-          }
-        })
-        .catch(() => {
-          audio.current = null;
-        })
-        .finally(() => {
-          audioPending.current = false;
+      const a = audio.current;
+      if (!a) {
+        void getAudio();
+        return;
+      }
+      if (a.running) off();
+      else
+        void a.resume().then((ok) => {
+          if (ok) off();
         });
     };
-    window.addEventListener("keydown", unlock, { once: true });
-    window.addEventListener("pointerdown", unlock, { once: true });
-    return () => {
-      window.removeEventListener("keydown", unlock);
-      window.removeEventListener("pointerdown", unlock);
+    const off = () => {
+      for (const t of GESTURES) window.removeEventListener(t, unlock, true);
     };
-  }, [engine, params.manual, muted]);
+    for (const t of GESTURES) window.addEventListener(t, unlock, true);
+    return off;
+  }, [engine, autoAudio, getAudio]);
 
   const uiSound = useCallback((name: "pause" | "ui_select" | "ui_back") => audio.current?.play(name), []);
 
   const start = useCallback(
     async (c: PlayConfig) => {
-      // The FIGHT click is the user gesture that lets audio start.
-      if (!audio.current) {
-        try {
-          audio.current = await createAudio();
-        } catch {
-          audio.current = null;
-        }
-      }
+      // The FIGHT click is a user gesture: create the audio here (it starts
+      // at once), or wake a context that is still suspended.
+      const a = audio.current;
+      if (a) void a.resume();
+      else await getAudio();
       setCfg(c);
       setRound((r) => r + 1);
     },
-    [],
+    [getAudio],
   );
 
   const matchId = useMemo(
@@ -155,7 +218,8 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   );
 
   const togglePause = useCallback(() => {
-    if (!engine || cold.matchWinner >= 0) return;
+    const c = hud.get();
+    if (!engine || c.matchWinner >= 0 || c.loading) return;
     if (engine.paused) {
       uiSound("ui_select");
       engine.resume();
@@ -163,20 +227,31 @@ export default function PlayClient({ params }: { params: PlayParams }) {
       uiSound("pause");
       engine.pause();
     }
-  }, [engine, cold.matchWinner, uiSound]);
+  }, [engine, hud, uiSound]);
+
+  /**
+   * The next fight (REMATCH, RESTART, R). One per press: until the new fight
+   * has loaded, more presses (a held R's key repeat, a double click) do nothing.
+   */
+  const rematch = useCallback(() => {
+    if (hud.get().loading) return;
+    hud.set({ loading: true });
+    setRound((r) => r + 1);
+  }, [hud]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!cfg) return;
       if (e.code === "Escape" || e.code === "KeyP") {
         e.preventDefault();
-        togglePause();
+        if (!e.repeat) togglePause();
       }
-      if (e.code === "KeyR" && cold.matchWinner >= 0) setRound((r) => r + 1);
+      // Read the store, not a render's snapshot: it is current even between a press and the re-render.
+      if (e.code === "KeyR" && !e.repeat && hud.get().matchWinner >= 0) rematch();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cfg, togglePause, cold.matchWinner]);
+  }, [cfg, togglePause, rematch, hud]);
 
   if (!cfg) {
     return (
@@ -200,12 +275,11 @@ export default function PlayClient({ params }: { params: PlayParams }) {
           matchId,
           hud,
           quality,
+          shake,
           manual: params.manual,
           debug: params.debug,
           bench: params.bench,
-          arena: params.arena
-            ? (renderer) => import("@/game/view/arena/Junkyard").then((m) => m.createJunkyard(renderer))
-            : undefined,
+          arena: params.arena ? buildJunkyard : undefined,
         }}
       />
       <FightHud store={hud} />
@@ -229,7 +303,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
               className="rounded border border-zinc-600 py-2 font-display"
               onClick={() => {
                 uiSound("ui_select");
-                setRound((r) => r + 1);
+                rematch();
               }}
             >
               RESTART
@@ -276,7 +350,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 px-6 py-3 font-display text-xl tracking-wider shadow-[0_4px_0_#7c2d12]"
             onClick={() => {
               uiSound("ui_select");
-              setRound((r) => r + 1);
+              rematch();
             }}
           >
             REMATCH (R)

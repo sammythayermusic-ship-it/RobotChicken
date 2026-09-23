@@ -11,6 +11,7 @@ import { CpuSource, KeyboardSource, ScriptSource, type InputSource } from "../ma
 import type { ArenaView } from "../view/FightView";
 import { FightView } from "../view/FightView";
 import { loadGltf } from "./assets";
+import { disposeRenderer } from "./disposeRenderer";
 import { FixedLoop, STEP_MS } from "./loop";
 import { chickenModelUrl } from "./models";
 import { PerfMeter, type PerfSnapshot } from "./perf";
@@ -30,12 +31,20 @@ export interface FightOptions {
   manual?: boolean;
   /** Expose input-injection debug handles. */
   debug?: boolean;
-  /** Build the procedural arena (loaded lazily); off for the fastest tests. */
+  /**
+   * Build the procedural arena (loaded lazily); off for the fastest tests.
+   * Pass a function defined at module scope: an inline arrow in a React
+   * component shares that render's scope, so whatever else the scope holds
+   * (the previous engine, say) stays alive for as long as this engine keeps
+   * the arrow.
+   */
   arena?: (renderer: WebGLRenderer) => Promise<ArenaView>;
   /** Bench mode: keep every frame time of the match (not a rolling window). */
   bench?: boolean;
   /** Attach an audio engine once the user has interacted. */
   audio?: () => Promise<AudioSink | null>;
+  /** Camera shake scale (1 full, 0.3 reduced, 0 off). setShake() changes it later. */
+  shake?: number;
   onMatchEnd?: (winner: number, replayHash: string) => void;
 }
 
@@ -65,6 +74,11 @@ interface DebugFight {
   perf(): PerfSnapshot;
   clips(): number;
   quality(): QualityTier;
+  matchId(): string;
+  /** The loop is paused (the pause menu, or a hidden tab). */
+  paused(): boolean;
+  /** The camera's shake scale (-1 until the view exists). */
+  shake(): number;
   setInput?(player: 0 | 1, mask: number): void;
   stepTicks?(n: number): void;
   pause?(): void;
@@ -73,6 +87,14 @@ interface DebugFight {
 }
 
 export function createFightEngine(host: HTMLElement, opts: FightOptions): FightEngine {
+  // Copy what the engine needs and never read `opts` from a closure below. An
+  // engine handle that outlives its fight (a stale React closure, a devtools
+  // reference) then keeps a few values alive, not the caller's options object.
+  const { mode, difficulty, tiers, matchId, hud } = opts;
+  let buildArena = opts.arena ?? null;
+  let onMatchEnd = opts.onMatchEnd ?? null;
+  let shake = opts.shake ?? 1;
+
   const canvas = document.createElement("canvas");
   canvas.className = "block h-full w-full touch-none select-none outline-none";
   canvas.tabIndex = 0;
@@ -95,20 +117,20 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     view?.setAspect(w / h);
   };
 
-  const kb = new KeyboardInput(opts.mode === "2p" ? VERSUS : SOLO, window, document);
+  const kb = new KeyboardInput(mode === "2p" ? VERSUS : SOLO, window, document);
   const scripts: [ScriptSource, ScriptSource] = [new ScriptSource(), new ScriptSource()];
   const sources: [InputSource, InputSource] =
-    opts.mode === "2p"
+    mode === "2p"
       ? [new KeyboardSource(kb, 0), new KeyboardSource(kb, 1)]
-      : opts.mode === "cpu"
-        ? [new KeyboardSource(kb, 0), new CpuSource(opts.matchId, 1, opts.difficulty)]
-        : [new CpuSource(opts.matchId, 0, "hard"), new CpuSource(opts.matchId, 1, opts.difficulty)];
+      : mode === "cpu"
+        ? [new KeyboardSource(kb, 0), new CpuSource(matchId, 1, difficulty)]
+        : [new CpuSource(matchId, 0, "hard"), new CpuSource(matchId, 1, difficulty)];
   // Debug injection ORs a scripted mask into each player's input.
   const merged: [InputSource, InputSource] = [
     { sample: (s, side) => sources[0].sample(s, side) | scripts[0].mask },
     { sample: (s, side) => sources[1].sample(s, side) | scripts[1].mask },
   ];
-  const match = new LocalMatch(opts.matchId, merged);
+  const match = new LocalMatch(matchId, merged);
   let view: FightView | null = null;
   let director: Director | null = null;
   let disposed = false;
@@ -126,7 +148,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       if (events.some((e) => e.kind === "fight") && match.cur.round === 1) perf.reset();
       if (!ended && match.cur.matchWinner >= 0) {
         ended = true;
-        opts.onMatchEnd?.(match.cur.matchWinner, stateHash(match.cur));
+        onMatchEnd?.(match.cur.matchWinner, stateHash(match.cur));
       }
     },
     render: (alpha, now) => {
@@ -141,28 +163,39 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   });
   loop.manual = !!opts.manual;
 
+  /** Stops the sim and hands the keyboard to the pause menu: nothing pressed there reaches the fight. */
+  const pause = () => {
+    loop.paused = true;
+    kb.setEnabled(false);
+    hud.set({ paused: true });
+  };
+
   const onVisibility = () => {
-    if (document.visibilityState === "hidden" && opts.mode !== "demo") {
-      loop.paused = true;
-      opts.hud.set({ paused: true });
-    }
+    if (document.visibilityState === "hidden" && mode !== "demo") pause();
     loop.resetClock();
   };
   document.addEventListener("visibilitychange", onVisibility);
   const ro = new ResizeObserver(resize);
   ro.observe(host);
 
+  // A new fight starts from a clean HUD. The page keeps one store for its
+  // whole lifetime, so the last fight's pause flag, winner, round wins, banner
+  // and bars must not carry over into this one.
+  hud.reset({ loading: true, mode, names: names(mode, difficulty) });
+
   const ready = (async () => {
-    opts.hud.set({ loading: true, error: null, mode: opts.mode, names: names(opts.mode, opts.difficulty) });
     const gltf = await loadGltf(chickenModelUrl(), renderer);
     if (disposed) return;
-    view = new FightView(renderer, gltf, opts.tiers, match.cur.rng);
+    view = new FightView(renderer, gltf, tiers, match.cur.rng);
     view.particles.enabled = quality.particles;
-    director = new Director({ camera: view.camera, particles: view.particles, ko: view.ko, hud: opts.hud, seed: match.cur.rng, tiers: opts.tiers });
+    view.camera.shake.amount = shake;
+    director = new Director({ camera: view.camera, particles: view.particles, ko: view.ko, hud, seed: match.cur.rng, tiers });
     resize();
-    if (opts.arena) {
+    const arenaFactory = buildArena;
+    buildArena = null;
+    if (arenaFactory) {
       try {
-        const arena = await opts.arena(renderer);
+        const arena = await arenaFactory(renderer);
         if (disposed) {
           arena.dispose();
           return;
@@ -177,13 +210,15 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     view.ko.apply(renderer, true);
     await renderer.compileAsync(view.scene, view.camera.camera);
     if (disposed) return;
-    opts.hud.set({ loading: false });
+    hud.set({ loading: false });
     loop.start();
     started = true;
     canvas.focus({ preventScroll: true });
   })().catch((e: unknown) => {
+    // A disposed engine no longer owns the HUD: the next fight does.
+    if (disposed) return;
     console.error("[cockfight] failed to start the fight", e);
-    opts.hud.set({ loading: false, error: "Couldn't load the fight. Reload to try again." });
+    hud.set({ loading: false, error: "Couldn't load the fight. Reload to try again." });
   });
 
   const handle: DebugFight = {
@@ -196,6 +231,9 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     perf: () => perf.snapshot(renderer.getPixelRatio(), quality.tier),
     clips: () => view?.chickens[0].clipCount ?? 0,
     quality: () => quality.tier,
+    matchId: () => matchId,
+    paused: () => loop.paused,
+    shake: () => view?.camera.shake.amount ?? -1,
     B,
   };
   if (opts.debug) {
@@ -214,15 +252,14 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     get paused() {
       return loop.paused;
     },
-    pause() {
-      loop.paused = true;
-      kb.releaseAll();
-      opts.hud.set({ paused: true });
-    },
+    pause,
     resume() {
+      // Enabling the keyboard drops anything held or latched, so no key
+      // pressed while paused fires on the first tick after it.
+      kb.setEnabled(true);
       loop.paused = false;
       loop.resetClock();
-      opts.hud.set({ paused: false });
+      hud.set({ paused: false });
       canvas.focus({ preventScroll: true });
     },
     setQuality(tier) {
@@ -232,6 +269,8 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       perf.reset();
     },
     setShake(amount) {
+      // Kept, not only applied: the camera exists only once the model has loaded.
+      shake = amount;
       if (view) view.camera.shake.amount = amount;
     },
     setAudio(a) {
@@ -240,14 +279,24 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     perf: () => perf.snapshot(renderer.getPixelRatio(), quality.tier),
     resetPerf: () => perf.reset(),
     dispose() {
+      if (disposed) return;
       disposed = true;
       loop.stop();
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
       kb.dispose();
+      // Release the GPU side while the chickens and the arena are still in
+      // the scene. Their glTF geometries and textures are shared through
+      // loadGltf's cache and, like three's DFG LUT, hold a dispose listener
+      // for every renderer that uploaded them. Releasing them (and the LUT)
+      // is what lets this renderer, its canvas and its context be collected.
+      const env = view?.arenaView?.envScene;
+      disposeRenderer(renderer, ...(view ? [view.scene] : []), ...(env ? [env] : []));
       view?.dispose();
-      renderer.dispose();
-      renderer.forceContextLoss();
+      view = null;
+      director = null;
+      buildArena = null;
+      onMatchEnd = null;
       canvas.remove();
       const cf = w.__cockfight;
       if (cf && cf.fight === handle) delete cf.fight;

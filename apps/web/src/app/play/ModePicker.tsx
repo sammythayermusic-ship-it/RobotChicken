@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CpuLevel } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
-import { CONTROL_LABELS } from "@/game/match/input/bindings";
+import { CONTROL_LABELS, SOLO, VERSUS } from "@/game/match/input/bindings";
+import { isControlTarget } from "@/game/match/input/keyboard";
 
 export interface PlayConfig {
   mode: "cpu" | "2p";
@@ -14,11 +15,30 @@ export interface PlayConfig {
 const TIERS: Tier[] = ["rust", "chrome", "gold", "diamond"];
 const LEVELS: CpuLevel[] = ["easy", "normal", "hard"];
 
+/** A key the game binds in either mode. */
+const gameKey = (code: string) => SOLO.has(code) || VERSUS.has(code);
+
 function KeyTester() {
   const [held, setHeld] = useState<string[]>([]);
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const down = (e: KeyboardEvent) => setHeld((h) => (h.includes(e.code) ? h : [...h, e.code]));
-    const up = (e: KeyboardEvent) => setHeld((h) => h.filter((c) => c !== e.code));
+    // Take focus from the Controls toggle that opened the tester. Left there,
+    // Space (a peck key) clicks the toggle on release, Enter on press, and the
+    // tester closes mid-test.
+    box.current?.focus({ preventScroll: true });
+    // Game keys under test must not scroll the page or press anything either,
+    // unless the player has moved focus to a control on purpose.
+    const own = (e: KeyboardEvent) => {
+      if (gameKey(e.code) && !isControlTarget(e.target)) e.preventDefault();
+    };
+    const down = (e: KeyboardEvent) => {
+      own(e);
+      setHeld((h) => (h.includes(e.code) ? h : [...h, e.code]));
+    };
+    const up = (e: KeyboardEvent) => {
+      own(e);
+      setHeld((h) => h.filter((c) => c !== e.code));
+    };
     const clear = () => setHeld([]);
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
@@ -30,7 +50,13 @@ function KeyTester() {
     };
   }, []);
   return (
-    <div className="rounded-lg border border-zinc-700 bg-black/40 p-3 text-xs text-zinc-300">
+    <div
+      ref={box}
+      tabIndex={-1}
+      role="group"
+      aria-label="Key tester"
+      className="rounded-lg border border-zinc-700 bg-black/40 p-3 text-xs text-zinc-300 outline-none focus-visible:border-amber-300"
+    >
       <p className="mb-2">
         Key tester: hold both players&apos; keys together. If a key doesn&apos;t light up, your keyboard can&apos;t register that
         combination (ghosting); try the alternate keys.
@@ -56,48 +82,63 @@ function Row({ label, keys }: { label: string; keys: string }) {
   );
 }
 
+/**
+ * One option of a choice group. aria-pressed carries the selection, so
+ * assistive tech hears "pressed" rather than relying on the amber fill.
+ */
+function Choice({ selected, onSelect, children }: { selected: boolean; onSelect: () => void; children: ReactNode }) {
+  const look = selected ? "border-amber-300 bg-amber-400 text-black" : "border-zinc-600 bg-zinc-900/70 text-zinc-200 hover:border-amber-300";
+  return (
+    <button type="button" aria-pressed={selected} className={`rounded-md border px-3 py-2 font-display text-sm tracking-wide transition ${look}`} onClick={onSelect}>
+      {children}
+    </button>
+  );
+}
+
+/** A captioned row of choices; the caption names the group for assistive tech. */
+function ChoiceGroup({ id, caption, wrap, children }: { id: string; caption: string; wrap?: boolean; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span id={id} className="text-xs uppercase tracking-widest text-zinc-400">
+        {caption}
+      </span>
+      <div role="group" aria-labelledby={id} className={`flex gap-2 ${wrap ? "flex-wrap" : ""}`}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart: (c: PlayConfig) => void }) {
   const [cfg, setCfg] = useState<PlayConfig>(initial);
   const [controls, setControls] = useState(false);
-  const btn = "rounded-md border px-3 py-2 font-display text-sm tracking-wide transition";
-  const on = "border-amber-300 bg-amber-400 text-black";
-  const off = "border-zinc-600 bg-zinc-900/70 text-zinc-200 hover:border-amber-300";
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 py-8" data-testid="mode-picker">
       <h1 className="font-display text-4xl text-white sm:text-5xl">PICK YOUR FIGHT</h1>
-      <div className="flex flex-col gap-2">
-        <span className="text-xs uppercase tracking-widest text-zinc-400">Mode</span>
-        <div className="flex gap-2">
-          <button type="button" className={`${btn} ${cfg.mode === "cpu" ? on : off}`} onClick={() => setCfg({ ...cfg, mode: "cpu" })}>
-            VS CPU
-          </button>
-          <button type="button" className={`${btn} ${cfg.mode === "2p" ? on : off}`} onClick={() => setCfg({ ...cfg, mode: "2p" })}>
-            2 PLAYERS · 1 KEYBOARD
-          </button>
-        </div>
-      </div>
+      <ChoiceGroup id="pick-mode" caption="Mode">
+        <Choice selected={cfg.mode === "cpu"} onSelect={() => setCfg({ ...cfg, mode: "cpu" })}>
+          VS CPU
+        </Choice>
+        <Choice selected={cfg.mode === "2p"} onSelect={() => setCfg({ ...cfg, mode: "2p" })}>
+          2 PLAYERS · 1 KEYBOARD
+        </Choice>
+      </ChoiceGroup>
       {cfg.mode === "cpu" ? (
-        <div className="flex flex-col gap-2">
-          <span className="text-xs uppercase tracking-widest text-zinc-400">CPU</span>
-          <div className="flex gap-2">
-            {LEVELS.map((l) => (
-              <button key={l} type="button" className={`${btn} ${cfg.difficulty === l ? on : off}`} onClick={() => setCfg({ ...cfg, difficulty: l })}>
-                {l.toUpperCase()}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-      <div className="flex flex-col gap-2">
-        <span className="text-xs uppercase tracking-widest text-zinc-400">Look (preview · tiers unlock by holding $COCK)</span>
-        <div className="flex flex-wrap gap-2">
-          {TIERS.map((t) => (
-            <button key={t} type="button" className={`${btn} ${cfg.tier === t ? on : off}`} onClick={() => setCfg({ ...cfg, tier: t })}>
-              {t.toUpperCase()}
-            </button>
+        <ChoiceGroup id="pick-cpu" caption="CPU">
+          {LEVELS.map((l) => (
+            <Choice key={l} selected={cfg.difficulty === l} onSelect={() => setCfg({ ...cfg, difficulty: l })}>
+              {l.toUpperCase()}
+            </Choice>
           ))}
-        </div>
-      </div>
+        </ChoiceGroup>
+      ) : null}
+      <ChoiceGroup id="pick-look" caption="Look (preview · tiers unlock by holding $COCK)" wrap>
+        {TIERS.map((t) => (
+          <Choice key={t} selected={cfg.tier === t} onSelect={() => setCfg({ ...cfg, tier: t })}>
+            {t.toUpperCase()}
+          </Choice>
+        ))}
+      </ChoiceGroup>
       <button
         type="button"
         data-testid="fight-button"
@@ -106,7 +147,12 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
       >
         FIGHT!
       </button>
-      <button type="button" className="self-start text-sm text-zinc-400 underline underline-offset-4" onClick={() => setControls((v) => !v)}>
+      <button
+        type="button"
+        aria-expanded={controls}
+        className="self-start text-sm text-zinc-400 underline underline-offset-4"
+        onClick={() => setControls((v) => !v)}
+      >
         {controls ? "Hide controls" : "Controls"}
       </button>
       {controls ? (

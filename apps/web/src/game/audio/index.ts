@@ -4,7 +4,18 @@ import { AudioEngine, type SoundSource } from "./engine";
 import { browserDeps, loadSounds } from "./loader";
 import { SOUND_NAMES, type SoundName } from "./names";
 
-export type GameAudio = AudioSink & { setMuted(m: boolean): void; dispose(): void };
+export type GameAudio = AudioSink & {
+  setMuted(m: boolean): void;
+  /** The context is running (sounds can play). */
+  readonly running: boolean;
+  /**
+   * Asks a suspended context to start; call it from a user gesture. Resolves
+   * true once it runs. Without a gesture the browser leaves the promise
+   * pending until one arrives, so never await it where that would hang.
+   */
+  resume(): Promise<boolean>;
+  dispose(): void;
+};
 
 /** `window.__cockfight.audio` (read-only; e2e and console). */
 export interface AudioDebug {
@@ -14,7 +25,7 @@ export interface AudioDebug {
   total(): number;
   /** Sounds the engine actually started, newest last. */
   played(): readonly SoundName[];
-  /** ms from the FIGHT click until all sounds / the first-exchange sounds were ready (-1 = not yet). */
+  /** ms from creating the audio (the FIGHT click, or an autostart link loading) until all sounds / the first-exchange sounds were ready (-1 = not yet). */
   readyMs(): number;
   firstHitsMs(): number;
   source(name: SoundName): SoundSource | null;
@@ -28,11 +39,15 @@ declare module "../engine/debug" {
 }
 
 /**
- * Creates the game's audio engine. Must be called from a user gesture (the
- * FIGHT click) so the AudioContext may start: the context is created and
- * resumed synchronously, before any await. Sounds render in the background
- * in priority order; this resolves without waiting for them. Returns null
- * when WebAudio is unavailable; the game plays silently.
+ * Creates the game's audio engine. Called from a user gesture (the FIGHT
+ * click) the AudioContext starts at once: it is created and resumed
+ * synchronously, before any await. Called without one (an autostart link,
+ * while LOADING is up) the context waits suspended, and `resume()` from the
+ * first gesture starts it. The constructor blocks the main thread for about
+ * 130 ms on desktop Chrome, so create it where a stall does not show, never
+ * mid-fight. Sounds render in the background in priority order; this
+ * resolves without waiting for them. Returns null when WebAudio is
+ * unavailable; the game plays silently.
  */
 export async function createAudio(): Promise<GameAudio | null> {
   if (typeof window === "undefined") return null;
@@ -73,6 +88,17 @@ export async function createAudio(): Promise<GameAudio | null> {
     play: (name, opts) => engine.play(name, opts),
     setHype: (h) => engine.setHype(h),
     setMuted: (m) => engine.setMuted(m),
+    get running() {
+      return !engine.isDisposed && ctx.state === "running";
+    },
+    resume: () => {
+      // A hidden tab keeps its context suspended (see onVisibility).
+      if (engine.isDisposed || document.visibilityState === "hidden") return Promise.resolve(false);
+      return ctx.resume().then(
+        () => !engine.isDisposed && ctx.state === "running",
+        () => false,
+      );
+    },
     dispose: () => {
       document.removeEventListener("visibilitychange", onVisibility);
       uninstall();

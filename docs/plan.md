@@ -108,7 +108,7 @@ Each one goes in `docs/decisions.md`. A ★ means Sammy should confirm it at the
 - **State hash.** FNV-1a-64 over two 32-bit lanes, walking a fixed `FIELDS` order. It uses `>>> 0`, never `Math.floor`.
 - **Web game.** Plain three.js, imperative. The code lives in `apps/web/src/game/` with no React. React handles only the page shell and the HUD. The frame order is: step the sim, update presentation, render.
 - **Chicken animation.** The mixer is driven from sim state: set `action.time`, set weights, then `mixer.update(0)`. It never runs on its own clock, so hit-stop and replays are exact.
-- **Audio.** Procedural WebAudio, rendered once with `OfflineAudioContext` into buffers. Files named `public/audio/<name>.m4a` override the procedural sound later, when Sammy's sound pack lands.
+- **Audio.** Procedural WebAudio, rendered once with `OfflineAudioContext` into buffers. A sound file overrides the procedural sound (for Sammy's sound pack) only when `public/audio/manifest.json` lists it next to its name, e.g. `{"hit_light": "hit_light.m4a"}`: the loader fetches listed files and nothing else, so a file dropped into `public/audio/` without a manifest entry is ignored. Accepted extensions: m4a, aac, mp3, ogg, opus, webm, wav, flac. A listed file that fails to fetch or decode falls back to the procedural sound, with a console warning.
 
 ## Repo layout after Phase 1 (abridged)
 ```

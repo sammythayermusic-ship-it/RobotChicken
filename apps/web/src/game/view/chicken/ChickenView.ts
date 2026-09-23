@@ -2,7 +2,7 @@ import {
   AnimationMixer, Group, Mesh, MeshStandardMaterial, type AnimationAction, type AnimationClip, type Material, type Object3D,
 } from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
-import { CLIP_NAMES, HitKind, RULES, St, clipFor, sampleFor, type ClipRules, type FighterState, type Rules } from "@cockfight/sim";
+import { CLIP_NAMES, HitKind, RULES, clipFor, sampleFor, type ClipRules, type FighterState, type Rules } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import { TIER_SLOTS, tierMaterials } from "./materials";
 
@@ -36,12 +36,17 @@ export class ChickenView {
   private yawFrom = Math.PI / 2;
   private yawT = TURN_TICKS;
   private facing = 1;
+  /** A sim state has been seen: until then the view doesn't know which way the fighter faces. */
+  private placed = false;
   private flash = 0;
   private lastHitT = -1;
   private ownedMaterials: Material[] = [];
+  /** The longest hit-stop any move can cause: a hit received longer ago than this is not the one freezing us. */
+  private readonly maxHitstop: number;
 
   constructor(asset: ChickenAsset, tier: Tier, opts: { hueShift?: number; R?: Rules } = {}) {
     this.R = opts.R ?? RULES;
+    this.maxHitstop = this.R.moves.reduce((m, mv) => Math.max(m, mv.hitstop, mv.blockHitstop), 0);
     this.model = cloneSkinned(asset.scene);
     this.root.add(this.model);
     this.mixer = new AnimationMixer(this.model);
@@ -83,8 +88,22 @@ export class ChickenView {
     return this.actions.size;
   }
 
+  /**
+   * Face the way the sim says at once, with no turn. For the first state the
+   * view sees: the view starts facing right, and P2 starts facing left, so
+   * animating from the default would spin P2 through the camera-facing pose
+   * at the start of every match.
+   */
+  private place(f: FighterState): void {
+    this.placed = true;
+    this.facing = f.facing;
+    this.yaw = this.yawFrom = f.facing > 0 ? Math.PI / 2 : -Math.PI / 2;
+    this.yawT = TURN_TICKS;
+  }
+
   /** Advance per-tick presentation state (blends, turns, flash). Call once per sim tick. */
   tick(f: FighterState): void {
+    if (!this.placed) this.place(f);
     const clipId = clipFor(f, this.R);
     if (clipId !== this.clip) {
       if (this.clip >= 0) {
@@ -109,11 +128,16 @@ export class ChickenView {
 
   /** Pose for rendering. `prev`/`cur` are consecutive sim states; alpha interpolates position. */
   render(prev: FighterState, cur: FighterState, alpha: number, tick: number): void {
+    if (!this.placed) this.place(cur);
     const frozen = cur.hitstop > 0;
     const a = frozen ? 1 : alpha;
     let x = (prev.x + (cur.x - prev.x) * a) / 1000;
     const y = (prev.y + (cur.y - prev.y) * a) / 1000;
-    if (frozen && cur.hitKind === HitKind.hit && cur.st !== St.attack) x += (tick & 2 ? 0.04 : -0.04);
+    // Only the fighter that was just hit shakes. hitKind and hitT describe the
+    // last hit *received* this round, so an attacker frozen by its own landed
+    // hit (a dive kick bounces it into `fall`, not `attack`) still carries an
+    // older hit: it must be recent enough to be the one causing this freeze.
+    if (frozen && cur.hitKind === HitKind.hit && tick - cur.hitT <= this.maxHitstop) x += (tick & 2 ? 0.04 : -0.04);
     this.root.position.set(x, y, 0);
     const targetYaw = this.facing > 0 ? Math.PI / 2 : -Math.PI / 2;
     const k = Math.min(1, this.yawT / TURN_TICKS);

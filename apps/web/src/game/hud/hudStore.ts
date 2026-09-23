@@ -26,7 +26,28 @@ export interface HudCold {
 
 export type HotBar = "hp0" | "hp1" | "trail0" | "trail1" | "heat0" | "heat1";
 
+const HOT_BARS: readonly HotBar[] = ["hp0", "hp1", "trail0", "trail1", "heat0", "heat1"];
+
 type Listener = () => void;
+
+/** The HUD before a fight's first tick. */
+function fresh(): HudCold {
+  return {
+    mode: "cpu",
+    names: ["P1", "P2"],
+    phase: 0,
+    round: 1,
+    timerSec: 60,
+    sd: false,
+    wins: [0, 0],
+    heatFull: [false, false],
+    banner: { text: "", key: 0, tone: "info" },
+    paused: false,
+    matchWinner: -1,
+    loading: true,
+    error: null,
+  };
+}
 
 export class HudStore {
   private state: HudCold;
@@ -36,22 +57,7 @@ export class HudStore {
   private bannerKey = 0;
 
   constructor(init: Partial<HudCold> = {}) {
-    this.state = {
-      mode: "cpu",
-      names: ["P1", "P2"],
-      phase: 0,
-      round: 1,
-      timerSec: 60,
-      sd: false,
-      wins: [0, 0],
-      heatFull: [false, false],
-      banner: { text: "", key: 0, tone: "info" },
-      paused: false,
-      matchWinner: -1,
-      loading: true,
-      error: null,
-      ...init,
-    };
+    this.state = { ...fresh(), ...init };
   }
 
   readonly subscribe = (fn: Listener): (() => void) => {
@@ -74,6 +80,19 @@ export class HudStore {
     }
     if (!changed) return;
     this.state = { ...this.state, ...patch };
+    for (const fn of this.listeners) fn();
+  }
+
+  /**
+   * Back to the start of a fight: every cold value to its default (then
+   * `patch`), health and damage trails full, Heat empty, no hit flash. A new
+   * engine calls this because the store outlives engines: without it a
+   * restart inherits the last fight's pause flag, winner, wins and bars.
+   */
+  reset(patch: Partial<HudCold> = {}): void {
+    this.state = { ...fresh(), ...patch };
+    for (const key of HOT_BARS) this.setBar(key, key.startsWith("heat") ? 0 : 1);
+    for (const el of this.flashEls.values()) el.classList.remove("hud-flash");
     for (const fn of this.listeners) fn();
   }
 

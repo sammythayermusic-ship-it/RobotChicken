@@ -113,6 +113,55 @@ test.describe("audio", () => {
     await page.getByTestId("audio-spectrograms").screenshot({ path: CAP("audio-spectrograms.png") });
     expect(problems.errors).toEqual([]);
   });
+
+  test("an autostart link builds audio under LOADING, and an Esc first does not leave the fight silent", async ({ page }) => {
+    const problems = await watchProblems(page);
+    await page.addInitScript(() => {
+      type W = Window & { __cockfight?: { fight?: { ready(): boolean } }; __audioBuiltWhileFighting?: boolean };
+      const w = window as W;
+      // Playwright's navigations and evaluate() give every page user activation, so a real
+      // browser's autoplay policy never bites here. Model it: a context may start only once the
+      // page has had an activation-triggering input (HTML: a keydown other than Esc, a mouse
+      // press, a touch release). Until then resume() stays pending, as in Chrome.
+      let activated = false;
+      const activate = (e: Event) => {
+        if (e.type === "keydown" && (e as KeyboardEvent).key === "Escape") return;
+        if (e.type === "pointerdown" && (e as PointerEvent).pointerType !== "mouse") return;
+        if (e.type === "pointerup" && (e as PointerEvent).pointerType === "mouse") return;
+        activated = true;
+      };
+      for (const t of ["keydown", "mousedown", "pointerdown", "pointerup", "touchend"]) window.addEventListener(t, activate, true);
+      const Native = window.AudioContext;
+      window.AudioContext = class extends Native {
+        constructor(options?: AudioContextOptions) {
+          super(options);
+          // The constructor stalls the main thread for ~130 ms: note whether that happened mid-fight.
+          w.__audioBuiltWhileFighting = w.__cockfight?.fight?.ready() ?? false;
+          if (!activated) void super.suspend();
+        }
+        override resume(): Promise<void> {
+          return activated ? super.resume() : new Promise<void>(() => {});
+        }
+      };
+    });
+    const state = () => audioCall<string | null>(page, "state");
+
+    await page.goto("/play?mode=cpu&arena=0&seed=e2e-audio-unlock");
+    await page.waitForFunction(() => (window as unknown as Partial<Win>).__cockfight?.fight?.ready() === true, null, { timeout: 60_000 });
+    // Built while LOADING was up (the fight wasn't running yet), and waiting for a gesture.
+    expect(await page.evaluate(() => (window as unknown as { __audioBuiltWhileFighting?: boolean }).__audioBuiltWhileFighting)).toBe(false);
+    await expect.poll(state).toBe("suspended");
+
+    // Esc is no gesture for audio: the menu opens and the context stays suspended...
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "Paused" })).toBeVisible();
+    expect(await state()).toBe("suspended");
+    // ...but the page keeps listening, so the next real gesture (clicking RESUME) starts it.
+    await page.getByRole("button", { name: "RESUME" }).click();
+    await expect.poll(state).toBe("running");
+    await expect.poll(() => audioCall<string[]>(page, "played").then((p) => p.length), { timeout: 30_000 }).toBeGreaterThan(0);
+    expect(problems.errors).toEqual([]);
+  });
 });
 
 /** Runs in the page: draws one small spectrogram per sound into a full-window canvas. */
