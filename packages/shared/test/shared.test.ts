@@ -32,6 +32,10 @@ describe("env", () => {
   it("splits ALLOWED_ORIGINS", () => {
     expect(loadGameEnv({ ALLOWED_ORIGINS: "https://a.fun, https://b.fun" }).ALLOWED_ORIGINS).toEqual(["https://a.fun", "https://b.fun"]);
   });
+  it("WEB_PORT moves the default allowed origin with the dev web server", () => {
+    expect(loadGameEnv({ WEB_PORT: "3001" }).ALLOWED_ORIGINS).toEqual(["http://localhost:3001", "http://127.0.0.1:3001"]);
+    expect(loadGameEnv({ WEB_PORT: "3001", ALLOWED_ORIGINS: "https://a.fun" }).ALLOWED_ORIGINS).toEqual(["https://a.fun"]);
+  });
   it("rejects a bad mint", () => {
     expect(() => loadGameEnv({ NEXT_PUBLIC_COCK_MINT: "not-an-address" })).toThrow();
   });

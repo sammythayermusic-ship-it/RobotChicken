@@ -19,6 +19,7 @@
     "assets:placeholder": "pnpm -s --filter @cockfight/tools run assets:placeholder",
     "assets:validate": "pnpm -s --filter @cockfight/tools run assets:validate",
     "assets:bake": "pnpm -s --filter @cockfight/tools run assets:bake",
+    "assets:inspect": "pnpm -s --filter @cockfight/tools run assets:inspect",
     "assets:import": "pnpm -s --filter @cockfight/tools run assets:import",
     "textures": "sh tools/textures.sh",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm assets:validate && pnpm assets:bake --check && pnpm build"

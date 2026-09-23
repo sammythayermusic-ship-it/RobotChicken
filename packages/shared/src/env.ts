@@ -65,7 +65,17 @@ export const webPublicEnv = z.object({
 export type WebPublicEnv = z.infer<typeof webPublicEnv>;
 
 type EnvSource = Record<string, string | undefined>;
-export const loadGameEnv = (e: EnvSource): GameEnv => gameEnv.parse(clean(e));
+/**
+ * In local dev the web app's port may move (WEB_PORT=3001 pnpm dev when 3000 is
+ * taken); unless ALLOWED_ORIGINS is set explicitly, allow that port's origin.
+ */
+export const loadGameEnv = (e: EnvSource): GameEnv => {
+  const env = clean(e);
+  if (!env.ALLOWED_ORIGINS && env.WEB_PORT && /^\d+$/.test(env.WEB_PORT)) {
+    env.ALLOWED_ORIGINS = `http://localhost:${env.WEB_PORT},http://127.0.0.1:${env.WEB_PORT}`;
+  }
+  return gameEnv.parse(env);
+};
 export const loadWorkerEnv = (e: EnvSource): WorkerEnv => workerEnv.parse(clean(e));
 export const loadWebPublicEnv = (e: EnvSource): WebPublicEnv => webPublicEnv.parse(clean(e));
 

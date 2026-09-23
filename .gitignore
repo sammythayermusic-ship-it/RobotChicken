@@ -31,3 +31,7 @@ art/blender/out/
 
 # Claude Code worktrees / local settings
 .claude/
+
+# Python bytecode (Blender scripts)
+__pycache__/
+*.pyc

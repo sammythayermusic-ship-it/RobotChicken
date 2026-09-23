@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/copy-decoders.mjs && next dev --port 3000",
+    "dev": "node scripts/copy-decoders.mjs && next dev --port ${WEB_PORT:-3000}",
     "build": "node scripts/copy-decoders.mjs && next build",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
