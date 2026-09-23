@@ -95,8 +95,31 @@ test.describe("local fight", () => {
   test("the mode picker starts a fight", async ({ page }) => {
     await page.goto("/play");
     await expect(page.getByTestId("mode-picker")).toBeVisible();
+    // The selection is announced, not shown by colour only.
+    const cpu = page.getByRole("button", { name: "VS CPU" });
+    const versus = page.getByRole("button", { name: /2 PLAYERS/ });
+    await expect(cpu).toHaveAttribute("aria-pressed", "true");
+    await expect(versus).toHaveAttribute("aria-pressed", "false");
+    await expect(page.getByRole("group", { name: "CPU" }).getByRole("button", { pressed: true })).toHaveText("NORMAL");
+    await expect(page.getByRole("group", { name: /Look/ }).getByRole("button", { pressed: true })).toHaveText("RUST");
+    await versus.click();
+    await expect(versus).toHaveAttribute("aria-pressed", "true");
+    await expect(cpu).toHaveAttribute("aria-pressed", "false");
+
     await page.getByRole("button", { name: "Controls" }).click();
-    await expect(page.getByTestId("key-tester")).toBeVisible();
+    const tester = page.getByTestId("key-tester");
+    await expect(tester).toBeVisible();
+    // Testing peck keys must not press the Controls toggle (Space on release, Enter on press).
+    await page.keyboard.down("KeyA");
+    await page.keyboard.down("Space");
+    await expect(tester).toContainText("KeyA");
+    await expect(tester).toContainText("Space");
+    await page.keyboard.up("Space");
+    await page.keyboard.up("KeyA");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("NumpadEnter");
+    await expect(tester).toBeVisible();
+
     await page.getByTestId("fight-button").click();
     await expect(page.getByTestId("fight-screen")).toBeVisible();
     await page.waitForFunction(() => (window as unknown as { __cockfight?: { fight?: { ready(): boolean } } }).__cockfight?.fight?.ready() === true);
