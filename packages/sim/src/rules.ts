@@ -148,6 +148,8 @@ export interface Rules {
     chipPct: number;
     knockdownLie: number;
     getup: number;
+    /** Invulnerable ticks after get-up ends, when the fighter can already act (no guaranteed meaty). */
+    wakeInvuln: number;
   };
   /** Indexed by Mv id; index 0 (none) is unused. */
   moves: MoveRules[];
@@ -372,6 +374,7 @@ export function compileRules(
       chipPct: int(f.block.chipPct, "fighter.block.chipPct"),
       knockdownLie: int(f.knockdown.lie, "fighter.knockdown.lie"),
       getup: int(f.knockdown.getup, "fighter.knockdown.getup"),
+      wakeInvuln: int(f.knockdown.wakeInvuln, "fighter.knockdown.wakeInvuln"),
     },
     moves: moveTable,
     clips,
@@ -398,7 +401,7 @@ export function rulesTable(R: Rules): number[] {
     f.jumpVy, f.jumpVxFwd, f.jumpVxBack, f.jumpAirTicks, f.landLag,
     f.dashWindow, f.dashDuration, f.dashInvuln[0], f.dashInvuln[1],
     f.dashFwdSpeed, f.dashFwdFrames, f.dashBackSpeed, f.dashBackFrames,
-    f.chipPct, f.knockdownLie, f.getup,
+    f.chipPct, f.knockdownLie, f.getup, f.wakeInvuln,
   );
   for (let id = 1; id < R.moves.length; id++) {
     const mv = R.moves[id] as MoveRules;
@@ -453,6 +456,7 @@ export function validateRules(R: Rules): string[] {
     posInt(f[k], `fighter.${k}`);
   }
   posInt(R.heat.max, "heat.max");
+  if (!(f.wakeInvuln >= 0)) errs.push(`fighter.wakeInvuln must be >= 0 (got ${f.wakeInvuln})`);
   if (R.match.ringEdge <= R.match.wallEdge) errs.push("ringEdge must be beyond wallEdge");
   for (let id = 1; id < R.moves.length; id++) {
     const mv = R.moves[id] as MoveRules;

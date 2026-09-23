@@ -52,10 +52,10 @@ const p1: Script = [
   [B.R, 60], [0, 2],
   [B.D | S, 1], [0, 60], // slam
   [B.R, 1], [0, 2], [B.R, 1], [0, 20], // dash
-  [B.U | B.R, 1], [B.R, 6], [B.R | S, 1], [0, 40], // jump -> dive kick
+  [B.U | B.R, 1], [B.R, 6], [B.R | S, 1], [0, 40], // jump -> dive kick (the early press waits for the dive gate)
   [B.L, 1], [0, 2], [B.L, 1], [0, 20], // back dash
   [B.D, 40], [0, 5], // block
-  [B.R, 90], [0, 1], [S, 1], [0, 3], [B.R | S, 1], [0, 40], // peck -> shove cancel
+  [B.R, 90], [0, 1], [S, 1], [0, 13], [B.R | S, 1], [0, 40], // peck, then a buffered shove (cancels only go into the super)
 ];
 const p2: Script = [
   [0, 180],

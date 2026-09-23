@@ -183,7 +183,9 @@ export function updateFighter(f: FighterState, live: boolean, R: Rules): void {
     case St.knockdown:
       if (f.stTick > F.knockdownLie) {
         enter(f, St.getup);
-        f.invuln = F.getup;
+        // Get-up is invulnerable anyway; the counter covers the first actionable
+        // ticks after it, so a jump or dash can start before a meaty attack lands.
+        f.invuln = F.getup + F.wakeInvuln;
       }
       break;
     case St.getup:

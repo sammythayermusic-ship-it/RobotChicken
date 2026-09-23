@@ -1,4 +1,4 @@
-import { B, BUTTON_MASK, type FighterState } from "./types";
+import { B, BUTTON_MASK, St, type FighterState } from "./types";
 import type { Rules } from "./rules";
 
 /** SOCD cleaning: opposite directions held together cancel out. */
@@ -50,13 +50,22 @@ export function readInput(f: FighterState, rawIn: number, frozen: boolean, R: Ru
     f.bufS = R.fighter.inputBuffer;
     // The move is chosen from what was held when Space went down, not when it fires.
     f.bufDir = now & BUF_DIRS;
-  } else if (!frozen && f.bufS > 0) {
+  } else if (!frozen && f.bufS > 0 && !waitingToDive(f)) {
     f.bufS -= 1;
     if (f.bufS === 0) f.bufDir = 0;
   }
 
   f.held = now;
   f.rawHeld = raw;
+}
+
+/**
+ * Rising in a jump with the dive kick still to come: a Space press made before
+ * the dive is allowed (moves.json dive_kick.minAirTick / minY) waits for it
+ * instead of expiring, so "Space in the air" always dives.
+ */
+function waitingToDive(f: FighterState): boolean {
+  return f.st === St.jump && f.grounded === 0 && f.diveUsed === 0 && f.vy > 0;
 }
 
 /** Held direction relative to facing. */
