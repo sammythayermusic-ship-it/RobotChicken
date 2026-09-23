@@ -154,7 +154,8 @@ needs Blender. It checks:
   `hurt_body`'s center and reaches above the floor;
 - textures, when there are any (the placeholder has none, so these rules skip): KTX2 with Basis
   inside (`KHR_texture_basisu`), power-of-two sides ≤ 2048, color maps (base color, emissive)
-  sRGB, data maps (normal, metal/rough, occlusion) linear; the same for the tier sets below;
+  sRGB, data maps (normal, metal/rough, occlusion) linear, normal maps RGB (not the two-channel
+  `--normal-mode` layout); the same for the tier sets below;
 - `hitboxes.json` was baked from exactly this file (sha256).
 
 It also prints each clip's animation size and the **first-load table**: every file a new player
@@ -168,17 +169,34 @@ separately.
 
 Tier sets live in `apps/web/public/textures/chicken/<tier>/` (`rust`, `chrome`, `gold`,
 `diamond`) as `basecolor.ktx2`, `orm.ktx2` (occlusion / roughness / metalness packed),
-`normal.ktx2` and `emissive.ktx2`, each ≤ 2048 and a power of two. Convert 8-bit PNGs with
-[KTX-Software 4.4](https://github.com/KhronosGroup/KTX-Software/releases) (`toktx` is deprecated):
+`normal.ktx2` and `emissive.ktx2`, each ≤ 2048 and a power of two. Put 8-bit PNGs in
+`art/textures/<tier>/{basecolor,orm,normal,emissive}.png` and run
+
+```bash
+pnpm textures             # converts every PNG it finds, then: pnpm assets:validate
+pnpm textures --dry-run   # prints the ktx commands instead (no KTX-Software needed)
+```
+
+It needs [KTX-Software 4.4](https://github.com/KhronosGroup/KTX-Software/releases)'s `ktx`
+(`toktx` is deprecated). For reference, the commands it runs:
 
 ```bash
 # color maps (basecolor, emissive): sRGB, ETC1S
-ktx create --format R8G8B8_SRGB --assign-tf srgb --assign-primaries bt709 --encode basis-lz \
-  --clevel 4 --qlevel 200 --generate-mipmap basecolor.png basecolor.ktx2
-# data maps (orm, normal): linear, UASTC
-ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none --encode uastc \
-  --uastc-quality 2 --zstd 18 --generate-mipmap normal.png normal.ktx2
+ktx create --generate-mipmap --fail-on-color-conversions --format R8G8B8_SRGB --assign-tf srgb \
+  --assign-primaries bt709 --encode basis-lz --clevel 4 --qlevel 200 basecolor.png basecolor.ktx2
+# data maps (orm, normal): linear, UASTC + RDO + Zstandard (--uastc-rdo-l 1.0 for orm, 0.5 for normal)
+ktx create --generate-mipmap --fail-on-color-conversions --format R8G8B8_UNORM --assign-tf linear \
+  --assign-primaries none --encode uastc --uastc-quality 2 --uastc-rdo --uastc-rdo-m --zstd 18 \
+  --uastc-rdo-l 0.5 normal.png normal.ktx2
 ```
+
+- `--assign-tf` matters: without it `ktx` reads an 8-bit PNG as sRGB and gamma-decodes the
+  data maps' numbers into linear (128 becomes 55). `--fail-on-color-conversions` makes any
+  colour conversion an error instead.
+- Normal maps are plain RGB = XYZ tangent-space normals, which is what three.js reads.
+  Don't add `--normal-mode` (it stores X and Y as RGB = X, A = Y); `assets:validate` rejects it.
+- UASTC without `--zstd` is 5.6 MB per 2048 map; two of them alone would nearly fill the
+  first-load budget, so validate warns about it.
 
 The placeholder uses flat materials, so nothing needs converting yet.
 
