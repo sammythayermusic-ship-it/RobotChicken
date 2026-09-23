@@ -97,7 +97,14 @@ export class HudStore {
     if (!el) return;
     const v = frac < 0 ? 0 : frac > 1 ? 1 : frac;
     const t = `scaleX(${v.toFixed(4)})`;
-    if (el.style.transform !== t) el.style.transform = t;
+    if (el.style.transform === t) return;
+    el.style.transform = t;
+    // Keep the meter's accessible value in step (whole percent, so it rarely changes).
+    if (!key.startsWith("trail")) {
+      const meter = el.parentElement;
+      const pct = String(Math.round(v * 100));
+      if (meter && meter.getAttribute("aria-valuenow") !== pct) meter.setAttribute("aria-valuenow", pct);
+    }
   }
 
   /** Restart the white hit-flash animation on a side's HP bar. */

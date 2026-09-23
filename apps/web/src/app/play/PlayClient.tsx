@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { CpuLevel } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import FightHud from "@/components/hud/FightHud";
@@ -32,28 +32,42 @@ export interface PlayParams {
 }
 
 type Audio = Awaited<ReturnType<typeof createAudio>>;
+type ActiveConfig = Omit<PlayConfig, "mode"> & { mode: FightMode };
+
+const noSubscribe = () => () => {};
+/** Stored quality choice, else by pointer type (client only; "high" while server rendering). */
+function useDefaultQuality(): QualityTier {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => loadTier(defaultTier(window.matchMedia?.("(pointer: coarse)").matches ?? false)),
+    () => "high",
+  );
+}
+function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    () => false,
+  );
+}
 
 export default function PlayClient({ params }: { params: PlayParams }) {
   const autostart = params.mode !== null;
-  const [cfg, setCfg] = useState<(PlayConfig & { mode: FightMode }) | null>(
+  const [cfg, setCfg] = useState<ActiveConfig | null>(
     autostart ? { mode: params.mode as FightMode, difficulty: params.difficulty, tier: params.tier } : null,
   );
   const [round, setRound] = useState(0);
   const [engine, setEngine] = useState<FightEngine | null>(null);
-  const [quality, setQuality] = useState<QualityTier>(params.quality ?? "high");
+  const defaultQuality = useDefaultQuality();
+  const reducedMotion = useReducedMotion();
+  const [chosenQuality, setQuality] = useState<QualityTier | null>(params.quality);
+  const quality = chosenQuality ?? defaultQuality;
   const [muted, setMuted] = useState(false);
-  const [shake, setShake] = useState(1);
+  const [chosenShake, setShake] = useState<number | null>(null);
+  const shake = chosenShake ?? (reducedMotion ? 0.3 : 1);
   const audio = useRef<Audio>(null);
   const hud = useMemo(() => new HudStore(), []);
   const cold = useHud(hud);
-
-  // Quality: the stored choice, else by pointer type. Read after mount (no SSR access to matchMedia/localStorage).
-  useEffect(() => {
-    if (params.quality) return;
-    const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-    setQuality(loadTier(defaultTier(coarse)));
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) setShake(0.3);
-  }, [params.quality]);
 
   useEffect(() => engine?.setQuality(quality), [engine, quality]);
   useEffect(() => engine?.setShake(shake), [engine, shake]);

@@ -43,6 +43,9 @@ function Side({ store, side }: { store: HudStore; side: 0 | 1 }) {
         className="relative h-4 w-full overflow-hidden rounded-sm border-2 border-zinc-200/80 bg-zinc-900/80 sm:h-6"
         role="meter"
         aria-label={`${hud.names[side]} health`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={100}
       >
         <Bar store={store} bar={`trail${side}` as HotBar} right={right} className="hud-trail bg-red-600" />
         <Bar store={store} bar={`hp${side}` as HotBar} right={right} className="bg-gradient-to-b from-lime-300 to-lime-600" />
@@ -51,6 +54,9 @@ function Side({ store, side }: { store: HudStore; side: 0 | 1 }) {
         className={`relative h-2 w-2/3 overflow-hidden rounded-sm border border-orange-300/70 bg-zinc-900/80 sm:h-2.5 ${hud.heatFull[side] ? "hud-heat-full" : ""}`}
         role="meter"
         aria-label={`${hud.names[side]} heat`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={0}
       >
         <Bar store={store} bar={`heat${side}` as HotBar} right={right} className="bg-gradient-to-r from-orange-500 via-amber-400 to-yellow-200" />
       </div>

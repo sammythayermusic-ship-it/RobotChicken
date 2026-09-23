@@ -439,3 +439,32 @@ describe("round endings", () => {
     expect(a.st).toBe(b.st);
   });
 });
+
+describe("baked hitboxes", () => {
+  it("every move uses the baked rig helpers (no static-box fallbacks)", () => {
+    expect(RULES.fallbacks).toEqual([]);
+    for (const c of RULES.clips) expect(c.hurt, c.name).not.toBeNull();
+  });
+  it("walking in from the start positions, a peck lands", () => {
+    let s = fightingMatch("walk-in");
+    while (s.f[1].x - s.f[0].x > 1100) s = step(s, B.R, 0);
+    s = attack(s, 0);
+    for (let t = 0; t < 10 && s.f[1].hitKind === 0; t++) s = step(s, 0, 0);
+    expect(s.f[1].hitKind).toBe(HitKind.hit);
+    expect(s.f[1].hp).toBe(F.hpMax - 600);
+  });
+  it("at pushbox contact every ground attack reaches during its active frames", () => {
+    for (const id of [Mv.peck, Mv.shove, Mv.slam] as const) {
+      const s = placed(2 * F.pushHalfW);
+      const a = s.f[0];
+      a.st = St.attack;
+      a.move = id;
+      let hit = false;
+      for (let f = mv(id).startup + 1; f <= mv(id).startup + mv(id).active; f++) {
+        a.stTick = f;
+        hit ||= detect(a, s.f[1], false, RULES);
+      }
+      expect(hit, mv(id).name).toBe(true);
+    }
+  });
+});

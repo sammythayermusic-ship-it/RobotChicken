@@ -57,6 +57,8 @@ export function chickenModelUrl(): string {
 }
 
 interface DebugFight {
+  /** True once the model is loaded, shaders are compiled and the loop runs. */
+  ready(): boolean;
   state(): MatchState;
   events(): SimEvent[];
   hash(): string;
@@ -114,6 +116,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   let disposed = false;
   let lastFrame = -1;
   let ended = false;
+  let started = false;
 
   const loop = new FixedLoop({
     tick: () => {
@@ -176,6 +179,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     if (disposed) return;
     opts.hud.set({ loading: false });
     loop.start();
+    started = true;
     canvas.focus({ preventScroll: true });
   })().catch((e: unknown) => {
     console.error("[cockfight] failed to start the fight", e);
@@ -183,6 +187,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   });
 
   const handle: DebugFight = {
+    ready: () => started,
     state: () => match.cur,
     events: () => match.events,
     hash: () => stateHash(match.cur),
