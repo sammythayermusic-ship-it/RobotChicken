@@ -82,14 +82,18 @@ Requirements:
 ## Tables
 
 All money is `bigint` lamports; token amounts are `numeric(40,0)` raw base
-units. Addresses and signatures use the `sol_address` and `sol_signature`
+units (the on-chain integer, never a UI amount), including
+`balance_checks.tokens`, which carries the mint's `decimals` beside it. A
+`numeric(40,0)` column rounds a fractional input instead of rejecting it, so
+writers pass base units as a `bigint` or an integer string, never a JS number
+with decimals. Addresses and signatures use the `sol_address` and `sol_signature`
 domains (text with a base58 check). Enumerations are text with a check
 constraint, so zod can mirror them and adding a value is a one-line migration.
 
 | Table | Purpose | Notes |
 |---|---|---|
 | `players` | One row per pasted wallet address | `tier` is null until the address passes the gate. A username needs its signed message (`username_sig`). Usernames are unique case-insensitively. |
-| `balance_checks` | Audit trail for the $COCK holding gate | No FK to `players`: the gate checks an address before its row exists. |
+| `balance_checks` | Audit trail for the $COCK holding gate | No FK to `players`: the gate checks an address before its row exists. `tokens` is raw base units and `decimals` the mint's, so the UI amount is `tokens / 10^decimals`. |
 | `matches` | One row per match; `input_log` makes it replayable | Can be written at match start (`ended_at`, `reason`, `winner` null) or at the end. A finished match has 1–5 rounds, and a forfeit records the round it ended in. `reason = 'draw'` has `winner` null; every other reason has a winner. |
 | `payouts` | SOL payouts, one per win and one per daily rank | `idem_key` is unique: the match id for a win, `YYYY-MM-DD:rank` for daily. A win payout must go to that match's winner (a composite FK to `matches (id, winner)`), so a drawn or unfinished match cannot be paid, and once a match has a win payout its winner cannot change. `sent`/`paid` need `tx_sig`; `paid` exactly when `paid_at` is set. |
 | `daily_rewards` | Each UTC day's top 10 and what each rank was paid | One row per rank and per address per day. |

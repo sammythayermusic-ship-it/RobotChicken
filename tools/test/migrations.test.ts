@@ -326,7 +326,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     const ts = "timestamp with time zone";
     expect(Object.fromEntries(cols.map((r) => [r.t, r.cols]))).toEqual({
       abuse_events: `id uuid!, address sol_address, fingerprint text, ip_hash text, kind text!, match_id uuid, details jsonb!, created_at ${ts}!, resolved_by text, resolved_at ${ts}`,
-      balance_checks: `id uuid!, address sol_address!, usd numeric(14,4)!, tokens numeric(30,9)!, source text!, checked_at ${ts}!`,
+      balance_checks: `id uuid!, address sol_address!, usd numeric(14,4)!, tokens numeric(40,0)!, decimals smallint!, source text!, checked_at ${ts}!`,
       daily_rewards: "day date!, rank smallint!, address sol_address!, wins integer!, elo integer!, pool_lamports bigint!, share_bps integer!, lamports bigint!, payout_id uuid",
       fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, sol_after_swap bigint, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, swap_sig sol_signature, at ${ts}!`,
       leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint, refreshed_at ${ts}`,
@@ -433,7 +433,8 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await as(c, "service_role", async () => {
         await addPlayers(c, ROOSTER, HEN);
         await c.query("update public.players set username = 'Rooster', username_sig = $1, tier = 'gold' where address = $2", [sig("5"), ROOSTER]);
-        await c.query("insert into public.balance_checks (address, usd, tokens, source) values ($1, 31.5, 123456.000000001, 'jupiter')", [ROOSTER]);
+        // 123,456.000000001 tokens of a 9-decimal mint, in raw base units.
+        await c.query("insert into public.balance_checks (address, usd, tokens, decimals, source) values ($1, 31.5, 123456000000001, 9, 'jupiter')", [ROOSTER]);
         const matchId = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
         const win = await one<{ id: string }>(
           c,
@@ -587,10 +588,21 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         c.query("update public.players set username = 'ROOSTER', username_sig = $1 where address = $2", [sig("3"), HEN]),
       ).rejects.toMatchObject({ code: "23505", constraint: "players_username_lower_key" });
 
-      const check = "insert into public.balance_checks (address, usd, tokens, source)";
-      await rejects("balance_checks_source_check", `${check} values ($1, 1, 1, 'birdeye')`, [ROOSTER]);
-      await rejects("balance_checks_usd_check", `${check} values ($1, -1, 1, 'curve')`, [ROOSTER]);
-      await rejects("sol_address_check", `${check} values ('0x0', 1, 1, 'curve')`);
+      const check = "insert into public.balance_checks (address, usd, tokens, decimals, source)";
+      await rejects("balance_checks_source_check", `${check} values ($1, 1, 1, 6, 'birdeye')`, [ROOSTER]);
+      await rejects("balance_checks_usd_check", `${check} values ($1, -1, 1, 6, 'curve')`, [ROOSTER]);
+      await rejects("balance_checks_tokens_check", `${check} values ($1, 1, -1, 6, 'curve')`, [ROOSTER]);
+      await rejects("balance_checks_decimals_check", `${check} values ($1, 1, 1, 256, 'curve')`, [ROOSTER]);
+      await rejects("sol_address_check", `${check} values ('0x0', 1, 1, 6, 'curve')`);
+      // Raw units hold a whole u64 balance (18,446,744,073,709,551,615) exactly.
+      const maxU64 = "18446744073709551615";
+      const stored = await one<{ tokens: string }>(c, `${check} values ($1, 1, $2, 6, 'curve') returning tokens::text`, [ROOSTER, maxU64]);
+      expect(stored.tokens).toBe(maxU64);
+      // decimals is required: a raw amount means nothing without it.
+      await expect(c.query("insert into public.balance_checks (address, usd, tokens, source) values ($1, 1, 1, 'curve')", [ROOSTER])).rejects.toMatchObject({
+        code: "23502",
+        column: "decimals",
+      });
 
       const match = "insert into public.matches (p1, p2, region";
       await rejects("matches_region_check", `${match}) values ($1, $2, 'US-EAST')`, [ROOSTER, HEN]);

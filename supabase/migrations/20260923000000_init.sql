@@ -11,7 +11,8 @@
 -- Portability. Supabase runs Postgres 17 and the PGlite tests run 18, so
 -- nothing 18-only (no uuidv7(), no virtual generated columns). Enumerations
 -- are text + check, which are easy to extend and to mirror in zod.
--- Money is bigint lamports; token amounts are numeric raw base units.
+-- Money is bigint lamports; token amounts are numeric(40,0) raw base units
+-- (the on-chain u64 integer, never a UI amount with decimals).
 
 -- Domains ---------------------------------------------------------------------
 
@@ -51,7 +52,10 @@ create table public.balance_checks (
   -- No FK to players: the gate audits an address before its players row exists.
   address    public.sol_address not null,
   usd        numeric(14, 4) not null check (usd >= 0),
-  tokens     numeric(30, 9) not null check (tokens >= 0),
+  -- Raw base units, like every other token amount here; the UI amount is
+  -- tokens / 10^decimals. decimals is the mint's (an on-chain u8).
+  tokens     numeric(40, 0) not null check (tokens >= 0),
+  decimals   smallint not null check (decimals between 0 and 255),
   source     text not null check (source in ('jupiter', 'curve')),
   checked_at timestamptz not null default now()
 );
