@@ -525,6 +525,37 @@ describe("super", () => {
     expect(s.f[0].move).toBe(Mv.super);
     expect(s.f[0].heat).toBe(0);
   });
+  it("at full Heat, away+Space (walking back too) is a peck and keeps the meter; up+Space is still the super", () => {
+    let s = full(placed(8000), 0);
+    s = attack(s, B.L);
+    expect(s.f[0].move).toBe(Mv.peck);
+    expect(s.f[0].heat).toBe(RULES.heat.max);
+
+    let w = full(placed(8000, "walkback"), 0);
+    w = run(w, 10, B.L, 0);
+    expect(w.f[0].st).toBe(St.walkB);
+    w = attack(w, B.L);
+    expect(w.f[0].move).toBe(Mv.peck);
+    expect(w.f[0].heat).toBe(RULES.heat.max);
+
+    let u = full(placed(8000, "up"), 0);
+    u = attack(u, B.U);
+    expect(u.f[0].move).toBe(Mv.super);
+  });
+  it("at full Heat, an away+Space peck that hits cancels into the super with a plain Space", () => {
+    let s = full(placed(1100, "away-cancel"), 0);
+    s = attack(s, B.L);
+    expect(s.f[0].move).toBe(Mv.peck);
+    let cancelled = false;
+    for (let t = 0; t < 30 && !cancelled; t++) {
+      const press = s.f[0].st === St.attack && s.f[0].stTick === 7 && s.f[0].hitstop === 0;
+      s = step(s, press ? B.S : 0, 0);
+      cancelled = s.f[0].move === Mv.super;
+    }
+    expect(s.f[1].hitKind).toBe(HitKind.hit);
+    expect(cancelled).toBe(true);
+    expect(s.f[0].heat).toBe(0);
+  });
   it("without full Heat, neutral Space is a peck", () => {
     let s = placed(8000);
     s.f[0].heat = RULES.heat.max - 1;

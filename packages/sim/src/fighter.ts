@@ -80,14 +80,17 @@ function heatFull(f: FighterState, R: Rules): boolean {
 }
 
 /**
- * Grounded Space priority: super (full Heat, neither down nor toward) > slam (down) > shove (toward) > peck.
+ * Grounded Space priority: super (full Heat, no direction) > slam (down) > shove (toward) > peck.
+ * Away+Space is always a peck, so a full meter can be kept while poking (and a
+ * peck that lands can still cancel into the super).
  * Reads the directions latched when Space was pressed (`bufDir`), so a buffered press
  * fires the move that was input even if the direction was already released.
  */
 function groundAttackFor(f: FighterState, R: Rules): MvId {
   const down = (f.bufDir & B.D) !== 0;
   const fwd = (f.bufDir & (f.facing > 0 ? B.R : B.L)) !== 0;
-  if (heatFull(f, R) && !down && !fwd) return Mv.super;
+  const away = (f.bufDir & (f.facing > 0 ? B.L : B.R)) !== 0;
+  if (heatFull(f, R) && !down && !fwd && !away) return Mv.super;
   if (down) return Mv.slam;
   if (fwd) return Mv.shove;
   return Mv.peck;
