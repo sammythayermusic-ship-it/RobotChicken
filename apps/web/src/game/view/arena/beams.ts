@@ -16,6 +16,12 @@ const CONE = 0;
 const FLARE = 1;
 const HAZE = 2;
 const BEACON = 3;
+/**
+ * A shaft fades out between these fractions of its lamp-to-floor length
+ * (`along`). Past the second it is fully transparent, so the cone is only
+ * built that far: the wide end would be shaded and discarded for nothing.
+ */
+export const SHAFT_FADE = [0.3, 0.85] as const;
 
 const VERT = /* glsl */ `
 attribute vec3 aCenter;
@@ -63,7 +69,7 @@ void main() {
     float dust = 0.65 + 0.35 * vnoise(vWorld.xy * 0.9 + vec2(vWorld.z * 0.5, -uTime * 0.25));
     // Shafts show near the lamps and dissolve before the two cones cross over the pit (their
     // overlap reads as a glowing spindle); the floor pools carry the light the rest of the way.
-    a = facing * facing * (1.0 - smoothstep(0.3, 0.85, vAlong)) * dust * 0.32;
+    a = facing * facing * (1.0 - smoothstep(${SHAFT_FADE[0].toFixed(3)}, ${SHAFT_FADE[1].toFixed(3)}, vAlong)) * dust * 0.32;
     col = vec3(0.55, 0.68, 1.0);
   } else if (vKind > 2.5) {
     // Rotating amber beacon: a sweeping flash on a dim glow.
@@ -99,23 +105,34 @@ export function buildBeams(floods: readonly Floodlight[], bulbs: readonly Vec3Li
   const obj = new Object3D();
   const from = new Vector3();
   const to = new Vector3();
+  const axis = new Vector3();
+  const rel = new Vector3();
   floods.forEach((f, i) => {
     from.set(f.pos.x, f.pos.y, f.pos.z);
     to.set(f.target.x, f.target.y, f.target.z);
     const len = from.distanceTo(to);
-    // Open cone, apex end at the lamp. Its local +y is the beam axis, pointing back at the lamp.
-    const cone = new CylinderGeometry(0.5, 0.5 + Math.tan(halfAngle) * len, len, 28, 1, true).translate(0, -len / 2, 0);
-    obj.position.copy(from);
-    obj.up.set(0, 0, 1); // not +y: a glb lamp aimed straight down would make lookAt degenerate
-    obj.lookAt(to);
-    obj.rotateX(-Math.PI / 2); // lookAt aims +z; the cone runs along -y
-    obj.updateMatrix();
-    b.add(cone, obj.matrix, (p, _n, out) => {
-      out.aParams[0] = CONE;
-      out.aParams[2] = Math.min(1, p.distanceTo(from) / len);
-      out.aParams[3] = i;
-    });
-    cone.dispose();
+    axis.subVectors(to, from).normalize();
+    // `along` runs from a0 at the lamp ring (radius 0.5) to 1 at the floor, linearly in the axial
+    // fraction s; the cone stops at s1, where along reaches the end of the fade.
+    const a0 = 0.5 / len;
+    const s1 = (SHAFT_FADE[1] - a0) / (1 - a0);
+    if (s1 > 0) {
+      const h = s1 * len;
+      // Open cone, apex end at the lamp. Its local +y is the beam axis, pointing back at the lamp.
+      const cone = new CylinderGeometry(0.5, 0.5 + Math.tan(halfAngle) * h, h, 28, 1, true).translate(0, -h / 2, 0);
+      obj.position.copy(from);
+      obj.up.set(0, 0, 1); // not +y: a glb lamp aimed straight down would make lookAt degenerate
+      obj.lookAt(to);
+      obj.rotateX(-Math.PI / 2); // lookAt aims +z; the cone runs along -y
+      obj.updateMatrix();
+      b.add(cone, obj.matrix, (p, _n, out) => {
+        const s = rel.subVectors(p, from).dot(axis) / len;
+        out.aParams[0] = CONE;
+        out.aParams[2] = a0 + s * (1 - a0);
+        out.aParams[3] = i;
+      });
+      cone.dispose();
+    }
     const quad = new PlaneGeometry(1, 1);
     b.add(quad, new Matrix4(), (_p, _n, out) => {
       out.aCenter[0] = f.pos.x;

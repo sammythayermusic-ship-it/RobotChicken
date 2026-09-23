@@ -1,11 +1,12 @@
 import { BoxGeometry, Group, Matrix4, Object3D, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { RULES } from "@cockfight/sim";
+import { buildBeams, SHAFT_FADE } from "./beams";
 import { GeoBuilder } from "./builder";
 import { advanceCrowd, flapRate, hopRate, type CrowdClock } from "./crowd";
 import { buildFloor } from "./floor";
 import { anchorsFromScene, checkRingEdges, HAZARD_IN, LIP_IN, PROCEDURAL_ANCHORS, RING_EDGE } from "./layout";
-import { createUniforms, flicker } from "./lighting";
+import { createUniforms, flicker, FLOOD_CONE } from "./lighting";
 import { buildProps } from "./props";
 
 describe("arena layout", () => {
@@ -189,5 +190,57 @@ describe("crowd motion", () => {
     const c: CrowdClock = { bob: 1.2, flap: 0.4 };
     advanceCrowd(c, 0, 1);
     expect(c).toEqual({ bob: 1.2, flap: 0.4 });
+  });
+});
+
+describe("floodlight shafts", () => {
+  const coneStats = () => {
+    const mesh = buildBeams(PROCEDURAL_ANCHORS.floods, [], { value: 0 });
+    const g = mesh.geometry;
+    const params = g.getAttribute("aParams");
+    const pos = g.getAttribute("position");
+    const idx = g.getIndex();
+    if (!idx) throw new Error("expected an index");
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < params.count; i++) {
+      if (params.getX(i) !== 0) continue; // cones only
+      lo = Math.min(lo, params.getZ(i));
+      hi = Math.max(hi, params.getZ(i));
+    }
+    let area = 0;
+    const [a, b, c] = [new Vector3(), new Vector3(), new Vector3()];
+    for (let i = 0; i < idx.count; i += 3) {
+      if (params.getX(idx.getX(i)) !== 0) continue;
+      a.fromBufferAttribute(pos, idx.getX(i));
+      b.fromBufferAttribute(pos, idx.getX(i + 1)).sub(a);
+      c.fromBufferAttribute(pos, idx.getX(i + 2)).sub(a);
+      area += b.cross(c).length() / 2;
+    }
+    g.dispose();
+    mesh.material.dispose();
+    return { lo, hi, area };
+  };
+
+  it("end where they have faded out, with the same fade from the lamp", () => {
+    const { lo, hi } = coneStats();
+    const f = PROCEDURAL_ANCHORS.floods[0]!;
+    const len = new Vector3(f.pos.x, f.pos.y, f.pos.z).distanceTo(new Vector3(f.target.x, f.target.y, f.target.z));
+    expect(hi).toBeCloseTo(SHAFT_FADE[1], 6); // nothing is built past full transparency
+    expect(lo).toBeCloseTo(0.5 / len, 6); // the lamp ring is where it always was
+  });
+
+  it("skip the dead wide end: about a quarter less cone surface than lamp-to-floor", () => {
+    const { area } = coneStats();
+    // The full-length open cone of the old build, per flood: pi * (r0 + r1) * slant.
+    const half = Math.acos(FLOOD_CONE.x) * 0.92;
+    let full = 0;
+    for (const f of PROCEDURAL_ANCHORS.floods) {
+      const len = new Vector3(f.pos.x, f.pos.y, f.pos.z).distanceTo(new Vector3(f.target.x, f.target.y, f.target.z));
+      const r1 = 0.5 + Math.tan(half) * len;
+      full += Math.PI * (0.5 + r1) * Math.hypot(len, r1 - 0.5);
+    }
+    expect(area / full).toBeLessThan(0.8);
+    expect(area / full).toBeGreaterThan(0.6);
   });
 });
