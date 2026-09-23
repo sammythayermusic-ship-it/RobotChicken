@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
+import { hudBandPx } from "../src/game/view/camera/hudBand";
 import { watchProblems } from "./support/console";
 import { openFight, snap, stepTicks } from "./support/fight";
 
@@ -45,7 +46,117 @@ async function cornerP2(page: Page): Promise<void> {
   });
 }
 
+/** Both fighters back off to the walk limits (9.5 u). */
+async function toTheWalls(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const f = (window as unknown as { __cockfight: { fight: DebugFight } }).__cockfight.fight;
+    f.setInput(0, f.B.L);
+    f.setInput(1, f.B.R);
+    f.stepTicks(160);
+    f.setInput(0, 0);
+    f.setInput(1, 0);
+    f.stepTicks(60); // the camera settles
+  });
+}
+
+/** The fighters walk in until they are 1.3 u apart, then P1 jumps straight up; returns at the apex (y in mu). */
+async function jumpUpClose(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const f = (window as unknown as { __cockfight: { fight: DebugFight } }).__cockfight.fight;
+    f.setInput(0, f.B.R);
+    f.setInput(1, f.B.L);
+    for (let i = 0; i < 400; i++) {
+      const s = f.state();
+      if ((s.f[1]?.x ?? 0) - (s.f[0]?.x ?? 0) < 1300) break;
+      f.stepTicks(1);
+    }
+    f.setInput(0, 0);
+    f.setInput(1, 0);
+    f.stepTicks(60);
+    f.setInput(0, f.B.U);
+    f.stepTicks(2);
+    f.setInput(0, 0);
+    let top = 0;
+    for (let i = 0; i < 60; i++) {
+      f.stepTicks(1);
+      const y = f.state().f[0]?.y ?? 0;
+      if (y < top) break;
+      top = y;
+    }
+    return top;
+  });
+}
+
+/** Bottom (CSS px) of the HUD's top band: names, bars, timer. */
+const hudBandBottom = (page: Page) =>
+  page.evaluate(() => {
+    const band = document.querySelector("[data-testid=fight-hud] > div");
+    return band ? band.getBoundingClientRect().bottom : 0;
+  });
+
+/**
+ * Framing across aspects: the camera must keep both fighters (at the walls)
+ * inside the frame and a full jump below the HUD band, landscape and portrait.
+ * The math is unit-tested (FightCamera.test.ts, through the real three
+ * camera); these shots are for the eye. The HUD stays on: it is part of the
+ * contract.
+ */
+const VIEWS = [
+  { name: "16x9", width: 1280, height: 720, wide: null, jump: "arena-jump.png" },
+  { name: "phone", width: 915, height: 412, wide: "arena-phone-wide.png", jump: "arena-phone-jump.png" },
+  { name: "portrait", width: 412, height: 915, wide: "arena-portrait.png", jump: null },
+] as const;
+
 test.describe("junkyard arena", () => {
+  for (const v of VIEWS) {
+    test(`frames both fighters and a full jump clear of the HUD: ${v.name} ${v.width}x${v.height}`, async ({ page }, info) => {
+      const problems = await watchProblems(page);
+      await page.setViewportSize({ width: v.width, height: v.height });
+      await openFight(page, `mode=2p&manual=1&debug=1&seed=e2e-frame-${v.name}`);
+      await stepTicks(page, 200);
+      // The camera keeps fighters below this many px; the real HUD must not reach past it.
+      const band = await hudBandBottom(page);
+      console.log(`[arena] ${v.name}: HUD band ends at ${band.toFixed(1)} px (camera assumes ${hudBandPx(v.width)})`);
+      expect(band).toBeLessThanOrEqual(hudBandPx(v.width) - 14); // - room for "SUPER READY"
+      // The bars stay (they are what the jump must clear); the FIGHT! banner would only cover the fighters.
+      await page.addStyleTag({ content: "[data-testid=hud-banner]{display:none !important}" });
+
+      await toTheWalls(page);
+      await settle(page);
+      const s = await snap(page);
+      expect(s.f[0]!.x).toBe(-9500);
+      expect(s.f[1]!.x).toBe(9500);
+      await page.screenshot({ path: v.wide ? CAP(v.wide) : info.outputPath("wide.png") });
+
+      const apex = await jumpUpClose(page);
+      expect(apex).toBeGreaterThan(2400);
+      await settle(page, 150);
+      await page.screenshot({ path: v.jump ? CAP(v.jump) : info.outputPath("jump.png") });
+      expect(problems.errors).toEqual([]);
+    });
+  }
+
+  test("quality 'low' cuts the arena's own draws and triangles", async ({ page }) => {
+    const problems = await watchProblems(page);
+    const cost: Record<string, { drawCalls: number; triangles: number }> = {};
+    for (const tier of ["high", "medium", "low"] as const) {
+      const measure = async (arena: boolean) => {
+        await openFight(page, `mode=2p&manual=1&debug=1&seed=e2e-quality&quality=${tier}${arena ? "" : "&arena=0"}`);
+        await stepTicks(page, 200);
+        await settle(page, 200);
+        return perf(page);
+      };
+      const bare = await measure(false);
+      const full = await measure(true);
+      cost[tier] = { drawCalls: full.drawCalls - bare.drawCalls, triangles: full.triangles - bare.triangles };
+      console.log(`[arena] quality ${tier}: whole frame ${full.drawCalls} draws / ${full.triangles} tris; arena +${cost[tier].drawCalls} draws / +${cost[tier].triangles} tris`);
+    }
+    expect(cost.high).toEqual(cost.medium); // the arena itself only has a 'low' variant
+    expect(cost.low!.drawCalls).toBe(cost.medium!.drawCalls - 1); // the crowd's flash pass
+    expect(cost.low!.triangles).toBeLessThan(cost.medium!.triangles - 500); // + smoke, embers, haze
+    expect(problems.errors).toEqual([]);
+  });
+
   test("renders the pit with both fighters inside the frame budget", async ({ page }) => {
     const problems = await watchProblems(page);
     await openFight(page, "mode=2p&manual=1&debug=1&seed=e2e-arena");
