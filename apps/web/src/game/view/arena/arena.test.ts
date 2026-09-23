@@ -20,6 +20,19 @@ describe("arena layout", () => {
     expect(LIP_IN * 1000).toBeGreaterThan(RULES.match.wallEdge);
   });
 
+  it("is flush wherever a fighter can stand: nothing inside the ring edge rises above the floor", () => {
+    // A ring-out shove that falls short leaves the defender standing anywhere up to x = 10.
+    const floor = buildFloor(createUniforms(PROCEDURAL_ANCHORS), PROCEDURAL_ANCHORS.floods.length);
+    const pos = floor.mesh.geometry.getAttribute("position");
+    let highest = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      if (Math.abs(pos.getX(i)) <= RING_EDGE + 1e-6) highest = Math.max(highest, pos.getY(i));
+    }
+    expect(highest).toBeLessThanOrEqual(1e-6);
+    floor.mesh.geometry.dispose();
+    floor.mesh.material.dispose();
+  });
+
   it("seats about 240 in the crowd and has two fire clusters of drums", () => {
     const seats = PROCEDURAL_ANCHORS.crowd.reduce((n, r) => n + r.count, 0);
     expect(seats).toBeGreaterThanOrEqual(220);
