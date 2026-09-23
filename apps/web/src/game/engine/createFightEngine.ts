@@ -173,6 +173,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
         console.warn("[cockfight] arena failed to build; using the placeholder floor", e);
       }
     }
+    view.ensureEnvironment(); // no arena (or it failed): bake the fallback env map before compiling
     // Prewarm every shader (KO pass included) so no frame stalls on a first-use compile.
     view.ko.apply(renderer, true);
     await renderer.compileAsync(view.scene, view.camera.camera);

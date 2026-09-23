@@ -1,6 +1,6 @@
 import {
   AmbientLight, CircleGeometry, Color, DirectionalLight, Fog, HemisphereLight, Mesh, MeshBasicMaterial, MeshStandardMaterial,
-  PlaneGeometry, PMREMGenerator, Scene, type Texture, type WebGLRenderer,
+  PlaneGeometry, PMREMGenerator, Scene, type WebGLRenderer, type WebGLRenderTarget,
 } from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { FighterState, MatchState } from "@cockfight/sim";
@@ -36,7 +36,8 @@ export class FightView {
   readonly chickens: [ChickenView, ChickenView];
   private arena: ArenaView | null = null;
   private readonly placeholder: Mesh[] = [];
-  private envTex: Texture | null = null;
+  /** The PMREM target behind scene.environment (disposed whole: FBO, depth buffer and texture). */
+  private envRT: WebGLRenderTarget | null = null;
   private tier: QualityTier = "high";
   private readonly renderer: WebGLRenderer;
   private time = 0;
@@ -66,8 +67,7 @@ export class FightView {
     floor.position.set(0, 0, -2);
     this.placeholder.push(floor);
     this.scene.add(floor);
-
-    this.setEnvironment(null);
+    // No env map yet: the arena brings its own (setArena); ensureEnvironment() falls back to a room.
 
     const same = tiers[0] === tiers[1];
     this.chickens = [
@@ -113,19 +113,29 @@ export class FightView {
     this.arena?.setQuality?.(q.tier);
   }
 
+  /**
+   * Make sure the chickens have an env map to reflect: three's RoomEnvironment
+   * when no arena supplied one (no arena, or it failed to build). Call before
+   * compiling shaders, since the env map is part of the material programs.
+   */
+  ensureEnvironment(): void {
+    if (!this.envRT) this.setEnvironment(null);
+  }
+
   get arenaView(): ArenaView | null {
     return this.arena;
   }
 
   private setEnvironment(envScene: Scene | null): void {
     const pmrem = new PMREMGenerator(this.renderer);
-    const src = envScene ?? new RoomEnvironment();
-    const rt = pmrem.fromScene(src, 0.04);
-    this.envTex?.dispose();
-    this.envTex = rt.texture;
+    const room = envScene ? null : new RoomEnvironment();
+    const rt = pmrem.fromScene(envScene ?? (room as RoomEnvironment), 0.04);
+    room?.dispose(); // its meshes were uploaded by the bake; the map is all we keep
+    pmrem.dispose();
+    this.envRT?.dispose();
+    this.envRT = rt;
     this.scene.environment = rt.texture;
     this.scene.environmentIntensity = 0.6;
-    pmrem.dispose();
   }
 
   /**
@@ -145,6 +155,7 @@ export class FightView {
   }
 
   render(prev: MatchState, cur: MatchState, alpha: number, dt: number): void {
+    this.ensureEnvironment(); // no-op once there is one
     this.time += dt;
     for (let i = 0; i < 2; i++) {
       const c = this.chickens[i] as ChickenView;
@@ -172,7 +183,8 @@ export class FightView {
     this.particles.dispose();
     this.ko.dispose();
     this.arena?.dispose();
-    this.envTex?.dispose();
+    this.envRT?.dispose();
+    this.envRT = null;
     this.scene.traverse((o) => {
       if (o instanceof Mesh) {
         o.geometry.dispose();
