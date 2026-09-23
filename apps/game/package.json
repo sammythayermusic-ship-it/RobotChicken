@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "tsx watch --clear-screen=false src/index.ts",
     "build": "node build.mjs",
-    "start": "node dist/server.mjs",
-    "smoke": "tsx scripts/smoke.ts",
+    "start": "node --enable-source-maps dist/server.mjs",
+    "smoke": "node build.mjs && tsx scripts/smoke.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

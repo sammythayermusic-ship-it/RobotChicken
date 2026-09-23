@@ -1,0 +1,39 @@
+# Build context for apps/game/Dockerfile and apps/worker/Dockerfile (context = repo root).
+# The server images need the lockfile, the workspace manifests and the sources of
+# the packages they bundle. Everything else only slows uploads and busts the
+# `COPY . .` layer cache.
+
+# VCS, local tooling, agent worktrees (full repo copies with their own node_modules)
+.git
+.github
+.claude
+.vscode
+.idea
+**/.DS_Store
+
+# Installs and build output: the image runs its own frozen install and build
+**/node_modules
+**/.next
+**/dist
+**/out
+**/coverage
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+**/*.log
+
+# Secrets never enter an image; Fly injects env and secrets at runtime
+**/.env
+**/.env.*
+
+# Not used by the server builds: art sources, docs and captures, database migrations
+art
+docs
+supabase
+
+# Web app and asset tooling: keep only their manifests. pnpm checks every
+# workspace importer against the lockfile, so each package.json must stay.
+apps/web/*
+!apps/web/package.json
+tools/*
+!tools/package.json
