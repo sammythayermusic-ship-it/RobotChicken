@@ -15,8 +15,13 @@ import type { PerfSnapshot } from "../src/game/engine/perf";
 const OUT = fileURLToPath(new URL("../../../docs/captures/phase-1/perf.json", import.meta.url));
 const results: Record<string, unknown> = {};
 
+/**
+ * Every frame from FIGHT on, over `seconds`. bench=1 is what makes the meter
+ * keep them all: without it the meter is a rolling 240-frame window, which at
+ * 120 Hz is only the last 2 s.
+ */
 async function measure(page: Page, query: string, seconds: number) {
-  await page.goto(`/play?${query}`);
+  await page.goto(`/play?${query}&bench=1`);
   await page.waitForFunction(() => (window as unknown as { __cockfight?: { fight?: { ready(): boolean } } }).__cockfight?.fight?.ready() === true, null, {
     timeout: 90_000,
   });
@@ -26,7 +31,9 @@ async function measure(page: Page, query: string, seconds: number) {
   const programsAtFight = (await fight()).programs;
   await page.waitForTimeout(seconds * 1000);
   const p = await fight();
-  return { ...p, programsAtFight };
+  // The percentiles must describe the whole measurement, not a tail of it.
+  expect(p.frames, "frame window shorter than the measurement").toBeGreaterThanOrEqual(seconds * 55);
+  return { ...p, seconds, programsAtFight };
 }
 
 test.describe("perf", () => {
