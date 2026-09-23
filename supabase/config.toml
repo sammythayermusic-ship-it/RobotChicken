@@ -1,0 +1,12 @@
+# Supabase CLI configuration. Only settings that differ from the CLI defaults
+# live here; see supabase/README.md for how migrations are applied.
+project_id = "cockfight"
+
+[db]
+# Must match the hosted project (Supabase runs Postgres 17). The migration
+# tests run on PGlite (Postgres 18), so the SQL avoids anything 18-only.
+major_version = 17
+
+[db.seed]
+# No seed data: every row is written by apps/game or apps/worker.
+enabled = false
