@@ -1,0 +1,37 @@
+{
+  "name": "@cockfight/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/copy-decoders.mjs && next dev --port 3000",
+    "build": "node scripts/copy-decoders.mjs && next build",
+    "start": "next start",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:perf": "playwright test --project=perf"
+  },
+  "dependencies": {
+    "@cockfight/shared": "workspace:*",
+    "@cockfight/sim": "workspace:*",
+    "@cockfight/solana": "workspace:*",
+    "@colyseus/sdk": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "three": "catalog:",
+    "zod": "catalog:",
+    "zustand": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@tailwindcss/postcss": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@types/three": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
