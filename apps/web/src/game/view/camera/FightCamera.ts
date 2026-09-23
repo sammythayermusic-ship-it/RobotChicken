@@ -5,11 +5,11 @@ import { noise1 } from "./noise";
 export const VFOV = 30;
 const DT = 1 / 60;
 const RING = 10;
-const MIN_W = 10;
+const MIN_W = 9;
 const MAX_W = 20;
 // A slight downward look makes the pit floor read (2.5D) without losing the side view.
 const CAM_Y = 2.3;
-const LOOK_Y = 1.05;
+const LOOK_Y = 1.5;
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const damp = (a: number, b: number, k: number, dt: number) => a + (b - a) * (1 - Math.exp(-k * dt));

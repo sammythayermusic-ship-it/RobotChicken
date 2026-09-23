@@ -11,8 +11,8 @@ describe("FightCamera", () => {
       expect(w).toBeGreaterThanOrEqual(12);
     }
   });
-  it("clamps the framed width between 10 and 20 units", () => {
-    expect(FightCamera.wantWidth(0, 0)).toBe(10);
+  it("clamps the framed width between 9 and 20 units", () => {
+    expect(FightCamera.wantWidth(0, 0)).toBe(9);
     expect(FightCamera.wantWidth(-10, 10)).toBe(20);
   });
   it("shake is deterministic for a seed and decays to zero", () => {
