@@ -246,7 +246,7 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
     else if (Math.abs(sx - 1) > 1e-3 || Math.abs(sy - 1) > 1e-3) warn("helpers", `"${name}" has world scale ${sx.toFixed(3)}; sizes are scaled by it`);
   }
   for (const n of nodes) {
-    if (n.getName().startsWith("hit_") && !(n.getName() in contract.helpers)) warn("helpers", `extra hit helper "${n.getName()}" (baked, but no move uses it yet)`);
+    if (n.getName().startsWith("hit_") && !(n.getName() in contract.helpers)) warn("helpers", `extra hit helper "${n.getName()}" is not in the contract (it is baked into hitboxes.json anyway)`);
   }
 
   // Clips.

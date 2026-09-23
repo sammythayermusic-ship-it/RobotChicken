@@ -40,7 +40,9 @@ function helperIndex(nodes: Node[], name: string): number {
 
 /**
  * The hit spheres to bake: the contract's sphere helpers plus any extra
- * `hit_*` node tagged cf_shape "sphere" (moves pick one with `hitNode`).
+ * `hit_*` node tagged cf_shape "sphere". Extra helpers are baked ahead of use;
+ * which helper a move actually tests is decided by the sim (compileRules in
+ * packages/sim/src/rules.ts), not here.
  */
 function hitHelperNames(nodes: Node[], contract: Contract): string[] {
   const names = new Set(Object.keys(contract.helpers).filter((k) => contract.helpers[k]?.shape === "sphere"));
