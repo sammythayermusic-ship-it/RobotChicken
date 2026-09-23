@@ -98,7 +98,11 @@ before exporting (`CF_BEAK` lines in the log):
 | super | 11-16 | 0.90-1.00 | ~0.8 |
 | dive_kick | 7-16 | 0.40-0.50 | -0.10-0.00 |
 
-During startup and recovery the beak stays back (z <= 0.6; it rests at 0.55),
-so a hit can only land on active frames. `hurt_body` is vertical at rest,
-centered at y = 0.82 so its bottom touches the ground. `tools/test/bake.test.ts`
-re-checks these ranges on the baked integers.
+During startup and recovery the beak stays back (z <= 0.6; it rests at 0.55).
+That is purely visual, so wind-up and follow-through read clearly. It is not
+what keeps hits to active frames: pushboxes keep grounded fighters at least
+0.8 apart, and at that distance even the retracted beak overlaps the other
+chicken's `hurt_body`. Hits land only on active frames because the sim tests a
+move's hit sphere only during its active samples (`phases`). `hurt_body` is
+vertical at rest, centered at y = 0.82 so its bottom touches the ground.
+`tools/test/bake.test.ts` re-checks these ranges on the baked integers.
