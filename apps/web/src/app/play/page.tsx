@@ -1,19 +1,28 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import type { CpuLevel } from "@cockfight/sim";
+import type { Tier } from "@cockfight/shared";
+import PlayClient, { type PlayParams } from "./PlayClient";
 
-export const metadata: Metadata = { title: "Play" };
+export const metadata: Metadata = { title: "Fight · COCKFIGHT" };
 
-/** Phase 0 stub: the local fighter (vs CPU and 2P on one keyboard) replaces this in Phase 1. */
-export default function PlayPage() {
-  return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col items-center justify-center gap-6 px-4 text-center">
-      <h1 className="chrome-text font-display text-5xl sm:text-7xl">THE PIT</h1>
-      <p className="max-w-md text-lg text-ash">
-        The local fighter lands in Phase 1: vs CPU, or two players on one keyboard.
-      </p>
-      <Link href="/" className="font-semibold text-neon-cyan underline-offset-4 hover:underline">
-        Back to the yard
-      </Link>
-    </main>
-  );
+type SP = Record<string, string | string[] | undefined>;
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+const pick = <T extends string>(v: string | undefined, allowed: readonly T[], d: T): T => (allowed.includes(v as T) ? (v as T) : d);
+
+export default async function PlayPage({ searchParams }: { searchParams: Promise<SP> }) {
+  const sp = await searchParams;
+  const mode = one(sp.mode);
+  const params: PlayParams = {
+    mode: mode === "cpu" || mode === "2p" || mode === "demo" ? mode : one(sp.bench) === "1" ? "demo" : null,
+    difficulty: pick<CpuLevel>(one(sp.difficulty), ["easy", "normal", "hard"], "normal"),
+    tier: pick<Tier>(one(sp.tier), ["rust", "chrome", "gold", "diamond"], "rust"),
+    seed: one(sp.seed) ?? (one(sp.bench) === "1" ? "bench" : null),
+    manual: one(sp.manual) === "1",
+    debug: one(sp.debug) === "1",
+    fps: one(sp.fps) === "1" || one(sp.bench) === "1",
+    bench: one(sp.bench) === "1",
+    quality: (["high", "medium", "low"] as const).find((q) => q === one(sp.quality)) ?? null,
+    arena: one(sp.arena) !== "0",
+  };
+  return <PlayClient params={params} />;
 }
