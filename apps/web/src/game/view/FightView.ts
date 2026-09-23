@@ -8,6 +8,7 @@ import type { Tier } from "@cockfight/shared";
 import { KoPulse } from "../fx/KoPulse";
 import { Particles } from "../fx/Particles";
 import { FightCamera } from "./camera/FightCamera";
+import { hudFraction } from "./camera/hudBand";
 import { ChickenView, type ChickenAsset } from "./chicken/ChickenView";
 
 /** Arena contract: the procedural junkyard (and later Sammy's arena.glb) implement it. */
@@ -39,7 +40,9 @@ export class FightView {
 
   constructor(renderer: WebGLRenderer, asset: ChickenAsset, tiers: [Tier, Tier], seed: number) {
     this.renderer = renderer;
-    this.camera = new FightCamera(renderer.domElement.clientWidth / Math.max(1, renderer.domElement.clientHeight), seed);
+    const el = renderer.domElement;
+    this.camera = new FightCamera(el.clientWidth / Math.max(1, el.clientHeight), seed);
+    if (el.clientHeight > 0) this.camera.setViewport(el.clientWidth, el.clientHeight);
     this.scene.background = new Color(0x0b0a10);
     this.scene.fog = new Fog(0x0b0a10, 24, 70);
 
@@ -110,8 +113,14 @@ export class FightView {
     pmrem.dispose();
   }
 
+  /**
+   * The canvas changed shape. The HUD band over the top of the canvas is a
+   * fixed pixel height, so the camera also needs the canvas's CSS height.
+   */
   setAspect(aspect: number): void {
-    this.camera.setAspect(aspect);
+    const el = this.renderer.domElement;
+    if (el.clientHeight > 0) this.camera.setAspect(aspect, hudFraction(el.clientWidth, el.clientHeight));
+    else this.camera.setAspect(aspect);
   }
 
   /** Per sim tick. */

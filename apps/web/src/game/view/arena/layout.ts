@@ -21,9 +21,14 @@ export const LIP_H = 0.14;
 /** The drop-off beyond the lip: its far wall, and how deep the dark goes. */
 export const CHASM_FAR = 12.6;
 export const CHASM_DEPTH = 34;
-/** The pit floor runs from the car wall at the back to well past the camera (portrait views look down a long way). */
+/**
+ * The pit floor runs from the car wall at the back to well past the camera. A
+ * portrait phone (aspect 0.45) pulls the camera ~94 u back to fit both
+ * fighters at the walls, and its bottom edge meets the floor ~19 u in front
+ * of the lens (z ~ 75); 130 leaves room for narrower screens.
+ */
 export const PIT_BACK = -7.4;
-export const PIT_FRONT = 70;
+export const PIT_FRONT = 130;
 
 export interface Vec3Like {
   x: number;

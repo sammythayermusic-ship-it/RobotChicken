@@ -1,21 +1,180 @@
+import { Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import { FightCamera } from "./FightCamera";
+import { RULES } from "@cockfight/sim";
+import { BODY, FightCamera, VFOV } from "./FightCamera";
+import { hudFraction } from "./hudBand";
 
-describe("FightCamera", () => {
-  it("keeps both fighters in frame at any aspect", () => {
+const WALL = RULES.match.wallEdge / 1000;
+/** Apex of a standing jump, from the sim's own integer arc (2.565 u). */
+function jumpArc(): number[] {
+  const vy0 = RULES.fighter.jumpVy;
+  const g = RULES.fighter.gravity;
+  const ys: number[] = [];
+  let y = 0;
+  let vy = vy0;
+  do {
+    y += vy;
+    vy -= g;
+    ys.push(Math.max(0, y) / 1000);
+  } while (y > 0);
+  return ys;
+}
+const APEX = Math.max(...jumpArc());
+
+/** Real viewports: desktop 16:9 / 16:10 / 4:3 / 21:9, a landscape phone (Pixel 7), portrait phones. */
+const VIEWPORTS: [string, number, number][] = [
+  ["16:9", 1280, 720],
+  ["16:10", 1280, 800],
+  ["4:3", 1024, 768],
+  ["21:9", 2560, 1080],
+  ["phone landscape", 915, 412],
+  ["9:16", 720, 1280],
+  ["phone portrait", 412, 915],
+];
+
+/** Roots (x, y) in units. */
+const SCENES: [string, [number, number], [number, number]][] = [
+  ["both at the walk limits", [-WALL, 0], [WALL, 0]],
+  ["both at the walk limits, both at the jump apex", [-WALL, APEX], [WALL, APEX]],
+  ["close range, P1 at the jump apex", [-0.64, APEX], [0.64, 0]],
+  ["cornered at the right wall, P1 jumping in", [WALL - 0.6, APEX], [WALL, 0]],
+  ["a short shove left P2 standing past the wall", [-WALL, 0], [10, 0]],
+  ["start positions", [-2.5, 0], [2.5, 0]],
+  // The highest anything goes: a super (launch vy 180) catching a fighter at the top of a jump.
+  ["a super launched P2 off the top of a jump", [-1, 0], [1.2, APEX + 1.2]],
+];
+
+/** Every corner of a body box around a root: the extent the camera promises to keep in frame. */
+function corners(x: number, y: number, half = BODY.half, top = BODY.top, depth = BODY.depth): Vector3[] {
+  const out: Vector3[] = [];
+  for (const dx of [-half, half]) for (const hy of [0, top]) for (const dz of [-depth, depth]) out.push(new Vector3(x + dx, y + hy, dz));
+  return out;
+}
+
+function settle(cam: FightCamera, a: [number, number], b: [number, number], ticks = 600): void {
+  for (let i = 0; i < ticks; i++) cam.tick(a[0], b[0], a[1], b[1]);
+  cam.render(1);
+  cam.camera.updateMatrixWorld();
+}
+
+function ndc(cam: FightCamera, p: Vector3): Vector3 {
+  return p.clone().project(cam.camera);
+}
+
+describe("FightCamera framing", () => {
+  for (const [label, w, h] of VIEWPORTS) {
+    const hud = hudFraction(w, h);
+    const hudLine = 1 - 2 * hud;
+    for (const [scene, a, b] of SCENES) {
+      it(`${label} (${w}x${h}): ${scene} — both bodies in frame and below the HUD band`, () => {
+        const cam = new FightCamera(w / h, 3);
+        cam.setViewport(w, h);
+        settle(cam, a, b);
+        for (const [x, y] of [a, b]) {
+          for (const p of corners(Math.min(10, x), y)) {
+            const q = ndc(cam, p);
+            expect(Math.abs(q.x), `x of ${p.toArray()}`).toBeLessThan(0.98);
+            expect(q.y, `bottom of ${p.toArray()}`).toBeGreaterThan(-0.98);
+            expect(q.y, `top of ${p.toArray()} vs the HUD line ${hudLine}`).toBeLessThan(hudLine);
+          }
+        }
+      });
+    }
+  }
+
+  it("roots at the walls plus the body extent land inside |NDC x| < 0.98 (the reviewed repro: 0.45, 1.6, 2.22)", () => {
+    for (const [w, h] of [[412, 915], [1280, 800], [915, 412]] as const) {
+      const cam = new FightCamera(w / h);
+      cam.setViewport(w, h);
+      settle(cam, [-WALL, 0], [WALL, 0]);
+      for (const x of [-WALL - 0.9, WALL + 0.9]) {
+        for (const y of [0, 1.4]) expect(Math.abs(ndc(cam, new Vector3(x, y, 0)).x)).toBeLessThan(0.98);
+      }
+    }
+  });
+
+  it("keeps the jumper's head below the HUD band on every tick of a real jump arc, not just once settled", () => {
+    for (const [w, h] of [[1280, 800], [915, 412], [412, 915]] as const) {
+      const hudLine = 1 - 2 * hudFraction(w, h);
+      const cam = new FightCamera(w / h);
+      cam.setViewport(w, h);
+      settle(cam, [-0.64, 0], [0.64, 0], 300);
+      for (const y of [...jumpArc(), 0, 0, 0]) {
+        cam.tick(-0.64, 0.64, y, 0);
+        cam.render(1);
+        cam.camera.updateMatrixWorld();
+        for (const p of corners(-0.64, y)) {
+          const q = ndc(cam, p);
+          expect(q.y).toBeLessThan(hudLine);
+          expect(q.y).toBeGreaterThan(-0.98);
+        }
+      }
+    }
+  });
+
+  it("keeps both fighters in frame while the camera is still easing (a dash to the wall)", () => {
+    const cam = new FightCamera(16 / 9);
+    cam.setViewport(1280, 720);
+    settle(cam, [-1, 0], [1, 0], 300);
+    // Both back-dash apart at full speed: the eased target lags, the hard fit must not.
+    let x1 = -1;
+    let x2 = 1;
+    for (let i = 0; i < 90; i++) {
+      x1 = Math.max(-WALL, x1 - 0.15);
+      x2 = Math.min(WALL, x2 + 0.15);
+      cam.tick(x1, x2);
+      cam.render(1);
+      cam.camera.updateMatrixWorld();
+      for (const p of [...corners(x1, 0), ...corners(x2, 0)]) expect(Math.abs(ndc(cam, p).x)).toBeLessThan(0.98);
+    }
+  });
+
+  it("refits at once on a resize, without waiting for a tick", () => {
+    const cam = new FightCamera(16 / 9);
+    cam.setViewport(1280, 720);
+    settle(cam, [-WALL, 0], [WALL, 0]);
+    cam.setViewport(412, 915);
+    cam.render(1);
+    cam.camera.updateMatrixWorld();
+    for (const p of [...corners(-WALL, 0), ...corners(WALL, 0)]) expect(Math.abs(ndc(cam, p).x)).toBeLessThan(0.98);
+  });
+
+  it("keeps the grounded composition: look height 1.5 and 3.5 u of pit around the pair", () => {
+    const cam = new FightCamera(1.6);
+    cam.setViewport(1280, 800);
+    settle(cam, [-2.5, 0], [2.5, 0]);
+    expect(cam.framing.lookY).toBeCloseTo(1.5, 6);
+    expect(cam.framing.d).toBeCloseTo(FightCamera.distanceFor(12, 1.6), 3);
+    expect(cam.framing.x).toBeCloseTo(0, 6);
+  });
+
+  it("cranes up for a jump before it pulls back, and settles back down after landing", () => {
+    const cam = new FightCamera(1.6);
+    cam.setViewport(1280, 800);
+    settle(cam, [-0.64, 0], [0.64, 0]);
+    const ground = { ...cam.framing };
+    settle(cam, [-0.64, APEX], [0.64, 0]);
+    expect(cam.framing.lookY).toBeGreaterThan(ground.lookY + 0.3);
+    expect(cam.framing.d).toBeCloseTo(ground.d, 6); // 16:10 has the room: no pull-back needed
+    settle(cam, [-0.64, 0], [0.64, 0]);
+    expect(cam.framing.lookY).toBeCloseTo(ground.lookY, 6);
+  });
+
+  it("widens the composed width up to the walls with room for the bodies", () => {
+    expect(FightCamera.wantWidth(0, 0)).toBe(9);
+    expect(FightCamera.wantWidth(-6, 6)).toBe(19);
+    expect(FightCamera.wantWidth(-WALL, WALL)).toBeCloseTo(2 * (WALL + BODY.half + 0.35), 9);
     for (const aspect of [16 / 9, 4 / 3, 21 / 9, 1.2]) {
       const w = FightCamera.wantWidth(-6, 6);
       const d = FightCamera.distanceFor(w, aspect);
-      const hfov = 2 * Math.atan(Math.tan((30 * Math.PI) / 360) * aspect);
+      const hfov = 2 * Math.atan(Math.tan((VFOV * Math.PI) / 360) * aspect);
       expect(2 * d * Math.tan(hfov / 2)).toBeCloseTo(w, 5);
-      expect(w).toBeGreaterThanOrEqual(12);
     }
   });
-  it("clamps the framed width between 9 and 20 units", () => {
-    expect(FightCamera.wantWidth(0, 0)).toBe(9);
-    expect(FightCamera.wantWidth(-10, 10)).toBe(20);
-  });
-  it("shake is deterministic for a seed and decays to zero", () => {
+});
+
+describe("FightCamera shake", () => {
+  it("is deterministic for a seed and decays to zero", () => {
     const a = new FightCamera(16 / 9, 42);
     const b = new FightCamera(16 / 9, 42);
     a.addTrauma(1);
@@ -28,14 +187,41 @@ describe("FightCamera", () => {
     for (let i = 0; i < 120; i++) a.tick(-2, 2);
     expect(a.traumaLevel).toBe(0);
   });
-  it("reduced shake scales offsets", () => {
+
+  it("reduced shake scales the offsets and the per-hit kick", () => {
     const a = new FightCamera(16 / 9, 7);
     const b = new FightCamera(16 / 9, 7);
     b.shake.amount = 0.3;
-    a.addTrauma(1);
-    b.addTrauma(1);
-    a.tick(0, 3);
-    b.tick(0, 3);
+    for (const c of [a, b]) {
+      c.addTrauma(1);
+      c.onHit(15, 1);
+      c.tick(0, 3);
+    }
     expect(Math.abs(b.shakeOffsets().y)).toBeLessThanOrEqual(Math.abs(a.shakeOffsets().y));
+    expect(Math.abs(b.shakeOffsets().x)).toBeLessThan(Math.abs(a.shakeOffsets().x));
+  });
+
+  it("shake Off moves nothing: no offsets, no kick, no punch zoom, no FOV kick", () => {
+    const still = new FightCamera(16 / 9, 9);
+    const off = new FightCamera(16 / 9, 9);
+    off.shake.amount = 0;
+    for (const c of [still, off]) settle(c, [-2, 0], [2, 0], 200);
+    off.addTrauma(1);
+    off.onHit(25, -1);
+    off.onHit(15, 1);
+    off.onSuper();
+    for (let i = 0; i < 12; i++) {
+      still.tick(-2, 2);
+      off.tick(-2, 2);
+      const sh = off.shakeOffsets();
+      expect(Math.abs(sh.x)).toBe(0);
+      expect(Math.abs(sh.y)).toBe(0);
+      expect(Math.abs(sh.roll)).toBe(0);
+      expect(off.framing).toEqual(still.framing);
+      off.render(0.5);
+      still.render(0.5);
+      expect(off.camera.fov).toBe(VFOV);
+      expect(off.camera.position.distanceTo(still.camera.position)).toBe(0);
+    }
   });
 });

@@ -124,7 +124,7 @@ export function buildFloor(u: ArenaUniforms, floods: number): Floor {
 
   // Pit floor: subdivided a little so fog and varyings stay well conditioned on long triangles.
   const pitLen = PIT_FRONT - PIT_BACK;
-  const pit = new PlaneGeometry(2 * LIP_IN, pitLen, 4, 24).rotateX(-Math.PI / 2);
+  const pit = new PlaneGeometry(2 * LIP_IN, pitLen, 4, 40).rotateX(-Math.PI / 2);
   b.add(pit, m.makeTranslation(0, 0, (PIT_BACK + PIT_FRONT) / 2), kind(PIT));
 
   // Raised lip, the outer face exactly on the ring edge; the drop-off on both sides.

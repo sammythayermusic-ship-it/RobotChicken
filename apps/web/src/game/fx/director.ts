@@ -93,7 +93,7 @@ export class Director {
     }
 
     // Camera and crowd follow the fight every tick.
-    this.camera.tick(f0.x / MU, f1.x / MU);
+    this.camera.tick(f0.x / MU, f1.x / MU, f0.y / MU, f1.y / MU);
     this.spike = Math.max(0, this.spike - 0.6 / 60);
     const target = Math.min(1, 0.2 + ((f0.heat + f1.heat) / (2 * heatMax)) * 0.4 + this.spike);
     this.hypeLevel += (target - this.hypeLevel) * 0.08;
