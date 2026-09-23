@@ -7,13 +7,30 @@ import { getGLPrimitiveCount } from "@gltf-transform/functions";
 import { readGlb, sha256 } from "./gltf";
 import { clipDuration } from "./sample";
 
-const fmt = (v: ArrayLike<number>) => `[${Array.from(v, (x) => +x.toFixed(4)).join(", ")}]`;
+const num = (x: number) => +x.toFixed(4);
+const fmt = (v: ArrayLike<number>) => `[${Array.from(v, num).join(", ")}]`;
+const off = (v: ArrayLike<number>, rest: number[]) => Array.from(v).some((x, i) => Math.abs(x - (rest[i] as number)) > 1e-6);
 
-function isIdentity(n: Node): boolean {
-  const t = n.getTranslation();
-  const r = n.getRotation();
-  const s = n.getScale();
-  return t.every((v) => Math.abs(v) < 1e-6) && Math.abs(r[3] - 1) < 1e-6 && s.every((v) => Math.abs(v - 1) < 1e-6);
+/** Only the non-rest parts of a node's TRS. */
+function trs(n: Node): string {
+  return [
+    off(n.getTranslation(), [0, 0, 0]) ? `t=${fmt(n.getTranslation())}` : "",
+    off(n.getRotation(), [0, 0, 0, 1]) ? `r=${fmt(n.getRotation())}` : "",
+    off(n.getScale(), [1, 1, 1]) ? `s=${fmt(n.getScale())}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** asset.generator as written in the file (gltf-transform replaces it on read). */
+function fileGenerator(bytes: Uint8Array): string {
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + view.getUint32(12, true)))) as { asset?: { generator?: string } };
+    return json.asset?.generator ?? "?";
+  } catch {
+    return "?";
+  }
 }
 
 export function describeDocument(doc: Document, fps = 60): string[] {
@@ -28,7 +45,7 @@ export function describeDocument(doc: Document, fps = 60): string[] {
       joints.has(n) ? "joint" : "",
       n.getMesh() ? `mesh ${n.getMesh()!.getName()}` : "",
       n.getSkin() ? `skin(${n.getSkin()!.listJoints().length})` : "",
-      isIdentity(n) ? "" : `t=${fmt(n.getTranslation())} r=${fmt(n.getRotation())} s=${fmt(n.getScale())}`,
+      trs(n),
       Object.keys(n.getExtras()).length ? `extras=${JSON.stringify(n.getExtras())}` : "",
     ].filter(Boolean);
     lines.push(`${"  ".repeat(depth + 1)}${n.getName() || "(unnamed)"}${tags.length ? `  ${tags.join("  ")}` : ""}`);
@@ -39,7 +56,7 @@ export function describeDocument(doc: Document, fps = 60): string[] {
   lines.push("materials:");
   for (const m of root.listMaterials()) {
     lines.push(
-      `  ${m.getName()}  base=${fmt(m.getBaseColorFactor())} metal=${m.getMetallicFactor()} rough=${m.getRoughnessFactor()}` +
+      `  ${m.getName()}  base=${fmt(m.getBaseColorFactor())} metal=${num(m.getMetallicFactor())} rough=${num(m.getRoughnessFactor())}` +
         `${m.getEmissiveFactor().some((v) => v > 0) ? ` emissive=${fmt(m.getEmissiveFactor())}` : ""}${m.getDoubleSided() ? " doubleSided" : ""}`,
     );
   }
@@ -72,6 +89,5 @@ export function describeDocument(doc: Document, fps = 60): string[] {
 
 export async function inspectGlb(bytes: Uint8Array, file: string): Promise<string> {
   const doc = await readGlb(bytes);
-  const asset = doc.getRoot().getAsset();
-  return [`${file}  ${bytes.length} bytes  sha256 ${sha256(bytes)}`, `generator: ${asset.generator ?? "?"}`, ...describeDocument(doc)].join("\n");
+  return [`${file}  ${bytes.length} bytes  sha256 ${sha256(bytes)}`, `generator: ${fileGenerator(bytes)}`, ...describeDocument(doc)].join("\n");
 }
