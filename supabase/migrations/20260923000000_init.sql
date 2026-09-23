@@ -182,21 +182,36 @@ create table public.daily_rewards (
 create index daily_rewards_address_idx on public.daily_rewards (address);
 comment on table public.daily_rewards is 'Snapshot of each UTC day''s top 10 and what each rank was paid.';
 
+-- One row per claim transaction. Its SOL after swap is the sum of its
+-- fee_swaps rows (the spec's sol_after_swap and swap_sig live there).
 create table public.fee_claims (
   id                    uuid primary key default gen_random_uuid(),
   stage                 text not null check (stage in ('dbc', 'damm')),
   gme_claimed           numeric(40, 0) not null default 0 check (gme_claimed >= 0),
   cock_claimed          numeric(40, 0) not null default 0 check (cock_claimed >= 0),
-  sol_after_swap        bigint check (sol_after_swap >= 0),
   player_share_lamports bigint check (player_share_lamports >= 0),
   project_share_gme     numeric(40, 0) check (project_share_gme >= 0),
-  -- Unique: fee_claims feeds the payout size, so recording a claim twice would overpay.
+  -- Unique: fee_claims feeds the payout size, so recording a claim twice would
+  -- overpay. Null only for a claim with no transaction (a dry run), which
+  -- pool_v does not count.
   claim_sig             public.sol_signature unique,
-  swap_sig              public.sol_signature unique,
   at                    timestamptz not null default now()
 );
 create index fee_claims_at_idx on public.fee_claims (at desc);
-comment on table public.fee_claims is 'Every fee claim and swap (raw token units, lamports); feeds B24h and the public fee ticker.';
+comment on table public.fee_claims is 'Every fee claim (raw token units, lamports); with fee_swaps, feeds B24h and the public fee ticker.';
+
+-- One row per swap transaction. The worker swaps a claim's tokens to SOL in
+-- chunks (<= $2k each, to spare the GME price), so one claim has 0..n swaps,
+-- each with its own signature and SOL out. Insert-only: record a swap once
+-- it is confirmed. A swap belongs to exactly one claim.
+create table public.fee_swaps (
+  swap_sig     public.sol_signature primary key,
+  fee_claim_id uuid not null references public.fee_claims (id),
+  lamports     bigint not null check (lamports >= 0),
+  at           timestamptz not null default now()
+);
+create index fee_swaps_fee_claim_id_idx on public.fee_swaps (fee_claim_id);
+comment on table public.fee_swaps is 'Every swap of claimed fees to SOL, one row per transaction (chunk); SOL after swap per claim is their sum.';
 
 create table public.pool_snapshots (
   at                  timestamptz primary key default date_trunc('minute', now(), 'UTC'),
@@ -239,6 +254,7 @@ alter table public.matches        enable row level security;
 alter table public.payouts        enable row level security;
 alter table public.daily_rewards  enable row level security;
 alter table public.fee_claims     enable row level security;
+alter table public.fee_swaps      enable row level security;
 alter table public.pool_snapshots enable row level security;
 alter table public.abuse_events   enable row level security;
 
@@ -332,15 +348,21 @@ select
   p.paid_lamports_24h,
   now() as computed_at
 from (
+  -- Claims made in the trailing 24 h that have a transaction, and the SOL
+  -- their swaps returned (by claim time, like B24h: "GME swapped to SOL at
+  -- claim time"). One claim is one row: its swaps are summed per claim first.
   select
     count(*)::integer                                    as claims_24h,
-    coalesce(sum(gme_claimed), 0)                        as gme_claimed_24h,
-    coalesce(sum(cock_claimed), 0)                       as cock_claimed_24h,
-    coalesce(sum(sol_after_swap), 0)::bigint             as sol_after_swap_24h,
-    coalesce(sum(player_share_lamports), 0)::bigint      as player_share_lamports_24h,
-    coalesce(sum(project_share_gme), 0)                  as project_share_gme_24h
-  from public.fee_claims
-  where at > now() - interval '24 hours'
+    coalesce(sum(c.gme_claimed), 0)                      as gme_claimed_24h,
+    coalesce(sum(c.cock_claimed), 0)                     as cock_claimed_24h,
+    coalesce(sum(w.lamports), 0)::bigint                 as sol_after_swap_24h,
+    coalesce(sum(c.player_share_lamports), 0)::bigint    as player_share_lamports_24h,
+    coalesce(sum(c.project_share_gme), 0)                as project_share_gme_24h
+  from public.fee_claims c
+  left join lateral (
+    select sum(fs.lamports) as lamports from public.fee_swaps fs where fs.fee_claim_id = c.id
+  ) w on true
+  where c.at > now() - interval '24 hours' and c.claim_sig is not null
 ) f
 cross join (
   select count(*)::integer as paid_count_24h, coalesce(sum(lamports), 0)::bigint as paid_lamports_24h
@@ -359,18 +381,20 @@ comment on view public.pool_v is
 
 revoke all on table
   public.players, public.balance_checks, public.matches, public.payouts,
-  public.daily_rewards, public.fee_claims, public.pool_snapshots, public.abuse_events,
-  public.leaderboard_v, public.pool_v
+  public.daily_rewards, public.fee_claims, public.fee_swaps, public.pool_snapshots,
+  public.abuse_events, public.leaderboard_v, public.pool_v
 from anon, authenticated, service_role;
 
 -- service_role: the game server and the worker. Money and audit rows are
--- append/update only; DELETE exists only where retention needs it.
+-- append/update only (fee_swaps append only); DELETE exists only where
+-- retention needs it.
 grant select, insert, update         on table public.players        to service_role;
 grant select, insert, delete         on table public.balance_checks to service_role;
 grant select, insert, update         on table public.matches        to service_role;
 grant select, insert, update         on table public.payouts        to service_role;
 grant select, insert, update         on table public.daily_rewards  to service_role;
 grant select, insert, update         on table public.fee_claims     to service_role;
+grant select, insert                 on table public.fee_swaps      to service_role;
 grant select, insert, update, delete on table public.pool_snapshots to service_role;
 grant select, insert, update         on table public.abuse_events   to service_role;
 grant select on table public.leaderboard_v, public.pool_v to service_role;

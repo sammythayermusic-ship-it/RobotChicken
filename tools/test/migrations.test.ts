@@ -25,6 +25,7 @@ const TABLES = [
   "balance_checks",
   "daily_rewards",
   "fee_claims",
+  "fee_swaps",
   "matches",
   "payouts",
   "players",
@@ -297,7 +298,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   }
 
-  it("creates exactly the 8 tables and 2 views, owned by postgres", async () => {
+  it("creates exactly the 9 tables and 2 views, owned by postgres", async () => {
     const rels = await rows(
       db,
       `select c.relname, c.relkind, pg_get_userbyid(c.relowner) as owner from pg_class c
@@ -328,7 +329,8 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       abuse_events: `id uuid!, address sol_address, fingerprint text, ip_hash text, kind text!, match_id uuid, details jsonb!, created_at ${ts}!, resolved_by text, resolved_at ${ts}`,
       balance_checks: `id uuid!, address sol_address!, usd numeric(14,4)!, tokens numeric(40,0)!, decimals smallint!, source text!, checked_at ${ts}!`,
       daily_rewards: "day date!, rank smallint!, address sol_address!, wins integer!, elo integer!, pool_lamports bigint!, share_bps integer!, lamports bigint!, payout_id uuid",
-      fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, sol_after_swap bigint, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, swap_sig sol_signature, at ${ts}!`,
+      fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, at ${ts}!`,
+      fee_swaps: `swap_sig sol_signature!, fee_claim_id uuid!, lamports bigint!, at ${ts}!`,
       leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint, refreshed_at ${ts}`,
       matches: `id uuid!, p1 sol_address!, p2 sol_address!, region text!, started_at ${ts}!, ended_at ${ts}, winner sol_address, reason text, rounds jsonb!, input_log bytea, result_hash text, net_quality_p1 real, net_quality_p2 real, payout_lamports bigint!, flag text`,
       payouts: `id uuid!, kind text!, idem_key text!, match_id uuid, to_address sol_address!, lamports bigint!, status text!, tx_sig sol_signature, attempts integer!, next_attempt_at ${ts}, last_error text, created_at ${ts}!, paid_at ${ts}`,
@@ -355,6 +357,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       balance_checks: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "DELETE"] },
       daily_rewards: { anon: [], authenticated: [], service_role: readWrite },
       fee_claims: { anon: [], authenticated: [], service_role: readWrite },
+      fee_swaps: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
       matches: { anon: [], authenticated: [], service_role: readWrite },
       payouts: { anon: [], authenticated: [], service_role: readWrite },
       players: { anon: [], authenticated: [], service_role: readWrite },
@@ -453,11 +456,18 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
            values ('2026-09-23', 1, $1, 40, 1016, 10000000000, 2500, 2500000000, $2)`,
           [ROOSTER, daily.id],
         );
-        await c.query(
-          `insert into public.fee_claims (stage, gme_claimed, sol_after_swap, player_share_lamports, project_share_gme, claim_sig, swap_sig)
-           values ('dbc', 123456789012345678901234567890, 88000000000, 61600000000, 37037036703703703670370370367, $1, $2)`,
-          [sig("7"), sig("8")],
+        const claim = await one<{ id: string }>(
+          c,
+          `insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, claim_sig)
+           values ('dbc', 123456789012345678901234567890, 61600000000, 37037036703703703670370370367, $1) returning id`,
+          [sig("7")],
         );
+        // Swapped in two chunks, one row per swap transaction.
+        await c.query("insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $3, 50000000000), ($2, $3, 38000000000)", [
+          sig("8"),
+          sig("A"),
+          claim.id,
+        ]);
         await c.query(
           `insert into public.pool_snapshots (creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports, market_cap_usd)
            values (5, 1000000000, 1500, 29000000, 17600000000, 500000.25)`,
@@ -474,6 +484,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
           balance_checks: 1,
           daily_rewards: 1,
           fee_claims: 1,
+          fee_swaps: 2,
           matches: 1,
           payouts: 2,
           players: 2,
@@ -485,6 +496,9 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         await expect(c.query("delete from public.payouts")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("delete from public.matches")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("truncate public.fee_claims")).rejects.toMatchObject({ code: "42501" });
+        // A recorded swap is final.
+        await expect(c.query("update public.fee_swaps set lamports = 0")).rejects.toMatchObject({ code: "42501" });
+        await expect(c.query("delete from public.fee_swaps")).rejects.toMatchObject({ code: "42501" });
         // MAINTAIN lets the worker refresh the leaderboard itself.
         await c.exec("refresh materialized view concurrently public.leaderboard_v");
       });
@@ -697,6 +711,17 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await rejects("fee_claims_stage_check", "insert into public.fee_claims (stage) values ('pumpfun')");
       await rejects("fee_claims_gme_claimed_check", "insert into public.fee_claims (stage, gme_claimed) values ('dbc', -1)");
       await rejects("sol_signature_check", "insert into public.fee_claims (stage, claim_sig) values ('dbc', $1)", [ROOSTER]);
+      const claim = await one<{ id: string }>(c, "insert into public.fee_claims (stage, claim_sig) values ('dbc', $1) returning id", [sig("C")]);
+      const swap = "insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $2, $3)";
+      await rejects("fee_swaps_lamports_check", swap, [sig("D"), claim.id, -1]);
+      await rejects("sol_signature_check", swap, [ROOSTER, claim.id, 1]);
+      await c.query(swap, [sig("D"), claim.id, 1]);
+      // A swap transaction is recorded once, and only against a real claim.
+      await expect(c.query(swap, [sig("D"), claim.id, 1])).rejects.toMatchObject({ code: "23505", constraint: "fee_swaps_pkey" });
+      await expect(c.query(swap, [sig("E"), "00000000-0000-4000-8000-000000000000", 1])).rejects.toMatchObject({
+        code: "23503",
+        constraint: "fee_swaps_fee_claim_id_fkey",
+      });
 
       const snapshot = "insert into public.pool_snapshots (at, creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports)";
       const minute = "date_trunc('minute', now(), 'UTC')";
@@ -788,24 +813,32 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await snap(2, 1);
       await snap(1, 29000000);
       await snap(3, 2);
-      const claim = (ago: string, gme: string, lamports: number) =>
-        c.query(
-          "insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, at) values ('damm', $1, $2, 1, now() - $3::interval)",
-          [gme, lamports, ago],
+      let n = 0;
+      const claim = async (ago: string, gme: string, lamports: number, swaps: number[], signed = true) => {
+        const r = await one<{ id: string }>(
+          c,
+          `insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, claim_sig, at)
+           values ('damm', $1, $2, 1, $3, now() - $4::interval) returning id`,
+          [gme, lamports, signed ? sig(String(++n)) : null, ago],
         );
-      await claim("1 hour", "100000000000000000000", 700);
-      await claim("23 hours", "5", 70);
-      await claim("25 hours", "1000", 7);
+        for (const out of swaps) {
+          await c.query("insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $2, $3)", [sig(String(++n)), r.id, out]);
+        }
+      };
+      await claim("1 hour", "100000000000000000000", 700, [400, 300, 250]); // three chunks
+      await claim("23 hours", "5", 70, []); // not swapped yet
+      await claim("25 hours", "1000", 7, [9000]); // outside the window
+      await claim("2 hours", "777", 7000, [7000], false); // no claim transaction (a dry run): not counted
       const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
       await c.query(
         `insert into public.payouts (kind, idem_key, match_id, to_address, lamports, status, tx_sig, paid_at)
          values ('win', $1, $2, $3, 41000000, 'paid', $4, now() - interval '2 hours')`,
-        [won, won, ROOSTER, sig("3")],
+        [won, won, ROOSTER, sig("A")],
       );
       await c.query(
         `insert into public.payouts (kind, idem_key, to_address, lamports, status, tx_sig, paid_at)
          values ('daily', '2026-09-20:1', $1, 999, 'paid', $2, now() - interval '3 days')`,
-        [HEN, sig("4")],
+        [HEN, sig("B")],
       );
       await c.query("insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', '2026-09-22:1', $1, 55)", [HEN]);
 
@@ -817,6 +850,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         matches_24h: 1500,
         claims_24h: 2,
         gme_claimed_24h: "100000000000000000005",
+        sol_after_swap_24h: 950,
         player_share_lamports_24h: 770,
         project_share_gme_24h: "2",
         paid_count_24h: 1,

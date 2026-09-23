@@ -7,7 +7,7 @@ Docker nor the CLI is needed to develop or test them.
 | File | What it does |
 |---|---|
 | `config.toml` | CLI settings: project id `cockfight`, Postgres 17, no seed |
-| `migrations/20260923000000_init.sql` | The 8 tables, indexes, RLS, the two public views, and all grants |
+| `migrations/20260923000000_init.sql` | The 9 tables, indexes, RLS, the public views, and all grants |
 | `migrations/20260923000100_cron.sql` | pg_cron: refresh `leaderboard_v` every minute, purge old cron logs |
 
 ## Applying to a Supabase project
@@ -47,6 +47,7 @@ Requirements:
   BYPASSRLS. Per table it gets exactly what it needs:
   - money and audit rows (`payouts`, `matches`, `fee_claims`, `daily_rewards`,
     `abuse_events`, `players`) can be inserted and updated but never deleted;
+  - `fee_swaps` can only be inserted: a swap is recorded once it is confirmed;
   - `balance_checks` and `pool_snapshots` also allow DELETE, for retention;
   - TRUNCATE is never granted.
 - **Reads for the web app:** `anon` and `authenticated` can SELECT
@@ -97,7 +98,8 @@ constraint, so zod can mirror them and adding a value is a one-line migration.
 | `matches` | One row per match; `input_log` makes it replayable | Can be written at match start (`ended_at`, `reason`, `winner` null) or at the end. A finished match has 1–5 rounds, and a forfeit records the round it ended in. `reason = 'draw'` has `winner` null; every other reason has a winner. See [Match reasons](#match-reasons). |
 | `payouts` | SOL payouts, one per win and one per daily rank | `idem_key` is unique: the match id for a win, `YYYY-MM-DD:rank` for daily. A win payout must go to that match's winner (a composite FK to `matches (id, winner)`), so a drawn or unfinished match cannot be paid, and once a match has a win payout its winner cannot change. `sent`/`paid` need `tx_sig`; `paid` exactly when `paid_at` is set. An address gets at most one daily payout per day, whatever its rank (`payouts_daily_day_address_key`). |
 | `daily_rewards` | Each UTC day's top 10 and what each rank was paid | One row per rank and per address per day. `payout_id` must name a payout to the same address for the same lamports (a composite FK), and once linked, that payout's recipient and amount cannot change. |
-| `fee_claims` | Every fee claim and swap | Feeds B₂₄ₕ and the fee ticker. `claim_sig`/`swap_sig` are unique, so a claim recorded twice cannot inflate payouts. |
+| `fee_claims` | Every fee claim | Feeds B₂₄ₕ and the fee ticker. `claim_sig` is unique, so a claim recorded twice cannot inflate payouts. A row without `claim_sig` (a dry run) is not counted in `pool_v`. |
+| `fee_swaps` | Every swap of claimed fees to SOL, one row per transaction | The worker swaps in chunks of at most $2k, so a claim has any number of swaps. `swap_sig` is the primary key; `lamports` is that chunk's SOL out, and a claim's SOL after swap is the sum of its rows. Each swap belongs to exactly one claim. |
 | `pool_snapshots` | One row per minute for the live chart | `at` must be a whole minute (UTC); the worker upserts on it. |
 | `abuse_events` | The admin review queue | `resolved_by` and `resolved_at` are set together. |
 
@@ -133,6 +135,18 @@ The sim's final state keeps the last round's reason, so a match won in round
 that straight to `draw` violates `matches_winner_iff_decisive`, and since the
 result and its payout are written in one transaction, it would lose both.
 
+### Differences from the spec's data model
+
+- **`fee_swaps`** is a 9th table. The spec puts one `swap_sig` and one
+  `sol_after_swap` on each `fee_claims` row, but a claim is swapped in several
+  chunks (`Swapper.toSol` returns several signatures), and chunk rows in
+  `fee_claims` would be counted as claims. So `fee_claims` has neither column:
+  each swap is a `fee_swaps` row, and SOL after swap is derived from them.
+  Phase 3's `Swapper` must report each chunk's signature *and* lamports.
+- **`matches.reason`** adds `sudden_death`, `decision` and `draw` (see [Match reasons](#match-reasons)).
+- **`balance_checks.decimals`** records the mint's decimals next to the raw
+  `tokens` amount.
+
 The spec's indexes are all present: `matches (winner, ended_at desc)`,
 `matches (p1, p2, ended_at desc)` for the pairing caps, and
 `payouts (status, created_at)` for the worker's poll. Every foreign key also
@@ -159,7 +173,8 @@ restarts on the first refresh after 00:00 UTC.
 
 **`pool_v`** (a plain view, always exactly one row). It holds the latest
 `pool_snapshots` row (all null until the worker writes one) and trailing-24h
-totals from `fee_claims` and paid `payouts`. It runs with its owner's rights
+totals from `fee_claims` (with a claim transaction), their `fee_swaps`, and
+paid `payouts`. The 24 h window is by claim time, like B₂₄ₕ. It runs with its owner's rights
 (`security_invoker` off) on purpose. `anon` has no grant on the base tables, and
 RLS would hide their rows anyway, so an invoker view could not work. The view is
 safe because every column is a public aggregate. The front page polls it:
@@ -171,7 +186,7 @@ These are intentional; do not "fix" them.
 
 | Lint | Level | Object | Why it is fine |
 |---|---|---|---|
-| `rls_enabled_no_policy` | Info | all 8 tables | Deny-by-default for the web keys is the design. `service_role` bypasses RLS. |
+| `rls_enabled_no_policy` | Info | all 9 tables | Deny-by-default for the web keys is the design. `service_role` bypasses RLS. |
 | `security_definer_view` | Error | `pool_v` | It has to read tables `anon` cannot. It exposes only aggregates, and it has `security_barrier`. |
 | `materialized_view_in_api` | Warn | `leaderboard_v` | The leaderboard is public by design and has no private columns. |
 | `unused_index` | Info | several | Until real traffic arrives. |
