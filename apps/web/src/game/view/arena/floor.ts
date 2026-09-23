@@ -1,6 +1,6 @@
-import { BoxGeometry, Matrix4, Mesh, PlaneGeometry, ShaderMaterial } from "three";
+import { Matrix4, Mesh, PlaneGeometry, ShaderMaterial } from "three";
 import { GeoBuilder } from "./builder";
-import { CHASM_DEPTH, CHASM_FAR, HAZARD_IN, LIP_H, LIP_IN, PIT_BACK, PIT_FRONT, RING_EDGE } from "./layout";
+import { CHASM_DEPTH, CHASM_FAR, HAZARD_IN, LIP_IN, PIT_BACK, PIT_FRONT, RING_EDGE } from "./layout";
 import { LIGHT_GLSL, NOISE_GLSL, OUTPUT_GLSL, withFog, type ArenaUniforms } from "./lighting";
 
 /** Surface kinds, read by the floor shader. */
@@ -27,8 +27,9 @@ void main() {
 
 /**
  * Per-pixel floor: concrete slabs worn through to dirt, oil stains, a yellow /
- * black hazard band inside the lip, a striped lip exactly at the ring edge, and
- * a drop-off that falls away into black. Lit by the shared fire + flood rig.
+ * black hazard band inside the lip, a striped steel lip (flush: fighters can
+ * stand on it) ending exactly at the ring edge, and a drop-off that falls away
+ * into black. Lit by the shared fire + flood rig.
  */
 const FRAG = /* glsl */ `
 varying vec3 vWorld;
@@ -72,8 +73,8 @@ void main() {
     float wear = smoothstep(0.28, 0.55, vnoise(q * 2.6) * 0.7 + fine * 0.3);
     alb = mix(alb, mix(vec3(0.01), HAZARD, s), 0.92 * wear);
   } else if (vKind > 0.5 && vKind < 1.5) {
-    // The lip: striped steel curb, stripes running along it.
-    float s = step(0.5, fract((p.z + p.y) * 0.9));
+    // The lip: striped steel strip, stripes running along it.
+    float s = step(0.5, fract(p.z * 0.9));
     float wear = smoothstep(0.2, 0.5, vnoise(q * 3.1 + 4.0));
     alb = mix(vec3(0.05, 0.05, 0.055), mix(vec3(0.012), HAZARD * 1.1, s), wear);
   } else if (vKind > 1.5 && vKind < 2.5) {
@@ -124,17 +125,16 @@ export function buildFloor(u: ArenaUniforms, floods: number): Floor {
 
   // Pit floor: subdivided a little so fog and varyings stay well conditioned on long triangles.
   const pitLen = PIT_FRONT - PIT_BACK;
-  const pit = new PlaneGeometry(2 * LIP_IN, pitLen, 4, 24).rotateX(-Math.PI / 2);
+  const pit = new PlaneGeometry(2 * LIP_IN, pitLen, 4, 40).rotateX(-Math.PI / 2);
   b.add(pit, m.makeTranslation(0, 0, (PIT_BACK + PIT_FRONT) / 2), kind(PIT));
 
-  // Raised lip, the outer face exactly on the ring edge; the drop-off on both sides.
-  const lip = new BoxGeometry(RING_EDGE - LIP_IN, LIP_H, pitLen);
+  // The lip, flush with the floor, its outer edge exactly on the ring edge; the drop-off on both sides.
   const chasmW = CHASM_FAR - RING_EDGE;
   for (const s of [-1, 1]) {
     const mirror = new Matrix4().makeScale(s, 1, 1);
     const at = (x: number, y: number, z: number, sx: number, sy: number, sz: number) =>
       mirror.clone().multiply(new Matrix4().makeTranslation(x, y, z)).multiply(new Matrix4().makeScale(sx, sy, sz));
-    b.add(lip, mirror.clone().multiply(new Matrix4().makeTranslation((LIP_IN + RING_EDGE) / 2, LIP_H / 2, (PIT_BACK + PIT_FRONT) / 2)), kind(LIP));
+    b.add(flatUp, at((LIP_IN + RING_EDGE) / 2, 0, (PIT_BACK + PIT_FRONT) / 2, RING_EDGE - LIP_IN, 1, pitLen), kind(LIP));
     // Far wall of the drop-off (faces the pit), its back end, and the floor far below.
     b.add(facingMinusX, at(CHASM_FAR, -CHASM_DEPTH / 2, (PIT_BACK + PIT_FRONT) / 2, 1, CHASM_DEPTH, pitLen), kind(CHASM));
     b.add(facingPlusZ, at(RING_EDGE + chasmW / 2, -CHASM_DEPTH / 2, PIT_BACK, chasmW, CHASM_DEPTH, 1), kind(CHASM));
@@ -148,7 +148,7 @@ export function buildFloor(u: ArenaUniforms, floods: number): Floor {
   b.add(flatUp, new Matrix4().makeTranslation(0, 0, (PIT_BACK - 30) / 2).multiply(new Matrix4().makeScale(84, 1, 30 + PIT_BACK)), kind(GROUND));
 
   const geo = b.build();
-  for (const g of [flatUp, facingPlusX, facingMinusX, facingPlusZ, pit, lip]) g.dispose();
+  for (const g of [flatUp, facingPlusX, facingMinusX, facingPlusZ, pit]) g.dispose();
   const mat = new ShaderMaterial({
     name: "arena-floor",
     vertexShader: VERT,

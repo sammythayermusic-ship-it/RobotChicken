@@ -11,19 +11,28 @@ import type { Object3D } from "three";
  * keep working when the procedural geometry is swapped out.
  */
 
-/** Ring-out edge (moves.json `ringEdge` = 10000 mu). The lip's outer face sits exactly here. */
+/** Ring-out edge (moves.json `ringEdge` = 10000 mu). The lip's outer edge sits exactly here. */
 export const RING_EDGE = 10;
 /** Walking stops at 9.5 (moves.json `wallEdge`); the hazard band starts just inside. */
 export const HAZARD_IN = 9.05;
-/** Inner face of the raised lip. */
+/**
+ * Inner edge of the lip: a striped steel strip FLUSH with the pit floor. A
+ * ring-out shove that falls short leaves a fighter standing anywhere up to
+ * x = 10 (walls stop outward motion only), so nothing inside the ring edge may
+ * be raised: a curb there would bury the feet and the blob shadow.
+ */
 export const LIP_IN = 9.78;
-export const LIP_H = 0.14;
 /** The drop-off beyond the lip: its far wall, and how deep the dark goes. */
 export const CHASM_FAR = 12.6;
 export const CHASM_DEPTH = 34;
-/** The pit floor runs from the car wall at the back to well past the camera (portrait views look down a long way). */
+/**
+ * The pit floor runs from the car wall at the back to well past the camera. A
+ * portrait phone (aspect 0.45) pulls the camera ~94 u back to fit both
+ * fighters at the walls, and its bottom edge meets the floor ~19 u in front
+ * of the lens (z ~ 75); 130 leaves room for narrower screens.
+ */
 export const PIT_BACK = -7.4;
-export const PIT_FRONT = 70;
+export const PIT_FRONT = 130;
 
 export interface Vec3Like {
   x: number;

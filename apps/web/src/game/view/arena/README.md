@@ -2,8 +2,8 @@
 
 The fight scene's set. `createJunkyard(renderer)` builds the procedural junkyard pit (0 bytes of
 assets) and returns an `ArenaView` (`../FightView.ts`): `root`, `envScene`, `setHype(h)`,
-`update(dt, t)`, `dispose()`. `FightView.setArena()` mounts it; the director drives `setHype`
-(0.2 idle .. 1 on a KO). `/play?arena=0` skips the arena (placeholder floor only).
+`update(dt, t)`, `setQuality(tier)`, `dispose()`. `FightView.setArena()` mounts it; the director
+drives `setHype` (0.2 idle .. 1 on a KO). `/play?arena=0` skips the arena (placeholder floor only).
 
 | File | What |
 |---|---|
@@ -22,6 +22,11 @@ assets) and returns an `ArenaView` (`../FightView.ts`): `root`, `envScene`, `set
 **Budget:** 7 draw calls (sky, floor, props, crowd, crowd flashes, fire, beams) and ~17k rendered
 triangles, against the arena's 60k. `arena.test.ts` checks the triangle budget and the ring-edge
 contract; `e2e/arena.spec.ts` checks the whole fight frame (≤ 40 draws, ≤ 150k triangles).
+
+**Quality 'low'** ("no particles, half-res") also drops the arena's own particles, with no
+rebuild and no shader recompile: the fire smoke and embers (the flames and halos stay: an
+instance-count prefix), the crowd's camera-flash pass (6 draw calls instead of 7) and the haze
+sheet (a draw range). `e2e/arena.spec.ts` logs the arena's draws and triangles per tier.
 
 ## How it is lit
 

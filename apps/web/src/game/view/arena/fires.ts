@@ -106,16 +106,23 @@ void main() {
 export interface Fires {
   mesh: Mesh<InstancedBufferGeometry, ShaderMaterial>;
   lights: [PointLight, PointLight];
+  /** Instances: flames and halos (first in the buffers) and the total with smoke and embers. */
+  readonly counts: { core: number; all: number };
   update(flickL: number, flickR: number): void;
+  /** Smoke and embers on or off (quality 'low' drops them; the flames and halos still read as fires). */
+  setAmbient(on: boolean): void;
 }
 
 export function buildFires(clusters: readonly [FireCluster, FireCluster], shared: { uTime: IUniform<number>; uFlick: IUniform<Vector2> }, seed = 99): Fires {
   const rand = rng(seed);
-  const center: number[] = [];
-  const params: number[] = [];
+  // Flames and halos first, smoke and embers after, so a lower tier can draw a prefix.
+  // Additive, no depth write: instance order doesn't change the image.
+  const core = { center: [] as number[], params: [] as number[] };
+  const ambient = { center: [] as number[], params: [] as number[] };
   const push = (x: number, y: number, z: number, kind: number, size: number, cluster: number) => {
-    center.push(x, y, z);
-    params.push(kind, rand(), size, cluster);
+    const to = kind === FLAME || kind === HALO ? core : ambient;
+    to.center.push(x, y, z);
+    to.params.push(kind, rand(), size, cluster);
   };
   clusters.forEach((cl, ci) => {
     for (const d of cl.drums) {
@@ -134,9 +141,10 @@ export function buildFires(clusters: readonly [FireCluster, FireCluster], shared
   geo.index = quad.index;
   geo.setAttribute("position", quad.getAttribute("position"));
   geo.setAttribute("uv", quad.getAttribute("uv"));
-  geo.setAttribute("aCenter", new InstancedBufferAttribute(new Float32Array(center), 3));
-  geo.setAttribute("aParams", new InstancedBufferAttribute(new Float32Array(params), 4));
-  geo.instanceCount = center.length / 3;
+  geo.setAttribute("aCenter", new InstancedBufferAttribute(new Float32Array([...core.center, ...ambient.center]), 3));
+  geo.setAttribute("aParams", new InstancedBufferAttribute(new Float32Array([...core.params, ...ambient.params]), 4));
+  const counts = { core: core.center.length / 3, all: (core.center.length + ambient.center.length) / 3 };
+  geo.instanceCount = counts.all;
   const mat = new ShaderMaterial({
     name: "arena-fire",
     vertexShader: VERT,
@@ -162,9 +170,13 @@ export function buildFires(clusters: readonly [FireCluster, FireCluster], shared
   return {
     mesh,
     lights,
+    counts,
     update(fl, fr) {
       lights[0].intensity = FIRE_POINT_I * fl;
       lights[1].intensity = FIRE_POINT_I * fr;
+    },
+    setAmbient(on) {
+      geo.instanceCount = on ? counts.all : counts.core;
     },
   };
 }

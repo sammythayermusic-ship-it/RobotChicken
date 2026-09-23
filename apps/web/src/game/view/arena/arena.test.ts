@@ -1,10 +1,13 @@
 import { BoxGeometry, Group, Matrix4, Object3D, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { RULES } from "@cockfight/sim";
+import { buildBeams, SHAFT_FADE } from "./beams";
 import { GeoBuilder } from "./builder";
+import { advanceCrowd, flapRate, hopRate, type CrowdClock } from "./crowd";
+import { buildFires } from "./fires";
 import { buildFloor } from "./floor";
 import { anchorsFromScene, checkRingEdges, HAZARD_IN, LIP_IN, PROCEDURAL_ANCHORS, RING_EDGE } from "./layout";
-import { createUniforms, flicker } from "./lighting";
+import { createUniforms, flicker, FLOOD_CONE } from "./lighting";
 import { buildProps } from "./props";
 
 describe("arena layout", () => {
@@ -15,6 +18,19 @@ describe("arena layout", () => {
     // Fighters walk to wallEdge (9.5): the stripes start before it, the lip after it.
     expect(HAZARD_IN * 1000).toBeLessThan(RULES.match.wallEdge);
     expect(LIP_IN * 1000).toBeGreaterThan(RULES.match.wallEdge);
+  });
+
+  it("is flush wherever a fighter can stand: nothing inside the ring edge rises above the floor", () => {
+    // A ring-out shove that falls short leaves the defender standing anywhere up to x = 10.
+    const floor = buildFloor(createUniforms(PROCEDURAL_ANCHORS), PROCEDURAL_ANCHORS.floods.length);
+    const pos = floor.mesh.geometry.getAttribute("position");
+    let highest = -Infinity;
+    for (let i = 0; i < pos.count; i++) {
+      if (Math.abs(pos.getX(i)) <= RING_EDGE + 1e-6) highest = Math.max(highest, pos.getY(i));
+    }
+    expect(highest).toBeLessThanOrEqual(1e-6);
+    floor.mesh.geometry.dispose();
+    floor.mesh.material.dispose();
   });
 
   it("seats about 240 in the crowd and has two fire clusters of drums", () => {
@@ -150,5 +166,130 @@ describe("fire flicker", () => {
     expect(lo).toBeGreaterThan(0.55);
     expect(hi).toBeLessThanOrEqual(1);
     expect(hi - lo).toBeGreaterThan(0.2); // it actually flickers
+  });
+});
+
+describe("crowd motion", () => {
+  /** Wrapped distance between two phases on a circle of length `period`. */
+  const step = (a: number, b: number, period: number) => {
+    const d = Math.abs(b - a) % period;
+    return Math.min(d, period - d);
+  };
+
+  it("keeps the hop and wing phases continuous when hype jumps late in a match", () => {
+    const dt = 1 / 60;
+    const c: CrowdClock = { bob: 0, flap: 0 };
+    // 100 s of a bored crowd, then a KO slams hype from 0.2 to 1 and it eases back down.
+    for (let i = 0; i < 6000; i++) advanceCrowd(c, dt, 0.2);
+    let hype = 1;
+    let worstFlap = 0;
+    let worstBob = 0;
+    for (let i = 0; i < 600; i++) {
+      const before = { ...c };
+      advanceCrowd(c, dt, hype);
+      worstFlap = Math.max(worstFlap, step(before.flap, c.flap, 1));
+      worstBob = Math.max(worstBob, step(before.bob, c.bob, Math.PI * 2));
+      hype = Math.max(0.2, hype - 0.01);
+    }
+    // A frame never moves further than the fastest rate allows. (The old shader form,
+    // fract(uTime * rate(hype)), jumped by t * d(rate): 272 wing cycles in the KO frame here.)
+    expect(worstFlap).toBeLessThanOrEqual(flapRate(1) * dt + 1e-9);
+    expect(worstBob).toBeLessThanOrEqual(hopRate(1) * dt + 1e-9);
+    expect(c.flap).toBeGreaterThanOrEqual(0);
+    expect(c.flap).toBeLessThan(1);
+    expect(c.bob).toBeLessThan(Math.PI * 2);
+  });
+
+  it("stands still while paused (dt = 0) whatever hype does", () => {
+    const c: CrowdClock = { bob: 1.2, flap: 0.4 };
+    advanceCrowd(c, 0, 1);
+    expect(c).toEqual({ bob: 1.2, flap: 0.4 });
+  });
+});
+
+describe("floodlight shafts", () => {
+  const coneStats = () => {
+    const { mesh } = buildBeams(PROCEDURAL_ANCHORS.floods, [], { value: 0 });
+    const g = mesh.geometry;
+    const params = g.getAttribute("aParams");
+    const pos = g.getAttribute("position");
+    const idx = g.getIndex();
+    if (!idx) throw new Error("expected an index");
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < params.count; i++) {
+      if (params.getX(i) !== 0) continue; // cones only
+      lo = Math.min(lo, params.getZ(i));
+      hi = Math.max(hi, params.getZ(i));
+    }
+    let area = 0;
+    const [a, b, c] = [new Vector3(), new Vector3(), new Vector3()];
+    for (let i = 0; i < idx.count; i += 3) {
+      if (params.getX(idx.getX(i)) !== 0) continue;
+      a.fromBufferAttribute(pos, idx.getX(i));
+      b.fromBufferAttribute(pos, idx.getX(i + 1)).sub(a);
+      c.fromBufferAttribute(pos, idx.getX(i + 2)).sub(a);
+      area += b.cross(c).length() / 2;
+    }
+    g.dispose();
+    mesh.material.dispose();
+    return { lo, hi, area };
+  };
+
+  it("end where they have faded out, with the same fade from the lamp", () => {
+    const { lo, hi } = coneStats();
+    const f = PROCEDURAL_ANCHORS.floods[0]!;
+    const len = new Vector3(f.pos.x, f.pos.y, f.pos.z).distanceTo(new Vector3(f.target.x, f.target.y, f.target.z));
+    expect(hi).toBeCloseTo(SHAFT_FADE[1], 6); // nothing is built past full transparency
+    expect(lo).toBeCloseTo(0.5 / len, 6); // the lamp ring is where it always was
+  });
+
+  it("skip the dead wide end: about a quarter less cone surface than lamp-to-floor", () => {
+    const { area } = coneStats();
+    // The full-length open cone of the old build, per flood: pi * (r0 + r1) * slant.
+    const half = Math.acos(FLOOD_CONE.x) * 0.92;
+    let full = 0;
+    for (const f of PROCEDURAL_ANCHORS.floods) {
+      const len = new Vector3(f.pos.x, f.pos.y, f.pos.z).distanceTo(new Vector3(f.target.x, f.target.y, f.target.z));
+      const r1 = 0.5 + Math.tan(half) * len;
+      full += Math.PI * (0.5 + r1) * Math.hypot(len, r1 - 0.5);
+    }
+    expect(area / full).toBeLessThan(0.8);
+    expect(area / full).toBeGreaterThan(0.6);
+  });
+});
+
+describe("quality tiers", () => {
+  it("fires: 'low' draws a prefix of flames and halos and drops the smoke and embers", () => {
+    const fires = buildFires(PROCEDURAL_ANCHORS.fires, createUniforms(PROCEDURAL_ANCHORS));
+    const g = fires.mesh.geometry;
+    const params = g.getAttribute("aParams");
+    const drums = PROCEDURAL_ANCHORS.fires[0].drums.length + PROCEDURAL_ANCHORS.fires[1].drums.length;
+    expect(fires.counts.core).toBe(drums * 11); // 10 tongues + a halo per drum
+    expect(fires.counts.all).toBe(fires.counts.core + 2 * (7 + 16)); // + smoke and embers per cluster
+    expect(g.instanceCount).toBe(fires.counts.all);
+    for (let i = 0; i < fires.counts.all; i++) expect(params.getX(i) <= 1, `instance ${i} kind`).toBe(i < fires.counts.core);
+    fires.setAmbient(false);
+    expect(g.instanceCount).toBe(fires.counts.core);
+    fires.setAmbient(true);
+    expect(g.instanceCount).toBe(fires.counts.all);
+    g.dispose();
+    fires.mesh.material.dispose();
+  });
+
+  it("beams: 'low' skips the haze sheet and nothing else", () => {
+    const beams = buildBeams(PROCEDURAL_ANCHORS.floods, [{ x: 0, y: 4, z: -9 }], { value: 0 });
+    const g = beams.mesh.geometry;
+    const idx = g.getIndex();
+    if (!idx) throw new Error("expected an index");
+    const kind = g.getAttribute("aParams");
+    beams.setHaze(false);
+    const kept = g.drawRange.count;
+    expect(kept).toBe(idx.count - 6); // one quad
+    for (let i = 0; i < idx.count; i++) expect(kind.getX(idx.getX(i)) === 2, `index ${i}`).toBe(i >= kept);
+    beams.setHaze(true);
+    expect(g.drawRange.count).toBe(Infinity);
+    g.dispose();
+    beams.mesh.material.dispose();
   });
 });
