@@ -42,28 +42,34 @@ export const SIM_EVENT_KINDS: readonly SimEventKind[] = [
 
 const side = (i: number) => (i === 0 ? 0 : 1);
 
+/** Ticks each countdown number (3, 2, 1) is shown; they take the countdown's last 3 x COUNT_STEP ticks. */
+const COUNT_STEP = 50;
+
+/** The countdown number showing in this state (0 = none: not counting, or the round banner's lead-in). */
+function countdownNumber(s: MatchState): number {
+  if (s.phase !== Phase.countdown || s.phaseT <= 0 || s.phaseT > 3 * COUNT_STEP) return 0;
+  return idiv(s.phaseT + COUNT_STEP - 1, COUNT_STEP);
+}
+
 export function deriveEvents(prev: MatchState, next: MatchState, heatMax: number): SimEvent[] {
   const ev: SimEvent[] = [];
+  // A new round replaced both fighters: diffing them against the old ones would
+  // report nonsense (a "landing" at the start spot for a fighter that was falling).
+  const newRound = next.round !== prev.round;
 
-  if (next.round !== prev.round && next.phase === Phase.countdown) ev.push({ kind: "roundStart", round: next.round });
-  if (next.phase === Phase.countdown) {
-    // 3, 2, 1 on the second boundaries of the countdown.
-    const secs = (t: number) => idiv(t + 59, 60);
-    // The first number shows on the countdown's first tick (match start or a new round).
-    if (secs(next.phaseT) !== secs(prev.phaseT) || next.round !== prev.round || prev.tick === 0) {
-      const n = secs(next.phaseT);
-      if (n >= 1 && n <= 3) ev.push({ kind: "countdown", n });
-    }
-  }
+  // "ROUND n" opens every countdown (the first one too), on its own: the numbers
+  // start half a second later, so the HUD's single banner slot shows both.
+  if (next.phase === Phase.countdown && (newRound || prev.tick === 0)) ev.push({ kind: "roundStart", round: next.round });
+  const n = countdownNumber(next);
+  if (n !== 0 && n !== countdownNumber(prev)) ev.push({ kind: "countdown", n });
   if (prev.phase === Phase.countdown && next.phase === Phase.fighting) {
     ev.push({ kind: "fight", round: next.round, suddenDeath: false });
   }
   if (!prev.sd && next.sd) ev.push({ kind: "suddenDeath" });
 
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 2 && !newRound; i++) {
     const a = prev.f[i] as FighterState;
     const b = next.f[i] as FighterState;
-    const o = next.f[1 - i] as FighterState;
     if (b.st === St.attack && (a.st !== St.attack || a.move !== b.move || b.stTick < a.stTick)) {
       ev.push({ kind: "attack", side: side(i), move: b.move });
     }
@@ -75,7 +81,7 @@ export function deriveEvents(prev: MatchState, next: MatchState, heatMax: number
         move: b.hitMv,
         blocked: b.hitKind === HitKind.block,
         damage: Math.max(0, a.hp - b.hp),
-        x: (b.x + o.x) >> 1,
+        x: b.hitX,
         y: b.y + 800,
       });
     }

@@ -31,6 +31,9 @@ export function newFighter(side: 0 | 1, R: Rules = RULES): FighterState {
     hitT: -1,
     hitMv: Mv.none,
     hitKind: 0,
+    rawHeld: 0,
+    bufDir: 0,
+    hitX: 0,
   };
 }
 

@@ -49,6 +49,9 @@ function mirrorFighter(f: FighterState): FighterState {
     tapL: f.tapR,
     tapR: f.tapL,
     dashReq: -f.dashReq || 0,
+    rawHeld: swapLR(f.rawHeld),
+    bufDir: swapLR(f.bufDir),
+    hitX: -f.hitX || 0,
   };
 }
 const swapSide = (w: number) => (w === 0 ? 1 : w === 1 ? 0 : w);

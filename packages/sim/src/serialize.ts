@@ -47,6 +47,9 @@ export const FIGHTER_FIELDS = [
   "hitT",
   "hitMv",
   "hitKind",
+  "rawHeld",
+  "bufDir",
+  "hitX",
 ] as const satisfies readonly (keyof FighterState)[];
 
 export const STATE_INTS = MATCH_FIELDS.length + 2 * FIGHTER_FIELDS.length;

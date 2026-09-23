@@ -139,7 +139,7 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
             </>
           )}
           <div className="text-zinc-400 sm:col-span-2">
-            <p>Double-tap a direction to dash. Peck + toward = shove, peck + down = slam (unblockable), peck in the air = dive kick. Fill Heat and peck standing still for the Rooster Rocket.</p>
+            <p>Double-tap a direction to dash. Peck + toward = shove, peck + down = slam (unblockable), peck in the air = dive kick. With full Heat, peck with no direction held for the Rooster Rocket (peck + away stays a peck and keeps the meter).</p>
           </div>
           <div className="sm:col-span-2">
             <KeyTester />

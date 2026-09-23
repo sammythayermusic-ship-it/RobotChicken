@@ -76,7 +76,7 @@ export interface FighterState {
   stun: number;
   /** Generic invulnerability ticks remaining (get-up). */
   invuln: number;
-  /** The current move has already connected. */
+  /** The current move has already connected: 0 = not yet, 1 = hit, 2 = blocked. */
   hitDone: number;
   /** A dive kick was used during this jump. */
   diveUsed: number;
@@ -99,6 +99,12 @@ export interface FighterState {
   hitT: number;
   hitMv: MvId;
   hitKind: number;
+  /** Raw buttons held this tick, before SOCD cleaning (press edges and dash taps read these). */
+  rawHeld: number;
+  /** Direction bits (L/R/D, world space) held when the buffered Space press went down. */
+  bufDir: number;
+  /** Where the last contact landed on this fighter (x, mu). Presentation only. */
+  hitX: number;
 }
 
 export interface MatchState {

@@ -70,7 +70,8 @@
     },
     "knockdown": {
       "lie": 40,
-      "getup": 20
+      "getup": 20,
+      "wakeInvuln": 2
     }
   },
   "moves": {
@@ -100,7 +101,6 @@
       },
       "cancel": {
         "into": [
-          "shove",
           "super"
         ],
         "from": 5,
@@ -182,7 +182,7 @@
     "dive_kick": {
       "startup": 6,
       "active": 40,
-      "recovery": 14,
+      "recovery": 24,
       "damage": 1000,
       "blockable": false,
       "hitsAir": true,
@@ -207,7 +207,7 @@
         180,
         -180
       ],
-      "minAirTick": 4,
+      "minAirTick": 14,
       "minY": 900,
       "bounce": [
         -40,

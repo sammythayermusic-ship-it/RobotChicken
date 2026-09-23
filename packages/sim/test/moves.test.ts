@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  B, HitKind, Mv, Phase, RULES, Reason, St, clone, detect, step, type FighterState, type MatchState, type MoveRules, type MvId,
+  B, HitKind, Mv, Phase, RULES, Reason, St, clone, detect, isInvulnerable, step, type FighterState, type MatchState, type MoveRules, type MvId,
 } from "../src/index";
 import { fightingMatch, run } from "./helpers/run";
 
@@ -161,6 +161,64 @@ describe("peck on hit and on block", () => {
   });
 });
 
+describe("cancels and the Space buffer", () => {
+  /**
+   * P1 pecks P2 (blocking or not) with Heat just short of full, then presses Space
+   * again on peck frame 8. Did the super replace the peck mid-move (a cancel)?
+   */
+  function peckThenSpace(b2: number): { cancelled: boolean; heatFull: boolean; contact: number } {
+    let s = placed(1100, "cancel");
+    s.f[0].heat = RULES.heat.max - 100; // the peck's +480 (or +180 when blocked) fills it
+    s = attack(s, 0, b2);
+    let cancelled = false;
+    let heatFull = false;
+    for (let t = 0; t < 40; t++) {
+      const inPeck = s.f[0].st === St.attack && s.f[0].move === Mv.peck;
+      const press = inPeck && s.f[0].stTick === 8 && s.f[0].hitstop === 0;
+      const next = step(s, press ? B.S : 0, b2);
+      if (inPeck && next.f[0].st === St.attack && next.f[0].move === Mv.super) cancelled = true;
+      heatFull ||= next.f[0].heat >= RULES.heat.max;
+      s = next;
+    }
+    return { cancelled, heatFull, contact: s.f[1].hitKind };
+  }
+
+  it("a peck that hits cancels into the super inside frames 5-10", () => {
+    const r = peckThenSpace(0);
+    expect(r.contact).toBe(HitKind.hit);
+    expect(r.cancelled).toBe(true);
+  });
+
+  it("a blocked peck does not cancel (cancels are on hit only)", () => {
+    const r = peckThenSpace(B.D);
+    expect(r.contact).toBe(HitKind.block);
+    expect(r.heatFull).toBe(true); // the block filled the meter, so only the on-hit rule stops the cancel
+    expect(r.cancelled).toBe(false);
+  });
+
+  it("a buffered press fires the move held when Space went down, not what is held when it fires", () => {
+    // Full Heat, down+Space buffered in a shove's recovery, down released 2 ticks later: slam, and the meter is kept.
+    let s = placed(8000, "buf");
+    s.f[0].heat = RULES.heat.max;
+    s = attack(s, B.R);
+    expect(s.f[0].move).toBe(Mv.shove);
+    while (s.f[0].stTick < mv(Mv.shove).total - 3) s = step(s, 0, 0);
+    s = step(s, B.D | B.S, 0);
+    s = step(s, B.D, 0);
+    while (s.f[0].st === St.attack && s.f[0].move === Mv.shove) s = step(s, 0, 0);
+    expect(s.f[0].move).toBe(Mv.slam);
+    expect(s.f[0].heat).toBe(RULES.heat.max);
+
+    // Toward+Space pressed late in a whiffed peck, toward held for a single tick: a shove, not a second peck.
+    let p = placed(8000, "buf2");
+    p = attack(p, 0);
+    while (p.f[0].stTick < mv(Mv.peck).total - 2) p = step(p, 0, 0);
+    p = step(p, B.R | B.S, 0);
+    while (p.f[0].st === St.attack && p.f[0].move === Mv.peck) p = step(p, 0, 0);
+    expect(p.f[0].move).toBe(Mv.shove);
+  });
+});
+
 describe("slam", () => {
   it("is unblockable, launches, then knockdown 40 and an invulnerable get-up of 20", () => {
     let s = placed(1200);
@@ -185,6 +243,62 @@ describe("slam", () => {
       up++;
     }
     expect(up).toBe(F.getup);
+  });
+
+  it("the first actionable ticks after get-up are still invulnerable (no guaranteed meaty)", () => {
+    let s = placed(1200);
+    s = attack(s, B.D);
+    while (s.f[1].st !== St.getup) s = step(s, 0, 0);
+    while (s.f[1].st === St.getup) s = step(s, 0, 0);
+    // First actionable tick: the waker can already act...
+    expect(s.f[1].st).toBe(St.idle);
+    const inv: boolean[] = [];
+    for (let k = 0; k < F.wakeInvuln + 2; k++) {
+      inv.push(isInvulnerable(s.f[1], RULES));
+      s = step(s, 0, 0);
+    }
+    // ...and cannot be hit for `wakeInvuln` ticks.
+    expect(inv).toEqual([...Array<boolean>(F.wakeInvuln).fill(true), false, false]);
+  });
+
+  it("a meaty dive kick after a slam knockdown never beats every wake-up option", () => {
+    // P1 slams P2 from the start spot, then jumps J ticks after the hit and presses Space D ticks
+    // later. Every timing that lands the dive on P2's first actionable ticks must be escapable by
+    // one of: dash forward (under it), jump straight up, jump back.
+    let base = fightingMatch("meaty");
+    while (base.f[1].x - base.f[0].x > 1250) base = step(base, B.R, 0);
+    base = step(base, B.D | B.S, 0);
+    while (base.f[1].st !== St.launched) base = step(base, 0, 0);
+    const hitAt = base.tick;
+    let w = clone(base);
+    while (w.f[1].st !== St.idle) w = step(w, 0, 0);
+    const wake = w.tick;
+    const fwd = (f: FighterState) => (f.facing > 0 ? B.R : B.L);
+    const answers: ((f: FighterState) => number)[] = [
+      (f) => (f.st === St.getup && (f.stTick === F.getup - 3 || f.stTick === F.getup) ? fwd(f) : 0),
+      () => B.U,
+      (f) => B.U | (f.facing > 0 ? B.L : B.R),
+    ];
+    const diveHits = (J: number, D: number, answer: (f: FighterState) => number): number => {
+      let s = clone(base);
+      for (let i = 0; i < 160; i++) {
+        const k = s.tick - hitAt;
+        const b1 = k < J ? fwd(s.f[0]) : k === J ? B.U | fwd(s.f[0]) : k === J + D ? B.S : 0;
+        s = step(s, b1, answer(s.f[1]));
+        if (s.f[1].hitT === s.tick && s.f[1].hitMv === Mv.dive_kick && s.f[1].hitKind === HitKind.hit) return s.tick;
+      }
+      return -1;
+    };
+    let meaties = 0;
+    for (let J = wake - hitAt - 40; J <= wake - hitAt - 12; J++) {
+      for (let D = 1; D <= 20; D++) {
+        const t = diveHits(J, D, () => 0);
+        if (t < wake || t > wake + 2) continue; // not a meaty on the wake-up
+        meaties++;
+        expect(answers.some((a) => diveHits(J, D, a) < 0), `meaty J=${J} D=${D}`).toBe(true);
+      }
+    }
+    expect(meaties).toBeGreaterThan(0);
   });
 
   it("only hits grounded targets", () => {
@@ -244,6 +358,37 @@ describe("shove and ring-outs", () => {
     expect(p.f[1].st).not.toBe(St.ringOut);
   });
 
+  it("the last step of a shove is not walled: from 8.1 units it rings out", () => {
+    for (const x of [8001, 8100, 8200]) {
+      let s = placed(1200, `edge-${x}`);
+      s.f[1].x = x;
+      s.f[0].x = x - 1200;
+      s = attack(s, B.R);
+      for (let t = 0; t < 60 && s.phase === Phase.fighting; t++) s = step(s, 0, 0);
+      expect(s.reason, `shove hit at ${x}`).toBe(Reason.ringout);
+      expect(s.f[1].st).toBe(St.ringOut);
+    }
+  });
+
+  it("a shove that falls short still moves exactly 2 units, and the fighter stays beyond the wall", () => {
+    let s = placed(1200);
+    s.f[1].x = 7600;
+    s.f[0].x = 6400;
+    s = attack(s, B.R);
+    for (let t = 0; t < 20 && s.f[1].hitKind === 0; t++) s = step(s, 0, 0);
+    const x0 = s.f[1].x;
+    s = run(s, 40);
+    expect(s.phase).toBe(Phase.fighting);
+    expect(s.f[1].x - x0).toBe(2000);
+    expect(s.f[1].x).toBeGreaterThan(M.wallEdge);
+    expect(s.f[1].roAble).toBe(0);
+    // ...and can walk back in (but not further out).
+    s = run(s, 10, 0, B.R);
+    expect(s.f[1].x).toBe(x0 + 2000);
+    s = run(s, 10, 0, B.L);
+    expect(s.f[1].x).toBeLessThan(x0 + 2000);
+  });
+
   it("slam from 6.5 units rings out", () => {
     let s = placed(1200);
     s.f[1].x = 6500;
@@ -272,15 +417,18 @@ describe("jump and dive kick", () => {
     expect(apexTicks).toEqual([18, 19]);
   });
 
-  it("dive kick: gated by 4 air ticks and 0.9 units, once per jump, 45 degrees, 14-tick landing recovery", () => {
+  it("dive kick: from the gate air tick on, once per jump, 45 degrees, then its landing recovery", () => {
+    const dk = mv(Mv.dive_kick);
     let s = placed(8000);
     s = step(s, B.U, 0);
-    s = step(s, B.S, 0); // air tick 2: too early
-    expect(s.f[0].st).toBe(St.jump);
-    s = run(s, 2, 0, 0);
-    s = step(s, B.S, 0); // air tick 5 (y >= 900): dives
+    const airTick1 = s.tick;
+    // A press early in the jump is not lost: it waits for the gate and the dive starts exactly there.
+    s = step(s, B.S, 0); // air tick 2
+    while (s.f[0].st === St.jump) s = step(s, 0, 0);
     expect(s.f[0].st).toBe(St.attack);
     expect(s.f[0].move).toBe(Mv.dive_kick);
+    expect(s.tick - airTick1 + 1).toBe(dk.minAirTick); // (the height gate, minY, is long met by then)
+    expect(s.f[0].y).toBeGreaterThanOrEqual(dk.minY);
     const hoverY = s.f[0].y;
     s = run(s, mv(Mv.dive_kick).startup - 1, 0, 0);
     expect(s.f[0].y).toBe(hoverY); // hover
@@ -296,6 +444,33 @@ describe("jump and dive kick", () => {
       rec++;
     }
     expect(rec).toBe(mv(Mv.dive_kick).recovery);
+  });
+
+  it("a dive kick can be answered on reaction: 16 ticks after the jump, a dash under or a back jump still escapes", () => {
+    // Every gap a jump-in dive connects from, every dive timing: the defender (P2, facing left) starts
+    // its answer 16 ticks (~0.27 s) after the jump press. With the dive allowed from air tick 4 the
+    // same held for 8-13 ticks at most, which no one reacts in.
+    const dived = (gap: number, d: number, answer: (t: number) => number) => {
+      let s = placed(gap, "dive-react");
+      for (let t = 0; t < 80; t++) {
+        s = step(s, t === 0 ? B.U | B.R : t === d ? B.S : 0, answer(t));
+        if (s.f[1].hitT === s.tick && s.f[1].hitMv === Mv.dive_kick && s.f[1].hitKind === HitKind.hit) return true;
+      }
+      return false;
+    };
+    const r = 16;
+    const dashUnder = (t: number) => (t === r || t === r + 2 ? B.L : 0);
+    const jumpBack = (t: number) => (t >= r ? B.U | B.R : 0);
+    for (let gap = 1500; gap <= 3100; gap += 200) {
+      expect(dived(gap, 1, () => 0), `a dive from ${gap} connects`).toBe(true);
+      let dash = true;
+      let jump = true;
+      for (let d = 1; d <= 34; d++) {
+        dash &&= !dived(gap, d, dashUnder);
+        jump &&= !dived(gap, d, jumpBack);
+      }
+      expect(dash || jump, `an answer at tick ${r} escapes every dive from ${gap}`).toBe(true);
+    }
   });
 
   it("dive kick is unblockable", () => {
@@ -348,6 +523,37 @@ describe("super", () => {
     let s = full(placed(8000), 0);
     s = attack(s, 0);
     expect(s.f[0].move).toBe(Mv.super);
+    expect(s.f[0].heat).toBe(0);
+  });
+  it("at full Heat, away+Space (walking back too) is a peck and keeps the meter; up+Space is still the super", () => {
+    let s = full(placed(8000), 0);
+    s = attack(s, B.L);
+    expect(s.f[0].move).toBe(Mv.peck);
+    expect(s.f[0].heat).toBe(RULES.heat.max);
+
+    let w = full(placed(8000, "walkback"), 0);
+    w = run(w, 10, B.L, 0);
+    expect(w.f[0].st).toBe(St.walkB);
+    w = attack(w, B.L);
+    expect(w.f[0].move).toBe(Mv.peck);
+    expect(w.f[0].heat).toBe(RULES.heat.max);
+
+    let u = full(placed(8000, "up"), 0);
+    u = attack(u, B.U);
+    expect(u.f[0].move).toBe(Mv.super);
+  });
+  it("at full Heat, an away+Space peck that hits cancels into the super with a plain Space", () => {
+    let s = full(placed(1100, "away-cancel"), 0);
+    s = attack(s, B.L);
+    expect(s.f[0].move).toBe(Mv.peck);
+    let cancelled = false;
+    for (let t = 0; t < 30 && !cancelled; t++) {
+      const press = s.f[0].st === St.attack && s.f[0].stTick === 7 && s.f[0].hitstop === 0;
+      s = step(s, press ? B.S : 0, 0);
+      cancelled = s.f[0].move === Mv.super;
+    }
+    expect(s.f[1].hitKind).toBe(HitKind.hit);
+    expect(cancelled).toBe(true);
     expect(s.f[0].heat).toBe(0);
   });
   it("without full Heat, neutral Space is a peck", () => {
