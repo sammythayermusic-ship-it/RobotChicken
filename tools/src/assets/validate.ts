@@ -12,7 +12,7 @@ import type { Animation, Document, Node } from "@gltf-transform/core";
 import { getGLPrimitiveCount } from "@gltf-transform/functions";
 import validator from "gltf-validator";
 import { CONTRACT, fromRepo, readGlb, sha256, type Contract, type HitboxesFile } from "./gltf";
-import { axisScale, buildRig, clipDuration, poseWorld, tracksOf, transformPoint, type Rig, type Track } from "./sample";
+import { KEY_EPS, axisScale, buildRig, clipDuration, frameTime, poseWorld, tracksOf, transformPoint, type Rig, type Track } from "./sample";
 
 export type Severity = "error" | "warning";
 
@@ -125,6 +125,21 @@ function keyValues(tr: Track): number[][] {
     out.push(v);
   }
   return out;
+}
+
+/**
+ * Whether a STEP key that changes the value is stored a hair after its frame's
+ * instant frameTime(f). three.js posed at frameTime(f) would still show the
+ * previous key there, one frame late, while the bake (which snaps onto keys)
+ * shows this one.
+ */
+function hasLateStepKey(tr: Track, values: number[][], fps: number): boolean {
+  for (let k = 1; k < tr.input.length; k++) {
+    const t = tr.input[k] as number;
+    const at = frameTime(Math.round(t * fps), fps);
+    if (t > at && t - at <= KEY_EPS && !near(values[k]!, values[k - 1]!, 1e-6)) return true;
+  }
+  return false;
 }
 
 function quatAngleDeg(a: number[], b: number[]): number {
@@ -331,10 +346,12 @@ function checkClip(
   let rootMoves = false;
   let rootTurns = false;
   const loopBad: string[] = [];
+  const lateStep: string[] = [];
   const foreign = new Set<string>();
   for (const tr of tracks) {
     const node = rig.nodes[tr.node]!;
     const values = keyValues(tr);
+    if (tr.interp === "STEP" && hasLateStepKey(tr, values, contract.fps)) lateStep.push(`${node.getName()}.${tr.path}`);
     if (node === ctx.rigNode) err("root-motion", `clip "${name}" animates "${node.getName()}"; only bones may move`);
     if (node === ctx.rootJoint) {
       const rest = rig.rest[tr.node]![tr.path];
@@ -355,6 +372,13 @@ function checkClip(
   if (rootTurns) warn("root-motion", `clip "${name}" rotates or scales "${contract.rig.rootBone}"; prefer animating "body"`);
   if (foreign.size) warn("channels", `clip "${name}" animates non-bone nodes: ${[...foreign].join(", ")}`);
   if (loopBad.length) warn("loop", `loop clip "${name}" ends in a different pose than it starts (${loopBad.slice(0, 4).join(", ")})`);
+  if (lateStep.length) {
+    warn(
+      "timing",
+      `clip "${name}" has STEP keys stored just after their frame time (${lateStep.slice(0, 4).join(", ")}); ` +
+        `three.js would show them a frame late (key f must be at exactly float32 f/${contract.fps})`,
+    );
+  }
 
   const phases = anim.getExtras()["cf_phases"];
   if (clip.phases) {
@@ -371,7 +395,7 @@ function checkClip(
         const hi = ctx.helperIdx[h];
         if (spec.shape !== "sphere" || hi === undefined) continue;
         for (let f = s + 1; f <= s + a; f++) {
-          const w = poseWorld(rig, tracks, f / contract.fps);
+          const w = poseWorld(rig, tracks, frameTime(f, contract.fps));
           const hz = transformPoint(w[hi]!, [0, 0, 0])[2];
           const bz = transformPoint(w[hurtIdx]!, [0, 0, 0])[2];
           if (!(hz > bz)) {

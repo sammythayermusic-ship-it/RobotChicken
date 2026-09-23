@@ -12,6 +12,14 @@ const errors = (issues: Issue[]) => issues.filter((i) => i.severity === "error")
 const errorsOf = (doc: Document) => errors(validateDocument(doc).issues);
 const node = (doc: Document, name: string) => doc.getRoot().listNodes().find((n) => n.getName() === name)!;
 const anim = (doc: Document, name: string) => doc.getRoot().listAnimations().find((a) => a.getName() === name)!;
+/** The next float32 above a positive t (0 stays 0). */
+const nextUp32 = (t: number) => {
+  if (t <= 0) return t;
+  const f = new Float32Array([t]);
+  const bits = new Uint32Array(f.buffer);
+  bits[0] = bits[0]! + 1;
+  return f[0]!;
+};
 
 describe("the committed placeholder", () => {
   it("passes with no errors or warnings (gltf-validator, contract, hitboxes sha256)", async () => {
@@ -110,6 +118,23 @@ describe("mutated copies fail", () => {
     const codes = errorsOf(doc).map((e) => e.code);
     expect(codes).toContain("facing");
     expect(codes).toContain("active");
+  });
+
+  it("a STEP key stored a hair after its frame's float32 time is a warning (three.js would show it a frame late)", async () => {
+    const stepPeck = async (shift: (t: number) => number) => {
+      const doc = await readGlb(bytes);
+      const sampler = anim(doc, "peck")
+        .listSamplers()
+        .find((s) => s.getInterpolation() === "LINEAR" && s.getInput()!.getCount() > 2)!;
+      const times = Float32Array.from(sampler.getInput()!.getArray()!, shift);
+      sampler.setInput(doc.createAccessor().setType("SCALAR").setArray(times)).setInterpolation("STEP");
+      return validateDocument(doc).issues;
+    };
+    // Blender's exporter writes key f at exactly Math.fround(f / 60): stepping that is fine.
+    expect(await stepPeck((t) => t)).toEqual([]);
+    const late = await stepPeck(nextUp32);
+    expect(errors(late)).toEqual([]);
+    expect(late.map((i) => i.message)).toEqual([expect.stringContaining('clip "peck" has STEP keys stored just after their frame time')]);
   });
 
   it("a stale hitboxes.json sha256 is an error", async () => {
