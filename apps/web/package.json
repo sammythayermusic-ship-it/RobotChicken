@@ -8,8 +8,7 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test",
-    "test:perf": "playwright test --project=perf"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@cockfight/shared": "workspace:*",

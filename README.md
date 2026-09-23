@@ -86,7 +86,7 @@ checks `/health`.
 **Game server (Fly.io, iad; add fra in Phase 2):**
 
 ```bash
-fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile
+fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile --ha=false
 fly secrets set ALLOWED_ORIGINS=https://cockfight.fun --config apps/game/fly.toml
 ```
 

@@ -10,8 +10,14 @@ export function setFixedChecks(on: boolean): void {
   checks = on;
 }
 
+/** Whether integer / division checks are on (tests and the golden runner turn them on). */
+export function fixedChecks(): boolean {
+  return checks;
+}
+
 export function idiv(a: number, b: number): number {
   if (checks && b === 0) throw new Error("idiv by zero");
+  // eslint-disable-next-line no-restricted-syntax -- the one division rule lives here
   return (a / b) | 0;
 }
 

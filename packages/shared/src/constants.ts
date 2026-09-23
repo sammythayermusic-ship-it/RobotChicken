@@ -22,9 +22,16 @@ export const TIERS = [
 export type Tier = (typeof TIERS)[number]["id"];
 export const TIER_IDS: readonly Tier[] = TIERS.map((t) => t.id);
 
-/** Highest tier whose threshold `usd` meets, or null below the entry gate. */
-export function tierForUsd(usd: number): Tier | null {
-  let best: Tier | null = null;
+/**
+ * The entry gate defaults to the Rust threshold ($30, spec). GATE_USD_MIN can
+ * move the gate (e.g. lower on devnet); whoever passes the gate is at least Rust.
+ */
+export const DEFAULT_GATE_USD = TIERS[0].minUsd;
+
+/** Highest tier `usd` reaches, at least "rust" once past the gate; null below the gate. */
+export function tierForUsd(usd: number, gateUsd: number = DEFAULT_GATE_USD): Tier | null {
+  if (!(usd >= gateUsd)) return null;
+  let best: Tier = "rust";
   for (const t of TIERS) if (usd >= t.minUsd) best = t.id;
   return best;
 }

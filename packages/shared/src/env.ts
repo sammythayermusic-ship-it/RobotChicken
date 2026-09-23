@@ -38,6 +38,7 @@ export const gameEnv = z.object({
     .string()
     .default("http://localhost:3000")
     .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean)),
+  // Entry gate in USD; tierForUsd(usd, GATE_USD_MIN) keeps tiers and gate consistent.
   GATE_USD_MIN: z.coerce.number().positive().default(30),
   QUEUE_JWT_SECRET: z.string().min(32).optional(),
   REDIS_URL: z.url().optional(),

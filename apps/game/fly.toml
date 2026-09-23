@@ -1,13 +1,16 @@
 # Fly.io config for the Colyseus game server. Deploy from the REPO ROOT (the
 # Dockerfile's build context):
-#   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile
+#   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile --ha=false
 #
-# Regions: fly.toml only names the primary region. Add Frankfurt once, after the
-# first deploy (scale one region per command):
+# --ha=false keeps Phase 0/1 to ONE machine: rooms live in memory, and with two
+# machines behind one hostname the matchmaking request and the WebSocket join
+# can land on different machines.
+#
+# Regions: fly.toml only names the primary region. Frankfurt (and any second
+# machine, including Fly's HA default or autoscaling) must wait for Phase 2 to
+# pin each WebSocket to the machine that holds its room: fly-replay keyed on
+# the processId in the WebSocket path, or a per-machine public address. Then:
 #   fly scale count 1 --region fra --config apps/game/fly.toml
-# Before that serves players, Phase 2 must pin each WebSocket to the machine that
-# holds its room (the anycast hostname routes to the nearest machine): reply with
-# fly-replay, or run one app per region.
 
 app = "cockfight-game"
 primary_region = "iad"

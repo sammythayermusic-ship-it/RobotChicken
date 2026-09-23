@@ -25,13 +25,12 @@ const external = [
   // this esbuild inlines it and every boot would start PM2's metrics agent
   // (require hooks, intervals) on a server PM2 never manages.
   "@pm2/io",
-  // Not installed. esbuild already leaves an unresolvable require()/import()
-  // inside try/catch alone; listing them keeps that true if one ever gets
-  // installed transitively (a native addon cannot be bundled).
-  "bufferutil", // ws: optional native frame masking
-  "utf-8-validate", // ws: optional native UTF-8 check
-  "@colyseus/redis-presence", // core: only imported when COLYSEUS_CLOUD is set
-  "@colyseus/redis-driver", // core: only imported when COLYSEUS_CLOUD is set
+  // ws's optional native addons. Not installed; esbuild already leaves an
+  // unresolvable require() inside try/catch alone, and listing them keeps that
+  // true if one ever arrives transitively (a native addon cannot be bundled).
+  // (The Colyseus Redis driver/presence must stay bundleable: Phase 2 needs them.)
+  "bufferutil",
+  "utf-8-validate",
 ];
 
 rmSync(join(here, "dist"), { recursive: true, force: true });

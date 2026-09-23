@@ -53,7 +53,7 @@ describe("hitboxes.json", () => {
   it("compiles in the sim with no move falling back to its static box", () => {
     const R = compileRules();
     expect(R.fallbacks).toEqual([]);
-    for (let id = 1; id < MOVE_NAMES.length; id++) expect(R.clips[R.moves[id]!.clip]!.hit, MOVE_NAMES[id]).not.toBeNull();
+    for (let id = 1; id < MOVE_NAMES.length; id++) expect(R.moves[id]!.hit, MOVE_NAMES[id]).not.toBeNull();
   });
 
   it("rests with a vertical capsule standing on the ground, radii from the helpers", () => {

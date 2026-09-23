@@ -40,7 +40,9 @@ jobs:
 
   # "Replay of a recorded input log yields an identical state hash on two
   # machines": the golden replays run on x64 Linux and arm64 macOS, and a
-  # third job diffs the two outputs.
+  # third job diffs the two outputs (final hash + whole-trajectory hash per
+  # replay). It runs on every PR on purpose: a determinism gate must not be
+  # skippable by a change outside packages/sim (e.g. a lockfile bump).
   replay:
     name: golden replay (${{ matrix.os }})
     strategy:
@@ -52,13 +54,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
+      # No pnpm store cache here: this filtered install must not fill the
+      # shared setup-node cache key with a partial store.
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
-          cache: pnpm
-      # Only the sim and its dev tools: macOS minutes are billed at 10x.
+      # The sim and its dev tools (plus the root devDependencies, which pnpm
+      # always installs for the workspace root).
       - run: pnpm install --frozen-lockfile --filter "@cockfight/sim..."
-      # Run tsx directly: a filtered install has no root deps, so avoid pnpm's pre-run dependency check.
+      # tsx is invoked directly so stdout is exactly the hash lines.
       - run: packages/sim/node_modules/.bin/tsx packages/sim/scripts/replay-golden.ts > replay-hashes.txt
       - run: cat replay-hashes.txt
       - uses: actions/upload-artifact@v7
@@ -96,13 +100,14 @@ jobs:
         run: docker build -f apps/game/Dockerfile -t cockfight-game .
       - name: build worker image
         run: docker build -f apps/worker/Dockerfile -t cockfight-worker .
+      # No --rm: if a container crashes its logs must survive to be printed.
       - name: game serves /health
         run: |
-          docker run -d --rm -p 2567:2567 --name game cockfight-game
+          docker run -d -p 2567:2567 --name game cockfight-game
           for i in $(seq 1 30); do curl -fsS localhost:2567/health && exit 0; sleep 1; done
-          docker logs game; exit 1
+          docker ps -a; docker logs game; exit 1
       - name: worker serves /health
         run: |
-          docker run -d --rm -p 8080:8080 --name worker cockfight-worker
+          docker run -d -p 8080:8080 --name worker cockfight-worker
           for i in $(seq 1 30); do curl -fsS localhost:8080/health && exit 0; sleep 1; done
-          docker logs worker; exit 1
+          docker ps -a; docker logs worker; exit 1

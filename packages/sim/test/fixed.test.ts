@@ -21,5 +21,6 @@ describe("fixed", () => {
     expect(() => idiv(1, 0)).toThrow();
     setFixedChecks(false);
     expect(idiv(1, 0)).toBe(0);
+    setFixedChecks(true);
   });
 });

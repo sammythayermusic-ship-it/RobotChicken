@@ -14,6 +14,35 @@ import nextTs from "eslint-config-next/typescript";
 // engines, and round/floor are banned to keep one division rule (fixed.ts).
 const SIM_MATH_ALLOWED = "^(abs|min|max|trunc|imul|sign|clz32)$";
 
+const SIM_SYNTAX = [
+  {
+    selector: `MemberExpression[object.name='Math'][property.name!=/${SIM_MATH_ALLOWED}/]`,
+    message: "packages/sim: only Math.abs/min/max/trunc/imul/sign/clz32 are allowed (determinism).",
+  },
+  // Aliasing or destructuring Math would slip past the rule above.
+  { selector: "VariableDeclarator[init.name='Math']", message: "packages/sim: don't alias or destructure Math." },
+  { selector: ":matches(CallExpression, NewExpression, ArrayExpression, Property, SpreadElement, ReturnStatement, AssignmentExpression) > Identifier[name='Math']", message: "packages/sim: don't pass Math around." },
+  { selector: "BinaryExpression[operator='**']", message: "packages/sim: no ** (use integer multiplication)." },
+  { selector: "AssignmentExpression[operator='**=']", message: "packages/sim: no **=." },
+  // One division rule: idiv / mulDiv in fixed.ts (hash.ts's exact carry is the only other site).
+  { selector: "BinaryExpression[operator='/']", message: "packages/sim: divide with idiv / mulDiv (fixed.ts)." },
+  { selector: "AssignmentExpression[operator='/=']", message: "packages/sim: divide with idiv / mulDiv (fixed.ts)." },
+  { selector: "Literal[raw=/^\\d*\\.\\d/]", message: "packages/sim: integers only (no fractional literals)." },
+  { selector: "ForInStatement", message: "packages/sim: no for...in (iteration order must be explicit)." },
+  {
+    selector: "CallExpression[callee.property.name=/^(localeCompare|toLocaleString|toLocaleUpperCase|toLocaleLowerCase)$/]",
+    message: "packages/sim: locale-dependent calls differ between machines.",
+  },
+];
+const SIM_NO_OBJECT_ITERATION = {
+  selector: "CallExpression[callee.object.name='Object'][callee.property.name=/^(keys|values|entries)$/]",
+  message: "packages/sim: iterate explicit field lists, not Object.keys/values/entries.",
+};
+const SIM_GLOBALS = [
+  "Date", "performance", "window", "document", "process", "setTimeout", "setInterval", "requestAnimationFrame",
+  "parseFloat", "globalThis", "self", "crypto", "Intl", "navigator",
+].map((name) => ({ name, message: "packages/sim: no clocks, environment, randomness or locale (determinism)." }));
+
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -24,34 +53,15 @@ export default defineConfig([
     },
   },
   {
-    // Deterministic simulation: no floats sources, no clocks, no environment.
+    // Deterministic simulation: no float sources, no clocks, no environment.
     files: ["packages/sim/src/**/*.ts"],
     rules: {
-      "no-restricted-syntax": [
+      "no-restricted-syntax": ["error", ...SIM_SYNTAX, SIM_NO_OBJECT_ITERATION],
+      "no-restricted-globals": ["error", ...SIM_GLOBALS],
+      "no-restricted-properties": [
         "error",
-        {
-          selector: `MemberExpression[object.name='Math'][property.name!=/${SIM_MATH_ALLOWED}/]`,
-          message: "packages/sim: only Math.abs/min/max/trunc/imul/sign/clz32 are allowed (determinism).",
-        },
-        { selector: "BinaryExpression[operator='**']", message: "packages/sim: no ** (use integer multiplication)." },
-        { selector: "AssignmentExpression[operator='**=']", message: "packages/sim: no **=." },
-        { selector: "ForInStatement", message: "packages/sim: no for...in (iteration order must be explicit)." },
-        {
-          selector: "CallExpression[callee.object.name='Object'][callee.property.name=/^(keys|values|entries)$/]",
-          message: "packages/sim: iterate explicit field lists, not Object.keys/values/entries.",
-        },
-      ],
-      "no-restricted-globals": [
-        "error",
-        { name: "Date", message: "packages/sim: time is the tick counter." },
-        { name: "performance", message: "packages/sim: time is the tick counter." },
-        { name: "window", message: "packages/sim: no DOM." },
-        { name: "document", message: "packages/sim: no DOM." },
-        { name: "process", message: "packages/sim: no Node." },
-        { name: "setTimeout", message: "packages/sim: no timers." },
-        { name: "setInterval", message: "packages/sim: no timers." },
-        { name: "requestAnimationFrame", message: "packages/sim: no timers." },
-        { name: "parseFloat", message: "packages/sim: integers only." },
+        { object: "Number", property: "parseFloat", message: "packages/sim: integers only." },
+        { object: "Reflect", property: "ownKeys", message: "packages/sim: iterate explicit field lists." },
       ],
       "no-restricted-imports": [
         "error",
@@ -67,20 +77,10 @@ export default defineConfig([
     },
   },
   {
-    // rules.ts compiles JSON data (plain objects) into ordered tables, the one
-    // place Object.keys is legitimate. The Math restriction still applies.
+    // rules.ts compiles JSON data (plain objects) into ordered tables: the one
+    // place Object.keys is legitimate. Everything else still applies.
     files: ["packages/sim/src/rules.ts"],
-    rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: `MemberExpression[object.name='Math'][property.name!=/${SIM_MATH_ALLOWED}/]`,
-          message: "packages/sim: only Math.abs/min/max/trunc/imul/sign/clz32 are allowed (determinism).",
-        },
-        { selector: "BinaryExpression[operator='**']", message: "packages/sim: no **." },
-        { selector: "ForInStatement", message: "packages/sim: no for...in." },
-      ],
-    },
+    rules: { "no-restricted-syntax": ["error", ...SIM_SYNTAX] },
   },
   {
     // The game engine is framework-free three.js; React lives only in game/react/.

@@ -22,7 +22,9 @@ every non-obvious choice is in `docs/decisions.md`. Phases stop for review; one 
 - `art/blender` — scripted Blender pipeline (`cf_common.py` owns the export settings).
 
 ## Determinism rules (packages/sim) — lint-enforced
-- Integers only: positions in mu (1/1000 unit), HP ×100, Heat ×60, time in ticks. Divide only with `idiv` (truncate toward zero). No `Math.*` beyond abs/min/max/trunc/imul/sign/clz32, no `**`, no `Date`/`performance`, no `for…in`/`Object.keys` (except `rules.ts`).
+- Integers only: positions in mu (1/1000 unit), HP ×100, Heat ×60, time in ticks. Divide only with `idiv`/`mulDiv` (truncate toward zero); raw `/` and fractional literals are lint errors. No `Math.*` beyond abs/min/max/trunc/imul/sign/clz32 (aliasing Math is banned too), no `**`, no clocks/`globalThis`/`crypto`/`Intl`/locale calls, no `for…in`/`Object.keys` (except `rules.ts`).
+- Tests and the golden runner run with `setFixedChecks(true)`: division by zero and any non-integer state field throw.
+- `SIM_VERSION` (rules.ts) is part of `rulesHash`: bump it when `step()` behaviour changes.
 - Every state field is listed in `serialize.ts` (`MATCH_FIELDS` / `FIGHTER_FIELDS`); a test fails if one is missing. Append new fields at the end.
 - Resolve both hit directions before applying either. Never iterate P1-first where order matters.
 - Any change to rules data changes `rulesHash`: re-bless goldens in the same commit and say why.
