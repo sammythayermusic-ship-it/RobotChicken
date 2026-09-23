@@ -59,7 +59,9 @@ Exit codes: 0 done, 1 a stage failed, 2 bad arguments, 3 Blender not found (it l
 | the file in Pose or Edit mode, or in NLA tweak mode | switches to Object mode / leaves tweak mode |
 | the armature showing its Rest Position | switches it to Pose Position (otherwise every clip would export as the rest pose) |
 | the hitbox empties hidden | unhides them for the export |
-| an attack whose action has `cf_phases` but a different length or split than the contract | retimes it to the contract phase by phase (wind-up onto startup, hit onto active, recovery onto recovery) |
+| the mesh or the empties with Disable Selection on, or in a collection that is unselectable, disabled in viewports or hidden (eye icon) | clears those for the export (it exports the selection, so they would silently drop out) |
+| a clip's NLA track renamed (`Peck attack` playing the action `peck`) | renames the track back to the action's name (clips are named after their tracks) |
+| an attack whose action has `cf_phases` but a different length or split than the contract | retimes it to the contract phase by phase (wind-up onto startup, hit onto active, recovery onto recovery). If your hit is shorter than the contract's, its first active tick still shows your first hit frame |
 | IK / control bones | nothing: bones not marked Deform are not exported and don't count toward the 40 joints |
 | a scene at 24 fps, with `--retime` | scales every clip by 60/24, keeping its real-time length; a clip within one of your frames of its contract length is stretched onto it exactly |
 

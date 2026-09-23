@@ -256,12 +256,18 @@ def _single_strip_tracks(rig, action):
     return out
 
 
-def _clip_name_of(action, rig):
-    """The glTF animation name the exporter will give `action` (ACTIONS mode, merge by NLA track)."""
+def _clip_track(action, rig):
+    """The NLA track whose name the exporter gives `action`'s clip, or None when the clip takes the action's name."""
     for track in _single_strip_tracks(rig, action):
         if not (track.name.startswith("NlaTrack") or track.name.startswith("[Action Stash]")):
-            return track.name
-    return action.name
+            return track
+    return None
+
+
+def _clip_name_of(action, rig):
+    """The glTF animation name the exporter will give `action` (ACTIONS mode, merge by NLA track)."""
+    track = _clip_track(action, rig)
+    return track.name if track else action.name
 
 
 def _normalized(name):
@@ -272,6 +278,14 @@ def _stray_hint(clip, action, want, seen, rig):
     """Why `clip` (from `action`) is not a contract clip, and exactly what to do about it."""
     label = f"'{clip}'" + (f" (action '{action.name}')" if action.name != clip else "")
     delete = "delete it (Outliner > Blender File > Actions > right-click > Delete, or clear its fake user)"
+    if action.name != clip and action.name in want:
+        # The action is a contract clip; only its NLA track's name is off (the export could not rename it).
+        other = seen.get(action.name)
+        clash = f"; action '{other.name}' also exports as '{action.name}', so keep only one of the two" if other not in (None, action) else ""
+        return (
+            f"NLA track '{clip}' plays action '{action.name}', so the export would name the clip '{clip}': "
+            f"rename the track to '{action.name}' (clips are named after their NLA tracks){clash}"
+        )
     # "Action" (Action Editor > New) and "<object>Action" (the first key on an object) are Blender's defaults.
     if re.fullmatch(rf"(Action|{re.escape(rig.name)}Action|ArmatureAction)(\.\d{{3}})?", clip):
         return (
@@ -295,17 +309,8 @@ def _stray_hint(clip, action, want, seen, rig):
 # --------------------------------------------------------------------------- resampling
 
 
-def resample_action(action, src_breaks, dst_breaks):
-    """Re-key every channel of `action` on whole frames 0..dst_breaks[-1].
-
-    Output frame g reads the old curves at a source frame given by a
-    piecewise-linear map through (dst_breaks[i] -> src_breaks[i]), so with
-    breaks at the phase boundaries a startup maps onto a startup, and so on.
-    Keys become LINEAR on every frame: exactly what export_force_sampling
-    samples anyway, so the export shows the old curves at the mapped times.
-    F-curve modifiers are baked in and removed (they would apply twice).
-    """
-    n = int(round(dst_breaks[-1]))
+def _piecewise(src_breaks, dst_breaks):
+    """g -> source frame: the piecewise-linear map through (dst_breaks[i] -> src_breaks[i])."""
 
     def source(g):
         for i in range(len(dst_breaks) - 1):
@@ -316,7 +321,55 @@ def resample_action(action, src_breaks, dst_breaks):
                 return src_breaks[i] + (g - d0) * (src_breaks[i + 1] - src_breaks[i]) / (d1 - d0)
         return src_breaks[-1]
 
-    times = [source(g) for g in range(n + 1)]
+    return source
+
+
+def attack_times(src, dst, factor=1.0):
+    """The source frame for each contract sample 0..n of an attack retimed phase by phase.
+
+    `src` = [start, start + s', start + s' + a', end] in authored frames (the
+    split from cf_phases), `dst` = [0, s, s + a, n] in contract samples, and
+    `factor` converts authored frames to contract ticks (not 1 only under
+    --retime). Wind-up and recovery map linearly onto their contract phases.
+
+    The active samples s+1..s+a (the ticks on which the sim tests the hit
+    sphere) are spread over the authored active window so that the first one
+    is never earlier than one tick into it. A plain linear map would, when the
+    artist authored fewer active frames than the contract has (a' < a), show a
+    blend of the last wind-up pose and the hit pose on the first active tick
+    (e.g. [2, 1, 4] onto [4, 2, 8] reads authored frame 2.5), and the move
+    would lose reach. With a' >= a this is exactly the linear map.
+    """
+    base = _piecewise(src, dst)
+    n = int(round(dst[-1]))
+    s, a = int(round(dst[1])), int(round(dst[2] - dst[1]))
+    times = [base(g) for g in range(n + 1)]
+    # The authored startup and active window, in contract ticks.
+    startup = (src[1] - src[0]) * factor
+    active = (src[2] - src[1]) * factor
+    first = startup + max(active / a, min(1.0, active))
+    last = startup + active
+    for k in range(1, a + 1):
+        t = first if a == 1 else first + (k - 1) * (last - first) / (a - 1)
+        times[s + k] = src[0] + t / factor
+    return times
+
+
+def resample_action(action, src_breaks, dst_breaks, times=None):
+    """Re-key every channel of `action` on whole frames 0..dst_breaks[-1].
+
+    Output frame g reads the old curves at `times[g]`, by default a
+    piecewise-linear map through (dst_breaks[i] -> src_breaks[i]), so with
+    breaks at the phase boundaries a startup maps onto a startup, and so on
+    (attacks pass attack_times()). Keys become LINEAR on every frame: exactly
+    what export_force_sampling samples anyway, so the export shows the old
+    curves at the mapped times. F-curve modifiers are baked in and removed
+    (they would apply twice).
+    """
+    n = int(round(dst_breaks[-1]))
+    if times is None:
+        source = _piecewise(src_breaks, dst_breaks)
+        times = [source(g) for g in range(n + 1)]
     for slot in action.slots:
         cb = action_get_channelbag_for_slot(action, slot)
         for fc in cb.fcurves if cb else []:
@@ -492,17 +545,33 @@ def _collect_clips(rig, contract, problems):
                 "export once per track; keep one"
             )
         clip = _clip_name_of(action, rig)
-        if clip != action.name:
-            note(f"action '{action.name}' exports as clip '{clip}' (the name of its NLA track)")
         if clip in seen:
             problems.append(f"actions '{seen[clip].name}' and '{action.name}' would both export as clip '{clip}'; rename one")
             continue
         seen[clip] = action
+    # A contract action on an NLA track that was renamed ('Peck attack' playing 'peck'): the clip
+    # would export under the track's name. The right name is unambiguous, so rename the track.
+    for clip, action in list(seen.items()):
+        if clip in want or action.name not in want or action.name in seen:
+            continue
+        track = _clip_track(action, rig)
+        track.name = action.name
+        if track.name != action.name:  # another NLA track already has that name (Blender appended .001)
+            track.name = clip
+            continue
+        del seen[clip]
+        seen[action.name] = action
+        note_fix(f"NLA track '{clip}' plays action '{action.name}': renamed the track to '{action.name}' (the export names each clip after its track)")
+    for clip, action in seen.items():
+        if clip != action.name and clip in want:
+            note(f"action '{action.name}' exports as clip '{clip}' (the name of its NLA track)")
     renamed = set()  # clips a stray's hint already says to rename it to
     for clip, action in seen.items():
         if clip not in want:
             problems.append(_stray_hint(clip, action, want, seen, rig))
             renamed.update(w for w in want if _normalized(clip) == w and w not in seen)
+            if action.name in want and action.name not in seen:
+                renamed.add(action.name)
     missing = [c for c in want if c not in seen and c not in multi_slot and c not in renamed]
     if missing:
         problems.append(
@@ -617,7 +686,7 @@ def _conform_timing(clips, contract, moves, factor, problems):
             continue
         src = [start, start + split[0], start + split[0] + split[1], end]
         dst = [0, want[0], want[0] + want[1], n]
-        resample_action(action, src, dst)
+        resample_action(action, src, dst, attack_times(src, dst, factor))
         action["cf_phases"] = list(want)
         scaled = [p * factor for p in split]
         if all(abs(p - w) <= 1e-3 for p, w in zip(scaled, want)):
@@ -772,6 +841,49 @@ def verify_export(path, contract):
     }
 
 
+def _layer_collection_chain(layer_coll, coll):
+    """The LayerCollections from the view layer's root down to the one for `coll`, or None."""
+    if layer_coll.collection == coll:
+        return [layer_coll]
+    for child in layer_coll.children:
+        chain = _layer_collection_chain(child, coll)
+        if chain:
+            return [layer_coll, *chain]
+    return None
+
+
+def _make_selectable(export_set):
+    """Clear what stops an export object from being selected: the exporter exports only the selection.
+
+    Collection flags (and their parents'): Disable Selection, Disable in
+    Viewports (monitor icon), Hide in Viewport (eye icon, per view layer); the
+    object's own Disable Selection. Object hiding is handled by the caller.
+    """
+    view_layer = bpy.context.view_layer
+    scene_coll = bpy.context.scene.collection
+    cleared = {}  # message -> None, in order and without repeats
+    for obj in export_set:
+        for coll in obj.users_collection:
+            for lc in (_layer_collection_chain(view_layer.layer_collection, coll) or [])[1:]:
+                c = lc.collection
+                if c == scene_coll:
+                    continue
+                if lc.hide_viewport:
+                    lc.hide_viewport = False
+                    cleared[f"Hide in Viewport on collection '{c.name}'"] = None
+                if c.hide_viewport:
+                    c.hide_viewport = False
+                    cleared[f"Disable in Viewports on collection '{c.name}'"] = None
+                if c.hide_select:
+                    c.hide_select = False
+                    cleared[f"Disable Selection on collection '{c.name}'"] = None
+        if obj.hide_select:
+            obj.hide_select = False
+            cleared[f"Disable Selection on '{obj.name}'"] = None
+    if cleared:
+        note_fix(f"cleared {', '.join(cleared)} for the export (the exporter only exports objects it can select)")
+
+
 def export_chicken(out, contract, moves=None, retime=False):
     """Prepare the scene, export Rig + descendants to `out` atomically, verify, print CF_REPORT."""
     out = os.path.abspath(out)
@@ -780,6 +892,7 @@ def export_chicken(out, contract, moves=None, retime=False):
     export_set = [rig, *rig.children_recursive]
     for obj in bpy.context.view_layer.objects:
         obj.select_set(False)
+    _make_selectable(export_set)
     unhidden = []
     for obj in export_set:
         if obj.hide_get() or obj.hide_viewport:
@@ -789,6 +902,16 @@ def export_chicken(out, contract, moves=None, retime=False):
         obj.select_set(True)
     if unhidden:
         note_fix(f"unhid {', '.join(unhidden)} for the export (hidden objects can't be selected)")
+    # Anything still unselected would be left out of the glb, and the checks after the export
+    # would only report its absence ("found 0 skinned meshes"): name it here instead.
+    stuck = [obj.name for obj in export_set if not (obj.visible_get() and obj.select_get())]
+    if stuck:
+        one = len(stuck) == 1
+        raise ExportError(
+            f"{', '.join(repr(n) for n in stuck)} can't be selected for the export, so {'it' if one else 'they'} would be left "
+            f"out of the glb: in the Outliner, turn on Selectable and make {'it and its' if one else 'them and their'} "
+            "collections visible (eye and monitor icons)"
+        )
     bpy.context.view_layer.objects.active = rig
     # An action left active in the Action Editor would also be exported as-is.
     rig.animation_data.action = None
