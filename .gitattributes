@@ -1,0 +1,10 @@
+* text=auto eol=lf
+*.glb binary
+*.blend binary
+*.png binary
+*.jpg binary
+*.webm binary
+*.gif binary
+*.ktx2 binary
+*.wasm binary
+packages/sim/test/golden/*.json linguist-generated=true -diff

@@ -1,0 +1,52 @@
+packages:
+  - apps/*
+  - packages/*
+  - tools
+
+# pnpm 11: dependency build scripts must be approved explicitly (strictDepBuilds is on by default).
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+  msgpackr-extract: false
+
+# Shared versions. Keep lower bounds at releases that are at least a day old
+# (pnpm 11's default minimumReleaseAge holds back anything newer). Do not set minimumReleaseAge.
+catalog:
+  next: 16.3.6
+  eslint-config-next: 16.3.6
+  react: 19.2.8
+  react-dom: 19.2.8
+  "@types/react": ^19.2.0
+  "@types/react-dom": ^19.2.0
+  three: 0.186.0
+  "@types/three": 0.186.0
+  zustand: ^5.0.15
+  tailwindcss: ^4.3.3
+  "@tailwindcss/postcss": ^4.3.3
+  zod: ^4.6.5
+  "@colyseus/core": ^0.18.15
+  "@colyseus/schema": ^5.0.33
+  "@colyseus/ws-transport": ^0.18.2
+  "@colyseus/sdk": ^0.18.3
+  "@colyseus/testing": ^0.18.5
+  "@colyseus/tools": ^0.18.3
+  express: ^5.2.1
+  "@types/express": ^5.0.6
+  typescript: ~6.0.3
+  "@types/node": ^22.20.4
+  tsx: ^4.23.15
+  esbuild: ^0.28.2
+  vitest: ^4.1.11
+  "@vitest/coverage-v8": ^4.1.11
+  fast-check: ^4.10.2
+  "@playwright/test": 1.62.1
+  eslint: ^9.39.5
+  typescript-eslint: ^8.70.1
+  "@gltf-transform/core": ^4.5.0
+  "@gltf-transform/functions": ^4.5.0
+  "@gltf-transform/extensions": ^4.5.0
+  draco3dgltf: ^1.5.7
+  gltf-validator: 2.0.0-dev.3.10
+  "@electric-sql/pglite": ^0.5.8
+  smol-toml: ^1.9.0
+  bs58: ^6.0.0

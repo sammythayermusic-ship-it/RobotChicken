@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "hz": 60,
+  "units": 1000,
+  "forward": "+Z",
+  "source": { "file": "", "sha256": "" },
+  "clips": {}
+}
