@@ -95,11 +95,25 @@ constraint, so zod can mirror them and adding a value is a one-line migration.
 | `players` | One row per pasted wallet address | `tier` is null until the address passes the gate. A username needs its signed message (`username_sig`). Usernames are unique case-insensitively. |
 | `balance_checks` | Audit trail for the $COCK holding gate | No FK to `players`: the gate checks an address before its row exists. `tokens` is raw base units and `decimals` the mint's, so the UI amount is `tokens / 10^decimals`. |
 | `matches` | One row per match; `input_log` makes it replayable | Can be written at match start (`ended_at`, `reason`, `winner` null) or at the end. A finished match has 1–5 rounds, and a forfeit records the round it ended in. `reason = 'draw'` has `winner` null; every other reason has a winner. See [Match reasons](#match-reasons). |
-| `payouts` | SOL payouts, one per win and one per daily rank | `idem_key` is unique: the match id for a win, `YYYY-MM-DD:rank` for daily. A win payout must go to that match's winner (a composite FK to `matches (id, winner)`), so a drawn or unfinished match cannot be paid, and once a match has a win payout its winner cannot change. `sent`/`paid` need `tx_sig`; `paid` exactly when `paid_at` is set. |
-| `daily_rewards` | Each UTC day's top 10 and what each rank was paid | One row per rank and per address per day. |
+| `payouts` | SOL payouts, one per win and one per daily rank | `idem_key` is unique: the match id for a win, `YYYY-MM-DD:rank` for daily. A win payout must go to that match's winner (a composite FK to `matches (id, winner)`), so a drawn or unfinished match cannot be paid, and once a match has a win payout its winner cannot change. `sent`/`paid` need `tx_sig`; `paid` exactly when `paid_at` is set. An address gets at most one daily payout per day, whatever its rank (`payouts_daily_day_address_key`). |
+| `daily_rewards` | Each UTC day's top 10 and what each rank was paid | One row per rank and per address per day. `payout_id` must name a payout to the same address for the same lamports (a composite FK), and once linked, that payout's recipient and amount cannot change. |
 | `fee_claims` | Every fee claim and swap | Feeds B₂₄ₕ and the fee ticker. `claim_sig`/`swap_sig` are unique, so a claim recorded twice cannot inflate payouts. |
 | `pool_snapshots` | One row per minute for the live chart | `at` must be a whole minute (UTC); the worker upserts on it. |
 | `abuse_events` | The admin review queue | `resolved_by` and `resolved_at` are set together. |
+
+### The daily reward job (Phase 3)
+
+`idem_key` makes each `day:rank` payout idempotent, but ranks are not stable:
+ties break on live ELO, and an admin can clear a flag after midnight. If a
+retry re-ranks, it can skip `day:1 → A` (already enqueued for B) and then try
+`day:2 → B`. The schema turns that into a unique violation on
+`payouts_daily_day_address_key` instead of a second payout to B, but the job
+must not rely on it:
+- rank the closed day once, from `matches` directly (not `leaderboard_v`);
+- write all `daily_rewards` rows and their `payouts` in one transaction (one
+  RPC or one SQL statement, never per-row client inserts);
+- on a retry, reuse the stored `daily_rewards` rows for that day and never
+  re-rank.
 
 ### Match reasons
 

@@ -603,6 +603,56 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     });
   });
 
+  it("pays one address at most once per day, even when a daily retry re-ranks", async () => {
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN);
+      const enqueue = (key: string, to: string, lamports: number) =>
+        rows<{ id: string }>(
+          c,
+          `insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', $1, $2, $3)
+           on conflict (idem_key) do nothing returning id`,
+          [key, to, lamports],
+        );
+      // Run 1 ranks HEN first, then crashes before enqueueing rank 2.
+      const [henPay] = await enqueue("2026-09-22:1", HEN, 100);
+      // The retry re-ranks (an ELO tie moved): ROOSTER first, HEN second. The
+      // idempotency key skips rank 1, and HEN's second payout for the day fails.
+      expect(await enqueue("2026-09-22:1", ROOSTER, 100)).toEqual([]);
+      await expect(enqueue("2026-09-22:2", HEN, 72)).rejects.toMatchObject({ code: "23505", constraint: "payouts_daily_day_address_key" });
+      // Other days, and win payouts to the same address, are unaffected.
+      expect(await enqueue("2026-09-23:2", HEN, 72)).toHaveLength(1);
+      const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN });
+      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 5)", [won, won, HEN]);
+
+      // A reward row can only link the payout that pays its own address its own amount.
+      const reward = (address: string, lamports: number, payoutId: string | undefined) =>
+        c.query(
+          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
+           values ('2026-09-22', 1, $1, 9, 1000, 400, 2500, $2, $3)`,
+          [address, lamports, payoutId],
+        );
+      await expect(reward(ROOSTER, 100, henPay?.id)).rejects.toMatchObject({ code: "23503", constraint: "daily_rewards_payout_matches" });
+      await expect(reward(HEN, 99, henPay?.id)).rejects.toMatchObject({ code: "23503", constraint: "daily_rewards_payout_matches" });
+      await reward(HEN, 100, henPay?.id);
+      // One payout per reward row, and a linked payout's recipient and amount are fixed.
+      await expect(
+        c.query(
+          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
+           values ('2026-09-21', 1, $1, 9, 1000, 400, 2500, 100, $2)`,
+          [HEN, henPay?.id],
+        ),
+      ).rejects.toMatchObject({ code: "23505", constraint: "daily_rewards_payout_id_key" });
+      await expect(c.query("update public.payouts set lamports = 101 where id = $1", [henPay?.id])).rejects.toMatchObject({
+        code: "23503",
+        constraint: "daily_rewards_payout_matches",
+      });
+      await expect(c.query("update public.payouts set to_address = $1 where id = $2", [ROOSTER, henPay?.id])).rejects.toMatchObject({
+        code: "23503",
+        constraint: "daily_rewards_payout_matches",
+      });
+    });
+  });
+
   it("validates addresses, signatures, enumerations and amounts in every table", async () => {
     await scratch(async (c) => {
       for (const a of ["So1111111111111111111111111111111111111111O", "So11111111111111111111111111111111111111l12", "So11", "x".repeat(45)]) {

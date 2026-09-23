@@ -118,7 +118,9 @@ create table public.payouts (
   id              uuid primary key default gen_random_uuid(),
   kind            text not null check (kind in ('win', 'daily')),
   -- match_id for wins, "YYYY-MM-DD:rank" for daily rewards. A retry reuses the
-  -- key, so a payout can never be enqueued twice.
+  -- key, so the same key is never enqueued twice. That alone does not stop a
+  -- daily retry that re-ranks from paying one address under two ranks; see
+  -- payouts_daily_day_address_key below.
   idem_key        text not null unique,
   match_id        uuid,
   to_address      public.sol_address not null,
@@ -137,8 +139,18 @@ create table public.payouts (
   constraint payouts_paid_at_iff_paid check ((status = 'paid') = (paid_at is not null)),
   -- The signature is known once the transaction is signed, before it is sent.
   constraint payouts_sig_when_sent check (status not in ('sent', 'paid') or tx_sig is not null),
-  constraint payouts_win_to_winner foreign key (match_id, to_address) references public.matches (id, winner)
+  constraint payouts_win_to_winner foreign key (match_id, to_address) references public.matches (id, winner),
+  -- Target of daily_rewards (payout_id, address, lamports).
+  constraint payouts_id_to_address_lamports_key unique (id, to_address, lamports)
 );
+-- At most one daily payout per address per UTC day, whatever its rank. A
+-- retry of the daily job that re-ranks (ELO ties move, a flag is cleared)
+-- could otherwise skip "day:1 -> A" as already enqueued for B and then
+-- enqueue "day:2 -> B": this makes that insert fail instead of paying B twice.
+-- The job must still rank once and write daily_rewards and payouts in one
+-- transaction, and a retry must reuse the stored daily_rewards (README).
+create unique index payouts_daily_day_address_key on public.payouts (split_part(idem_key, ':', 1), to_address)
+  where kind = 'daily';
 create index payouts_status_created_at_idx on public.payouts (status, created_at);
 create index payouts_match_id_to_address_idx on public.payouts (match_id, to_address);
 create index payouts_to_address_created_at_idx on public.payouts (to_address, created_at desc);
@@ -154,10 +166,18 @@ create table public.daily_rewards (
   pool_lamports bigint not null check (pool_lamports >= 0),
   share_bps     integer not null check (share_bps between 0 and 10000),
   lamports      bigint not null check (lamports >= 0),
-  payout_id     uuid unique references public.payouts (id),
+  -- The payouts row for this rank, written in the same transaction; null
+  -- only when no payout is enqueued for the row.
+  payout_id     uuid,
   primary key (day, rank),
   unique (day, address),
-  constraint daily_rewards_within_pool check (lamports <= pool_lamports)
+  constraint daily_rewards_within_pool check (lamports <= pool_lamports),
+  -- One payout per reward row. INCLUDE makes this the index for the
+  -- composite foreign key below (Supabase's unindexed_foreign_keys lint).
+  constraint daily_rewards_payout_id_key unique (payout_id) include (address, lamports),
+  -- The linked payout pays exactly this row's address this row's amount.
+  constraint daily_rewards_payout_matches foreign key (payout_id, address, lamports)
+    references public.payouts (id, to_address, lamports)
 );
 create index daily_rewards_address_idx on public.daily_rewards (address);
 comment on table public.daily_rewards is 'Snapshot of each UTC day''s top 10 and what each rank was paid.';
