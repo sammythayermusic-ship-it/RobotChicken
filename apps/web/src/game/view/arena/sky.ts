@@ -7,7 +7,7 @@ void main() {
   // Direction from the camera, so the sky sits at infinity whatever the dolly does.
   vDir = (modelMatrix * vec4(position, 1.0)).xyz - cameraPosition;
   vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  gl_Position = p.xyww; // on the far plane: never clipped, never in front of anything
+  gl_Position = p.xyww; // on the far plane: behind everything, passes only where nothing was drawn
 }`;
 
 /**
@@ -76,7 +76,9 @@ export function buildSky(uTime: IUniform<number>): Mesh<SphereGeometry, ShaderMa
   });
   const mesh = new Mesh(new SphereGeometry(150, 32, 12), mat);
   mesh.name = "arena-sky";
-  mesh.renderOrder = -10;
+  // Last among the opaques: it sits on the far plane (depth 1), so everything already drawn
+  // rejects it and only the visible sky gets shaded.
+  mesh.renderOrder = 10;
   mesh.frustumCulled = false;
   return mesh;
 }

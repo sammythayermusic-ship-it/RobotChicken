@@ -270,11 +270,12 @@ export function buildCrowd(
   const meta: number[] = [];
   for (const row of rows) {
     for (let i = 0; i < row.count; i++) {
-      const t = (i + 0.5 + (rand() - 0.5) * 0.45) / row.count;
+      // Jitter along the row, and a little up/down and front/back, so rows don't read as ruler lines.
+      const t = (i + 0.5 + (rand() - 0.5) * 0.7) / row.count;
       pos.push(
         row.from.x + (row.to.x - row.from.x) * t,
-        row.from.y + (row.to.y - row.from.y) * t,
-        row.from.z + (row.to.z - row.from.z) * t + (rand() - 0.5) * 0.2,
+        row.from.y + (row.to.y - row.from.y) * t + (rand() - 0.5) * 0.14,
+        row.from.z + (row.to.z - row.from.z) * t + (rand() - 0.5) * 0.3,
       );
       meta.push(rand() < 0.55 ? 0 : 1, rand(), 0.8 + rand() * 0.4, rand());
     }

@@ -51,6 +51,7 @@ void main() {
   vec3 alb = mix(CONCRETE, DIRT, dirtMask) * (0.78 + 0.44 * fine);
   float ax = abs(p.x);
   float ao = 1.0;
+  float oilN = vnoise(q * 0.47 + 19.0) * 0.8 + fine * 0.2;
 
   if (vKind < 0.5 || vKind > 2.5) {
     // Concrete slab seams every 4 units, filled with grime.
@@ -58,7 +59,7 @@ void main() {
     float seam = 1.0 - smoothstep(0.015, 0.06, min(g.x, g.y));
     alb *= 1.0 - 0.6 * seam * (1.0 - dirtMask);
     // Oil stains: dark, slightly blue-black blotches.
-    float oil = smoothstep(0.64, 0.72, vnoise(q * 0.47 + 19.0) * 0.8 + fine * 0.2);
+    float oil = smoothstep(0.64, 0.72, oilN);
     alb = mix(alb, vec3(0.012, 0.012, 0.016), oil * 0.85);
     // Contact darkening where the floor meets the car walls.
     ao = mix(0.3, 1.0, smoothstep(${PIT_BACK.toFixed(2)}, ${(PIT_BACK + 3.2).toFixed(2)}, p.z));
@@ -85,7 +86,7 @@ void main() {
   vec3 col = alb * light;
   if (vKind < 0.5 || vKind > 2.5) {
     // Wet glints: the fires and floods catch in oil and damp concrete.
-    float oilW = smoothstep(0.6, 0.72, vnoise(q * 0.47 + 19.0) * 0.8 + fine * 0.2);
+    float oilW = smoothstep(0.6, 0.72, oilN);
     // Kept to the back half of the pit: big glints right under the camera read as noise.
     float wet = (0.12 + 0.88 * oilW) * ao * (1.0 - 0.85 * smoothstep(1.0, 8.0, p.z));
     vec3 v = normalize(cameraPosition - p);
@@ -158,6 +159,5 @@ export function buildFloor(u: ArenaUniforms, floods: number): Floor {
   });
   const mesh = new Mesh(geo, mat);
   mesh.name = "arena-floor";
-  mesh.renderOrder = -5;
   return { mesh, triangles: b.triangleCount };
 }
