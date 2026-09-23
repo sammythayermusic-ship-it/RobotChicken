@@ -5,6 +5,7 @@ import {
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import type { FighterState, MatchState } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
+import type { QualitySettings, QualityTier } from "../engine/quality";
 import { KoPulse } from "../fx/KoPulse";
 import { Particles } from "../fx/Particles";
 import { FightCamera } from "./camera/FightCamera";
@@ -18,6 +19,8 @@ export interface ArenaView {
   readonly envScene?: Scene;
   setHype(h: number): void;
   update(dt: number, t: number): void;
+  /** Scale the arena's own cost with the quality tier (optional: an arena may not have anything to drop). */
+  setQuality?(tier: QualityTier): void;
   dispose(): void;
 }
 
@@ -34,6 +37,7 @@ export class FightView {
   private arena: ArenaView | null = null;
   private readonly placeholder: Mesh[] = [];
   private envTex: Texture | null = null;
+  private tier: QualityTier = "high";
   private readonly renderer: WebGLRenderer;
   private time = 0;
   private readonly shadows: Mesh[] = [];
@@ -95,7 +99,18 @@ export class FightView {
     this.placeholder.length = 0;
     this.arena = arena;
     this.scene.add(arena.root);
+    arena.setQuality?.(this.tier);
     this.setEnvironment(arena.envScene ?? null);
+  }
+
+  /**
+   * Quality tier: the fx particles (low keeps only the hit flash) and the
+   * arena's own cost. Remembered, so an arena mounted later starts at it.
+   */
+  setQuality(q: QualitySettings): void {
+    this.tier = q.tier;
+    this.particles.enabled = q.particles;
+    this.arena?.setQuality?.(q.tier);
   }
 
   get arenaView(): ArenaView | null {

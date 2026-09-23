@@ -99,7 +99,13 @@ void main() {
   gl_FragColor = vec4(col, a);
 }`;
 
-export function buildBeams(floods: readonly Floodlight[], bulbs: readonly Vec3Like[], uTime: IUniform<number>): Mesh<BufferGeometry, ShaderMaterial> {
+export interface Beams {
+  mesh: Mesh<BufferGeometry, ShaderMaterial>;
+  /** The haze sheet over the car wall on or off (quality 'low' drops it: a full-width additive layer). */
+  setHaze(on: boolean): void;
+}
+
+export function buildBeams(floods: readonly Floodlight[], bulbs: readonly Vec3Like[], uTime: IUniform<number>): Beams {
   const b = new GeoBuilder({ aCenter: 3, aParams: 4 });
   const halfAngle = Math.acos(FLOOD_CONE.x) * 0.92;
   const obj = new Object3D();
@@ -167,7 +173,8 @@ export function buildBeams(floods: readonly Floodlight[], bulbs: readonly Vec3Li
     });
   });
   bulbQuad.dispose();
-  // One haze sheet just behind the car wall, across the whole view.
+  // One haze sheet just behind the car wall, across the whole view. Added LAST: a draw range can skip it.
+  const hazeFrom = b.triangleCount * 3;
   const sheet = new PlaneGeometry(1, 1);
   b.add(sheet, new Matrix4().makeTranslation(0, 5.5, -10.6).multiply(new Matrix4().makeScale(56, 7, 1)), (_p, _n, out) => {
     out.aParams[0] = HAZE;
@@ -183,9 +190,15 @@ export function buildBeams(floods: readonly Floodlight[], bulbs: readonly Vec3Li
     side: DoubleSide,
     blending: AdditiveBlending,
   });
-  const mesh = new Mesh(b.build(), mat);
+  const geo = b.build();
+  const mesh = new Mesh(geo, mat);
   mesh.name = "arena-beams";
   mesh.frustumCulled = false;
   mesh.renderOrder = 16;
-  return mesh;
+  return {
+    mesh,
+    setHaze(on) {
+      geo.setDrawRange(0, on ? Infinity : hazeFrom);
+    },
+  };
 }

@@ -4,6 +4,7 @@ import { RULES } from "@cockfight/sim";
 import { buildBeams, SHAFT_FADE } from "./beams";
 import { GeoBuilder } from "./builder";
 import { advanceCrowd, flapRate, hopRate, type CrowdClock } from "./crowd";
+import { buildFires } from "./fires";
 import { buildFloor } from "./floor";
 import { anchorsFromScene, checkRingEdges, HAZARD_IN, LIP_IN, PROCEDURAL_ANCHORS, RING_EDGE } from "./layout";
 import { createUniforms, flicker, FLOOD_CONE } from "./lighting";
@@ -195,7 +196,7 @@ describe("crowd motion", () => {
 
 describe("floodlight shafts", () => {
   const coneStats = () => {
-    const mesh = buildBeams(PROCEDURAL_ANCHORS.floods, [], { value: 0 });
+    const { mesh } = buildBeams(PROCEDURAL_ANCHORS.floods, [], { value: 0 });
     const g = mesh.geometry;
     const params = g.getAttribute("aParams");
     const pos = g.getAttribute("position");
@@ -242,5 +243,40 @@ describe("floodlight shafts", () => {
     }
     expect(area / full).toBeLessThan(0.8);
     expect(area / full).toBeGreaterThan(0.6);
+  });
+});
+
+describe("quality tiers", () => {
+  it("fires: 'low' draws a prefix of flames and halos and drops the smoke and embers", () => {
+    const fires = buildFires(PROCEDURAL_ANCHORS.fires, createUniforms(PROCEDURAL_ANCHORS));
+    const g = fires.mesh.geometry;
+    const params = g.getAttribute("aParams");
+    const drums = PROCEDURAL_ANCHORS.fires[0].drums.length + PROCEDURAL_ANCHORS.fires[1].drums.length;
+    expect(fires.counts.core).toBe(drums * 11); // 10 tongues + a halo per drum
+    expect(fires.counts.all).toBe(fires.counts.core + 2 * (7 + 16)); // + smoke and embers per cluster
+    expect(g.instanceCount).toBe(fires.counts.all);
+    for (let i = 0; i < fires.counts.all; i++) expect(params.getX(i) <= 1, `instance ${i} kind`).toBe(i < fires.counts.core);
+    fires.setAmbient(false);
+    expect(g.instanceCount).toBe(fires.counts.core);
+    fires.setAmbient(true);
+    expect(g.instanceCount).toBe(fires.counts.all);
+    g.dispose();
+    fires.mesh.material.dispose();
+  });
+
+  it("beams: 'low' skips the haze sheet and nothing else", () => {
+    const beams = buildBeams(PROCEDURAL_ANCHORS.floods, [{ x: 0, y: 4, z: -9 }], { value: 0 });
+    const g = beams.mesh.geometry;
+    const idx = g.getIndex();
+    if (!idx) throw new Error("expected an index");
+    const kind = g.getAttribute("aParams");
+    beams.setHaze(false);
+    const kept = g.drawRange.count;
+    expect(kept).toBe(idx.count - 6); // one quad
+    for (let i = 0; i < idx.count; i++) expect(kind.getX(idx.getX(i)) === 2, `index ${i}`).toBe(i >= kept);
+    beams.setHaze(true);
+    expect(g.drawRange.count).toBe(Infinity);
+    g.dispose();
+    beams.mesh.material.dispose();
   });
 });
