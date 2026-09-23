@@ -46,6 +46,13 @@ describe("hash", () => {
     expect(back).toEqual(s);
     expect(stateHash(back)).toBe(stateHash(s));
   });
+  it("refuses to serialize a non-integer field when checks are on", () => {
+    const s = createMatch({ matchId: "float" });
+    s.f[0].x = 3455.5;
+    expect(() => serialize(s)).toThrow(/f\.x/);
+    s.f[0].x = Number.NaN;
+    expect(() => serialize(s)).toThrow(/f\.x/);
+  });
   it("is sensitive to every field", () => {
     const s = createMatch({ matchId: "sens" });
     const base = stateHash(s);

@@ -25,3 +25,15 @@ describe("step purity", () => {
     expect(run()).toBe(run());
   });
 });
+
+describe("replay validation", () => {
+  it("rejects unsorted events, bad buttons, a zero hold and a wrong version", async () => {
+    const { runReplay, RULES } = await import("../src/index");
+    const base = { v: 1 as const, rulesHash: RULES.hash, matchId: "x", ticks: 10, finalHash: "" };
+    expect(() => runReplay({ ...base, p1: [{ t: 5, b: 1 }, { t: 3, b: 2 }] })).toThrow(/increasing/);
+    expect(() => runReplay({ ...base, p1: [{ t: 1, b: 64 }] })).toThrow(/buttons/);
+    expect(() => runReplay({ ...base, gen: { kind: "xorshift", seed: 1, hold: [0, 3] } })).toThrow(/hold/);
+    expect(() => runReplay({ ...base, v: 2 as unknown as 1 })).toThrow(/version/);
+    expect(() => runReplay({ ...base, ticks: 0 })).toThrow(/ticks/);
+  });
+});

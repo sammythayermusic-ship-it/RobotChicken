@@ -4,9 +4,10 @@
  * ever hold a private key.
  */
 import bs58 from "bs58";
+import type { Tier } from "@cockfight/shared";
 
+export type { Tier };
 export type Cluster = "devnet" | "mainnet-beta" | "localnet";
-export type Tier = "rust" | "chrome" | "gold" | "diamond";
 
 export const LAMPORTS_PER_SOL = 1_000_000_000n;
 

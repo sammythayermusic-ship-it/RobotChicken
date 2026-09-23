@@ -25,12 +25,15 @@ const TABLES = [
   "balance_checks",
   "daily_rewards",
   "fee_claims",
+  "fee_swaps",
   "matches",
   "payouts",
   "players",
   "pool_snapshots",
 ] as const;
-const VIEWS = ["leaderboard_v", "pool_v"] as const;
+const VIEWS = ["leaderboard_v", "match_replay_v", "pool_v"] as const;
+/** Columns no relation readable by the web keys may ever have. input_log is public on purpose (match_replay_v). */
+const PRIVATE_COLUMNS = ["ip_hash", "fingerprint", "flags", "flag", "username_sig", "details"] as const;
 const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN"] as const;
 
 // Real 32-byte addresses (system program ids), so they are valid base58 too.
@@ -297,7 +300,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   }
 
-  it("creates exactly the 8 tables and 2 views, owned by postgres", async () => {
+  it("creates exactly the 9 tables and 3 views, owned by postgres", async () => {
     const rels = await rows(
       db,
       `select c.relname, c.relkind, pg_get_userbyid(c.relowner) as owner from pg_class c
@@ -308,6 +311,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       [
         ...TABLES.map((relname) => ({ relname, relkind: "r", owner: "postgres" })),
         { relname: "leaderboard_v", relkind: "m", owner: "postgres" },
+        { relname: "match_replay_v", relkind: "v", owner: "postgres" },
         { relname: "pool_v", relkind: "v", owner: "postgres" },
       ].sort((a, b) => a.relname.localeCompare(b.relname)),
     );
@@ -326,10 +330,12 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     const ts = "timestamp with time zone";
     expect(Object.fromEntries(cols.map((r) => [r.t, r.cols]))).toEqual({
       abuse_events: `id uuid!, address sol_address, fingerprint text, ip_hash text, kind text!, match_id uuid, details jsonb!, created_at ${ts}!, resolved_by text, resolved_at ${ts}`,
-      balance_checks: `id uuid!, address sol_address!, usd numeric(14,4)!, tokens numeric(30,9)!, source text!, checked_at ${ts}!`,
+      balance_checks: `id uuid!, address sol_address!, usd numeric(14,4)!, tokens numeric(40,0)!, decimals smallint!, source text!, checked_at ${ts}!`,
       daily_rewards: "day date!, rank smallint!, address sol_address!, wins integer!, elo integer!, pool_lamports bigint!, share_bps integer!, lamports bigint!, payout_id uuid",
-      fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, sol_after_swap bigint, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, swap_sig sol_signature, at ${ts}!`,
-      leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint, refreshed_at ${ts}`,
+      fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, at ${ts}!`,
+      fee_swaps: `swap_sig sol_signature!, fee_claim_id uuid!, lamports bigint!, at ${ts}!`,
+      leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint`,
+      match_replay_v: `id uuid, p1 sol_address, p2 sol_address, p1_name text, p2_name text, winner sol_address, reason text, rounds jsonb, input_log bytea, result_hash text, started_at ${ts}, ended_at ${ts}`,
       matches: `id uuid!, p1 sol_address!, p2 sol_address!, region text!, started_at ${ts}!, ended_at ${ts}, winner sol_address, reason text, rounds jsonb!, input_log bytea, result_hash text, net_quality_p1 real, net_quality_p2 real, payout_lamports bigint!, flag text`,
       payouts: `id uuid!, kind text!, idem_key text!, match_id uuid, to_address sol_address!, lamports bigint!, status text!, tx_sig sol_signature, attempts integer!, next_attempt_at ${ts}, last_error text, created_at ${ts}!, paid_at ${ts}`,
       players: `address sol_address!, username text, username_sig sol_signature, elo integer!, tier text, first_seen ${ts}!, last_seen ${ts}!, flags jsonb!`,
@@ -355,11 +361,13 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       balance_checks: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "DELETE"] },
       daily_rewards: { anon: [], authenticated: [], service_role: readWrite },
       fee_claims: { anon: [], authenticated: [], service_role: readWrite },
+      fee_swaps: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
       matches: { anon: [], authenticated: [], service_role: readWrite },
       payouts: { anon: [], authenticated: [], service_role: readWrite },
       players: { anon: [], authenticated: [], service_role: readWrite },
       pool_snapshots: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
       leaderboard_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT", "MAINTAIN"] },
+      match_replay_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
       pool_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
     };
     const actual: Record<string, Record<string, string[]>> = {};
@@ -385,6 +393,49 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     });
   });
 
+  it("lets the web keys execute no function in public (allowlist: none)", async () => {
+    // Catches a function a later migration adds without revoking EXECUTE,
+    // whatever the default privileges are by then.
+    const ANON_CALLABLE: string[] = [];
+    const callable = await rows<{ fn: string; role: string }>(
+      db,
+      `select p.oid::regprocedure::text as fn, r.role
+       from pg_proc p cross join unnest(array['anon', 'authenticated']) as r(role)
+       where p.pronamespace = 'public'::regnamespace and has_function_privilege(r.role, p.oid, 'EXECUTE')
+       order by 1, 2`,
+    );
+    expect(callable.filter((r) => !ANON_CALLABLE.includes(r.fn))).toEqual([]);
+  });
+
+  it("makes later functions callable by service_role only, in public and other schemas", async () => {
+    await scratch(async (c) => {
+      await as(c, "postgres", () =>
+        c.exec(`
+          create function public.later_invoker() returns int language sql as 'select count(*)::int from public.payouts';
+          create function public.later_definer() returns int language sql security definer set search_path = ''
+            as 'select count(*)::int from public.payouts';
+          create procedure public.later_proc() language sql as 'select 1';
+          create schema private;
+          create function private.helper() returns int language sql as 'select 1';
+        `),
+      );
+      const can = async (role: string, fn: string) =>
+        (await one<{ ok: boolean }>(c, "select has_function_privilege($1, $2, 'EXECUTE') as ok", [role, fn])).ok;
+      for (const fn of ["public.later_invoker()", "public.later_definer()", "public.later_proc()"]) {
+        expect(await can("anon", fn), `anon ${fn}`).toBe(false);
+        expect(await can("authenticated", fn), `authenticated ${fn}`).toBe(false);
+        expect(await can("service_role", fn), `service_role ${fn}`).toBe(true);
+      }
+      // The global default: no PUBLIC EXECUTE outside public either.
+      expect(await can("anon", "private.helper()")).toBe(false);
+      expect(await can("service_role", "private.helper()")).toBe(false);
+      // A SECURITY DEFINER function would read payouts with its owner's rights.
+      await expect(as(c, "anon", () => c.query("select public.later_definer()"))).rejects.toMatchObject({ code: "42501" });
+      await expect(as(c, "authenticated", () => c.query("call public.later_proc()"))).rejects.toMatchObject({ code: "42501" });
+      expect(await as(c, "service_role", () => one(c, "select public.later_invoker() as n"))).toEqual({ n: 0 });
+    });
+  });
+
   it("denies anon and authenticated every base table, even to read", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       for (const t of TABLES) {
@@ -399,9 +450,10 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   });
 
-  it("lets anon and authenticated read both views, which expose no private columns", async () => {
+  it("lets anon and authenticated read the public views, which expose no private columns", async () => {
     for (const role of ["anon", "authenticated"] as const) {
       expect(await as(db, role, () => rows(db, "select * from public.leaderboard_v"))).toEqual([]);
+      expect(await as(db, role, () => rows(db, "select * from public.match_replay_v"))).toEqual([]);
       const pool = await as(db, role, () => rows(db, "select * from public.pool_v"));
       expect(pool).toHaveLength(1);
       expect(pool[0]).toMatchObject({
@@ -413,18 +465,70 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         player_share_lamports_24h: 0,
       });
     }
-    const cols = await rows<{ c: string }>(
-      db,
-      `select attname as c from pg_attribute
-       where attrelid in ('public.leaderboard_v'::regclass, 'public.pool_v'::regclass) and attnum > 0`,
-    );
-    const exposed = cols.map((r) => r.c);
-    for (const secret of ["ip_hash", "fingerprint", "flags", "username_sig", "input_log", "details"]) {
-      expect(exposed).not.toContain(secret);
+    // Every relation the web keys can read, whatever a later migration adds:
+    // exactly the public views, none of them with a private column.
+    for (const role of ["anon", "authenticated"]) {
+      const readable = await rows<{ rel: string; cols: string[] }>(
+        db,
+        `select c.relname as rel, array_agg(a.attname::text order by a.attnum) as cols
+         from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+         where c.relnamespace = 'public'::regnamespace and has_table_privilege($1, c.oid, 'SELECT')
+         group by c.relname order by c.relname`,
+        [role],
+      );
+      expect(readable.map((r) => r.rel), role).toEqual([...VIEWS]);
+      for (const r of readable) {
+        for (const secret of PRIVATE_COLUMNS) expect(r.cols, `${role} ${r.rel}`).not.toContain(secret);
+      }
     }
-    // pool_v reads with its owner's rights on purpose (not security_invoker).
-    expect(await one(db, "select reloptions from pg_class where oid = 'public.pool_v'::regclass")).toEqual({
-      reloptions: ["security_barrier=true"],
+    // The plain views read with their owner's rights on purpose (not security_invoker).
+    for (const v of ["pool_v", "match_replay_v"]) {
+      expect(await one(db, "select reloptions from pg_class where oid = $1::regclass", [`public.${v}`]), v).toEqual({
+        reloptions: ["security_barrier=true"],
+      });
+    }
+  });
+
+  it("serves finished matches to anon for replays, input log included", async () => {
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN, CHICK);
+      await c.query("update public.players set username = 'Rooster', username_sig = $1 where address = $2", [sig("4"), ROOSTER]);
+      const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN, reason: "ringout", rounds: [{ winner: 1 }, { winner: 1 }] });
+      const drawn = await addMatch(c, { p1: HEN, p2: CHICK, winner: null, reason: "draw", rounds: [{}, {}, {}, {}, {}] });
+      const live = await addMatch(c, { p1: ROOSTER, p2: CHICK, endedAgo: null });
+      await c.query("update public.matches set flag = 'lag_switch', net_quality_p1 = 0.5 where id = $1", [won]);
+      await c.query("insert into public.abuse_events (address, fingerprint, ip_hash, kind, match_id) values ($1, 'fp', 'ih', 'lag_switch', $2)", [HEN, won]);
+
+      const replay = await as(c, "anon", () =>
+        one<Row & { input_log: Uint8Array }>(c, "select * from public.match_replay_v where id = $1", [won]),
+      );
+      expect(replay).toMatchObject({
+        id: won,
+        p1: ROOSTER,
+        p2: HEN,
+        p1_name: "Rooster",
+        p2_name: `anon-${HEN.slice(-4)}`,
+        winner: HEN,
+        reason: "ringout",
+        rounds: [{ winner: 1 }, { winner: 1 }],
+        result_hash: "ab".repeat(32),
+      });
+      expect(Array.from(replay.input_log)).toEqual([1, 2, 3]);
+      expect(Object.keys(replay)).not.toContain("flag");
+      // Draws are replayable too; a match still in progress is not listed.
+      const listed = await as(c, "anon", () => rows<{ id: string }>(c, "select id from public.match_replay_v"));
+      expect(listed.map((r) => r.id).sort()).toEqual([won, drawn].sort());
+      expect(listed.map((r) => r.id)).not.toContain(live);
+      // A lookup by id is pushed through the security barrier into an index condition.
+      const plan = await as(c, "anon", async () => {
+        await c.exec("set enable_seqscan = off");
+        try {
+          return (await rows<{ "QUERY PLAN": string }>(c, "explain select * from public.match_replay_v where id = $1", [won])).map((r) => r["QUERY PLAN"]).join("\n");
+        } finally {
+          await c.exec("reset enable_seqscan");
+        }
+      });
+      expect(plan).toMatch(/Index Scan using \w+ on matches m\b.*\n\s+Index Cond: \(id = /);
     });
   });
 
@@ -433,7 +537,8 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await as(c, "service_role", async () => {
         await addPlayers(c, ROOSTER, HEN);
         await c.query("update public.players set username = 'Rooster', username_sig = $1, tier = 'gold' where address = $2", [sig("5"), ROOSTER]);
-        await c.query("insert into public.balance_checks (address, usd, tokens, source) values ($1, 31.5, 123456.000000001, 'jupiter')", [ROOSTER]);
+        // 123,456.000000001 tokens of a 9-decimal mint, in raw base units.
+        await c.query("insert into public.balance_checks (address, usd, tokens, decimals, source) values ($1, 31.5, 123456000000001, 9, 'jupiter')", [ROOSTER]);
         const matchId = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
         const win = await one<{ id: string }>(
           c,
@@ -452,11 +557,18 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
            values ('2026-09-23', 1, $1, 40, 1016, 10000000000, 2500, 2500000000, $2)`,
           [ROOSTER, daily.id],
         );
-        await c.query(
-          `insert into public.fee_claims (stage, gme_claimed, sol_after_swap, player_share_lamports, project_share_gme, claim_sig, swap_sig)
-           values ('dbc', 123456789012345678901234567890, 88000000000, 61600000000, 37037036703703703670370370367, $1, $2)`,
-          [sig("7"), sig("8")],
+        const claim = await one<{ id: string }>(
+          c,
+          `insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, claim_sig)
+           values ('dbc', 123456789012345678901234567890, 61600000000, 37037036703703703670370370367, $1) returning id`,
+          [sig("7")],
         );
+        // Swapped in two chunks, one row per swap transaction.
+        await c.query("insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $3, 50000000000), ($2, $3, 38000000000)", [
+          sig("8"),
+          sig("A"),
+          claim.id,
+        ]);
         await c.query(
           `insert into public.pool_snapshots (creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports, market_cap_usd)
            values (5, 1000000000, 1500, 29000000, 17600000000, 500000.25)`,
@@ -473,6 +585,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
           balance_checks: 1,
           daily_rewards: 1,
           fee_claims: 1,
+          fee_swaps: 2,
           matches: 1,
           payouts: 2,
           players: 2,
@@ -484,6 +597,9 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         await expect(c.query("delete from public.payouts")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("delete from public.matches")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("truncate public.fee_claims")).rejects.toMatchObject({ code: "42501" });
+        // A recorded swap is final.
+        await expect(c.query("update public.fee_swaps set lamports = 0")).rejects.toMatchObject({ code: "42501" });
+        await expect(c.query("delete from public.fee_swaps")).rejects.toMatchObject({ code: "42501" });
         // MAINTAIN lets the worker refresh the leaderboard itself.
         await c.exec("refresh materialized view concurrently public.leaderboard_v");
       });
@@ -498,14 +614,21 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       const draw = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: null, reason: "draw", rounds: [{}, {}, {}, {}, {}] });
       expect(await one(c, "select winner, reason from public.matches where id = $1", [draw])).toEqual({ winner: null, reason: "draw" });
       await addMatch(c, { p1: ROOSTER, p2: HEN, endedAgo: null }); // unfinished: no result yet
+      // Every decisive way a match can end has a reason that goes with a winner.
+      for (const reason of ["ko", "ringout", "timeout", "sudden_death", "decision", "forfeit"]) {
+        await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN, reason });
+      }
 
       const bad: [MatchInput, string][] = [
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "draw" }, "matches_winner_iff_decisive"],
         [{ p1: ROOSTER, p2: HEN, winner: null, reason: "ko" }, "matches_winner_iff_decisive"],
         [{ p1: ROOSTER, p2: HEN, winner: null, reason: "forfeit" }, "matches_winner_iff_decisive"],
+        [{ p1: ROOSTER, p2: HEN, winner: null, reason: "decision" }, "matches_winner_iff_decisive"],
+        [{ p1: ROOSTER, p2: HEN, winner: null, reason: "sudden_death" }, "matches_winner_iff_decisive"],
         [{ p1: ROOSTER, p2: HEN, winner: CHICK, reason: "ko" }, "matches_winner_is_player"],
         [{ p1: ROOSTER, p2: ROOSTER, winner: ROOSTER }, "matches_distinct_players"],
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "doubleko" }, "matches_reason_check"],
+        [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "suddenDeath" }, "matches_reason_check"],
         [{ p1: ROOSTER, p2: HEN, winner: null, reason: "draw", endedAgo: null }, "matches_ended_has_reason"],
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: null }, "matches_ended_has_reason"],
         [{ p1: ROOSTER, p2: HEN, winner: ROOSTER, rounds: [] }, "matches_rounds_shape"],
@@ -515,6 +638,32 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       for (const [m, constraint] of bad) {
         await expect(addMatch(c, m), JSON.stringify(m)).rejects.toMatchObject({ code: "23514", constraint });
       }
+    });
+  });
+
+  it("stores a match won on rounds at the cap whose final round was drawn, with its win payout", async () => {
+    // Sim end state: P1 took round 1, rounds 2-5 were drawn (sdExpired), so
+    // round = 5, w1 = 1, w2 = 0, matchWinner = 0, and the final reason is the
+    // drawn round's. The result and its payout are written in one transaction
+    // (spec: Payouts), so a rejected result would lose the payout too.
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN);
+      await c.exec("begin");
+      const rounds = [{ winner: 0, reason: "timeout" }, ...Array.from({ length: 4 }, () => ({ winner: 2, reason: "sdExpired" }))];
+      const id = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "decision", rounds });
+      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 29000000)", [id, id, ROOSTER]);
+      await c.exec("commit");
+      expect(await one(c, "select m.winner, m.reason, jsonb_array_length(m.rounds) as n, p.lamports from public.matches m join public.payouts p on p.match_id = m.id")).toEqual({
+        winner: ROOSTER,
+        reason: "decision",
+        n: 5,
+        lamports: 29000000,
+      });
+      // Mapping that final round's draw straight to the match reason is the bug this guards against.
+      await expect(addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "draw", rounds })).rejects.toMatchObject({
+        code: "23514",
+        constraint: "matches_winner_iff_decisive",
+      });
     });
   });
 
@@ -569,6 +718,56 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     });
   });
 
+  it("pays one address at most once per day, even when a daily retry re-ranks", async () => {
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN);
+      const enqueue = (key: string, to: string, lamports: number) =>
+        rows<{ id: string }>(
+          c,
+          `insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', $1, $2, $3)
+           on conflict (idem_key) do nothing returning id`,
+          [key, to, lamports],
+        );
+      // Run 1 ranks HEN first, then crashes before enqueueing rank 2.
+      const [henPay] = await enqueue("2026-09-22:1", HEN, 100);
+      // The retry re-ranks (an ELO tie moved): ROOSTER first, HEN second. The
+      // idempotency key skips rank 1, and HEN's second payout for the day fails.
+      expect(await enqueue("2026-09-22:1", ROOSTER, 100)).toEqual([]);
+      await expect(enqueue("2026-09-22:2", HEN, 72)).rejects.toMatchObject({ code: "23505", constraint: "payouts_daily_day_address_key" });
+      // Other days, and win payouts to the same address, are unaffected.
+      expect(await enqueue("2026-09-23:2", HEN, 72)).toHaveLength(1);
+      const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN });
+      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 5)", [won, won, HEN]);
+
+      // A reward row can only link the payout that pays its own address its own amount.
+      const reward = (address: string, lamports: number, payoutId: string | undefined) =>
+        c.query(
+          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
+           values ('2026-09-22', 1, $1, 9, 1000, 400, 2500, $2, $3)`,
+          [address, lamports, payoutId],
+        );
+      await expect(reward(ROOSTER, 100, henPay?.id)).rejects.toMatchObject({ code: "23503", constraint: "daily_rewards_payout_matches" });
+      await expect(reward(HEN, 99, henPay?.id)).rejects.toMatchObject({ code: "23503", constraint: "daily_rewards_payout_matches" });
+      await reward(HEN, 100, henPay?.id);
+      // One payout per reward row, and a linked payout's recipient and amount are fixed.
+      await expect(
+        c.query(
+          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
+           values ('2026-09-21', 1, $1, 9, 1000, 400, 2500, 100, $2)`,
+          [HEN, henPay?.id],
+        ),
+      ).rejects.toMatchObject({ code: "23505", constraint: "daily_rewards_payout_id_key" });
+      await expect(c.query("update public.payouts set lamports = 101 where id = $1", [henPay?.id])).rejects.toMatchObject({
+        code: "23503",
+        constraint: "daily_rewards_payout_matches",
+      });
+      await expect(c.query("update public.payouts set to_address = $1 where id = $2", [ROOSTER, henPay?.id])).rejects.toMatchObject({
+        code: "23503",
+        constraint: "daily_rewards_payout_matches",
+      });
+    });
+  });
+
   it("validates addresses, signatures, enumerations and amounts in every table", async () => {
     await scratch(async (c) => {
       for (const a of ["So1111111111111111111111111111111111111111O", "So11111111111111111111111111111111111111l12", "So11", "x".repeat(45)]) {
@@ -587,10 +786,21 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         c.query("update public.players set username = 'ROOSTER', username_sig = $1 where address = $2", [sig("3"), HEN]),
       ).rejects.toMatchObject({ code: "23505", constraint: "players_username_lower_key" });
 
-      const check = "insert into public.balance_checks (address, usd, tokens, source)";
-      await rejects("balance_checks_source_check", `${check} values ($1, 1, 1, 'birdeye')`, [ROOSTER]);
-      await rejects("balance_checks_usd_check", `${check} values ($1, -1, 1, 'curve')`, [ROOSTER]);
-      await rejects("sol_address_check", `${check} values ('0x0', 1, 1, 'curve')`);
+      const check = "insert into public.balance_checks (address, usd, tokens, decimals, source)";
+      await rejects("balance_checks_source_check", `${check} values ($1, 1, 1, 6, 'birdeye')`, [ROOSTER]);
+      await rejects("balance_checks_usd_check", `${check} values ($1, -1, 1, 6, 'curve')`, [ROOSTER]);
+      await rejects("balance_checks_tokens_check", `${check} values ($1, 1, -1, 6, 'curve')`, [ROOSTER]);
+      await rejects("balance_checks_decimals_check", `${check} values ($1, 1, 1, 256, 'curve')`, [ROOSTER]);
+      await rejects("sol_address_check", `${check} values ('0x0', 1, 1, 6, 'curve')`);
+      // Raw units hold a whole u64 balance (18,446,744,073,709,551,615) exactly.
+      const maxU64 = "18446744073709551615";
+      const stored = await one<{ tokens: string }>(c, `${check} values ($1, 1, $2, 6, 'curve') returning tokens::text`, [ROOSTER, maxU64]);
+      expect(stored.tokens).toBe(maxU64);
+      // decimals is required: a raw amount means nothing without it.
+      await expect(c.query("insert into public.balance_checks (address, usd, tokens, source) values ($1, 1, 1, 'curve')", [ROOSTER])).rejects.toMatchObject({
+        code: "23502",
+        column: "decimals",
+      });
 
       const match = "insert into public.matches (p1, p2, region";
       await rejects("matches_region_check", `${match}) values ($1, $2, 'US-EAST')`, [ROOSTER, HEN]);
@@ -602,6 +812,17 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await rejects("fee_claims_stage_check", "insert into public.fee_claims (stage) values ('pumpfun')");
       await rejects("fee_claims_gme_claimed_check", "insert into public.fee_claims (stage, gme_claimed) values ('dbc', -1)");
       await rejects("sol_signature_check", "insert into public.fee_claims (stage, claim_sig) values ('dbc', $1)", [ROOSTER]);
+      const claim = await one<{ id: string }>(c, "insert into public.fee_claims (stage, claim_sig) values ('dbc', $1) returning id", [sig("C")]);
+      const swap = "insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $2, $3)";
+      await rejects("fee_swaps_lamports_check", swap, [sig("D"), claim.id, -1]);
+      await rejects("sol_signature_check", swap, [ROOSTER, claim.id, 1]);
+      await c.query(swap, [sig("D"), claim.id, 1]);
+      // A swap transaction is recorded once, and only against a real claim.
+      await expect(c.query(swap, [sig("D"), claim.id, 1])).rejects.toMatchObject({ code: "23505", constraint: "fee_swaps_pkey" });
+      await expect(c.query(swap, [sig("E"), "00000000-0000-4000-8000-000000000000", 1])).rejects.toMatchObject({
+        code: "23503",
+        constraint: "fee_swaps_fee_claim_id_fkey",
+      });
 
       const snapshot = "insert into public.pool_snapshots (at, creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports)";
       const minute = "date_trunc('minute', now(), 'UTC')";
@@ -681,6 +902,29 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     });
   });
 
+  it("rewrites no leaderboard_v row on a refresh when nothing changed", async () => {
+    // REFRESH ... CONCURRENTLY compares whole rows and rewrites the ones that
+    // differ, so a column that changes on every refresh (e.g. now()) would
+    // rewrite every row every minute.
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN, CHICK);
+      await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, endedAgo: "1 day" });
+      await addMatch(c, { p1: HEN, p2: CHICK, winner: null, reason: "draw", endedAgo: "10 days" });
+      const refresh = () => as(c, "postgres", () => c.exec("refresh materialized view concurrently public.leaderboard_v"));
+      const ctids = () => rows<{ address: string; ctid: string }>(c, "select address, ctid::text as ctid from public.leaderboard_v order by address");
+      await refresh();
+      const before = await ctids();
+      expect(before).toHaveLength(3);
+      await refresh();
+      expect(await ctids()).toEqual(before);
+      // A real change rewrites only the rows it touches.
+      await c.query("update public.players set elo = 1016 where address = $1", [HEN]);
+      await refresh();
+      const after = await ctids();
+      expect(after.filter((r, i) => r.ctid !== before[i]?.ctid).map((r) => r.address)).toEqual([HEN]);
+    });
+  });
+
   it("serves pool_v to anon: the latest snapshot and trailing-24h totals", async () => {
     await scratch(async (c) => {
       await addPlayers(c, ROOSTER, HEN);
@@ -693,24 +937,32 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await snap(2, 1);
       await snap(1, 29000000);
       await snap(3, 2);
-      const claim = (ago: string, gme: string, lamports: number) =>
-        c.query(
-          "insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, at) values ('damm', $1, $2, 1, now() - $3::interval)",
-          [gme, lamports, ago],
+      let n = 0;
+      const claim = async (ago: string, gme: string, lamports: number, swaps: number[], signed = true) => {
+        const r = await one<{ id: string }>(
+          c,
+          `insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, claim_sig, at)
+           values ('damm', $1, $2, 1, $3, now() - $4::interval) returning id`,
+          [gme, lamports, signed ? sig(String(++n)) : null, ago],
         );
-      await claim("1 hour", "100000000000000000000", 700);
-      await claim("23 hours", "5", 70);
-      await claim("25 hours", "1000", 7);
+        for (const out of swaps) {
+          await c.query("insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $2, $3)", [sig(String(++n)), r.id, out]);
+        }
+      };
+      await claim("1 hour", "100000000000000000000", 700, [400, 300, 250]); // three chunks
+      await claim("23 hours", "5", 70, []); // not swapped yet
+      await claim("25 hours", "1000", 7, [9000]); // outside the window
+      await claim("2 hours", "777", 7000, [7000], false); // no claim transaction (a dry run): not counted
       const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
       await c.query(
         `insert into public.payouts (kind, idem_key, match_id, to_address, lamports, status, tx_sig, paid_at)
          values ('win', $1, $2, $3, 41000000, 'paid', $4, now() - interval '2 hours')`,
-        [won, won, ROOSTER, sig("3")],
+        [won, won, ROOSTER, sig("A")],
       );
       await c.query(
         `insert into public.payouts (kind, idem_key, to_address, lamports, status, tx_sig, paid_at)
          values ('daily', '2026-09-20:1', $1, 999, 'paid', $2, now() - interval '3 days')`,
-        [HEN, sig("4")],
+        [HEN, sig("B")],
       );
       await c.query("insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', '2026-09-22:1', $1, 55)", [HEN]);
 
@@ -722,6 +974,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         matches_24h: 1500,
         claims_24h: 2,
         gme_claimed_24h: "100000000000000000005",
+        sol_after_swap_24h: 950,
         player_share_lamports_24h: 770,
         project_share_gme_24h: "2",
         paid_count_24h: 1,

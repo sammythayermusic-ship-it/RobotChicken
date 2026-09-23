@@ -19,7 +19,14 @@ const ACTIVE: Record<string, { x: [number, number]; y: [number, number] }> = {
   super: { x: [900, 1000], y: [750, 850] },
   dive_kick: { x: [400, 500], y: [-100, 0] },
 };
-const RETRACTED_X = 600;
+/**
+ * A visual design check, not a gameplay guarantee: outside the active window
+ * the beak stays back so wind-up and follow-through read clearly. What keeps
+ * hits to active frames is the sim testing hit spheres only on active samples;
+ * at pushbox contact (800 mu apart) even a beak at x <= 600 overlaps the other
+ * chicken's hurt capsule.
+ */
+const VISUAL_RETRACTED_X = 600;
 
 describe("hitboxes.json", () => {
   it("matches a fresh bake of its source glb (the bake --check path)", async () => {
@@ -53,7 +60,7 @@ describe("hitboxes.json", () => {
   it("compiles in the sim with no move falling back to its static box", () => {
     const R = compileRules();
     expect(R.fallbacks).toEqual([]);
-    for (let id = 1; id < MOVE_NAMES.length; id++) expect(R.clips[R.moves[id]!.clip]!.hit, MOVE_NAMES[id]).not.toBeNull();
+    for (let id = 1; id < MOVE_NAMES.length; id++) expect(R.moves[id]!.hit, MOVE_NAMES[id]).not.toBeNull();
   });
 
   it("rests with a vertical capsule standing on the ground, radii from the helpers", () => {
@@ -68,7 +75,7 @@ describe("hitboxes.json", () => {
   });
 
   for (const [name, want] of Object.entries(ACTIVE)) {
-    it(`${name}: the beak reaches its target while active and stays back otherwise`, () => {
+    it(`${name}: the beak reaches its target while active and (visually) stays back otherwise`, () => {
       const clip = hb.clips[name]!;
       const [s, a] = CONTRACT.clips.find((c) => c.name === name)!.phases!;
       const beak = clip.hit["hit_beak"]!;
@@ -81,7 +88,7 @@ describe("hitboxes.json", () => {
           expect(y, `${name} active sample ${f} y`).toBeGreaterThanOrEqual(want.y[0]);
           expect(y, `${name} active sample ${f} y`).toBeLessThanOrEqual(want.y[1]);
         } else {
-          expect(x, `${name} sample ${f} (startup/recovery) x`).toBeLessThanOrEqual(RETRACTED_X);
+          expect(x, `${name} sample ${f} (startup/recovery, visual) x`).toBeLessThanOrEqual(VISUAL_RETRACTED_X);
         }
       }
     });

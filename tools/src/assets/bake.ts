@@ -4,7 +4,9 @@
  * opens a glb; floats exist only here, at bake time.
  *
  * Every contract clip is posed at every sample 0..frames (sample f = sim frame
- * f, 60 Hz) and each helper is projected onto the sim plane: sim x = glTF +Z
+ * f, 60 Hz, at clip time frameTime(f) = Math.fround(f / 60), the instant the
+ * runtime must pose three.js at too; see sample.ts) and each helper is
+ * projected onto the sim plane: sim x = glTF +Z
  * (forward), sim y = glTF +Y, in model space with root at the origin, as
  * Math.round(v * 1000) + 0 (the + 0 turns -0 into 0).
  *
@@ -24,7 +26,7 @@ import {
   type Contract,
   type HitboxesFile,
 } from "./gltf";
-import { axisScale, buildRig, clipDuration, poseWorld, tracksOf, transformPoint } from "./sample";
+import { axisScale, buildRig, clipDuration, frameTime, poseWorld, tracksOf, transformPoint } from "./sample";
 
 export class BakeError extends Error {
   override name = "BakeError";
@@ -40,7 +42,9 @@ function helperIndex(nodes: Node[], name: string): number {
 
 /**
  * The hit spheres to bake: the contract's sphere helpers plus any extra
- * `hit_*` node tagged cf_shape "sphere" (moves pick one with `hitNode`).
+ * `hit_*` node tagged cf_shape "sphere". Extra helpers are baked ahead of use;
+ * which helper a move actually tests is decided by the sim (compileRules in
+ * packages/sim/src/rules.ts), not here.
  */
 function hitHelperNames(nodes: Node[], contract: Contract): string[] {
   const names = new Set(Object.keys(contract.helpers).filter((k) => contract.helpers[k]?.shape === "sphere"));
@@ -85,7 +89,7 @@ export async function bakeGlb(bytes: Uint8Array, file: string, contract: Contrac
     const hurtOut: number[] = [];
     const hitOut: number[][] = hits.map(() => []);
     for (let f = 0; f <= frames; f++) {
-      const world = poseWorld(rig, tracks, f / contract.fps);
+      const world = poseWorld(rig, tracks, frameTime(f, contract.fps));
       const m = world[hurt]!;
       const a = transformPoint(m, [0, -hurtH, 0]);
       const b = transformPoint(m, [0, hurtH, 0]);

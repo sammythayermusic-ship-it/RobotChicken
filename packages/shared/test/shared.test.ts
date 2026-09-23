@@ -12,6 +12,12 @@ describe("tiers", () => {
     expect(tierForUsd(5000)).toBe("diamond");
     expect(tierForUsd(1e9)).toBe("diamond");
   });
+  it("a configured gate moves the threshold; past it you are at least rust", () => {
+    expect(tierForUsd(12, 10)).toBe("rust");
+    expect(tierForUsd(9.99, 10)).toBeNull();
+    expect(tierForUsd(40, 50)).toBeNull();
+    expect(tierForUsd(Number.NaN)).toBeNull();
+  });
 });
 
 describe("env", () => {

@@ -71,8 +71,7 @@
     "knockdown": {
       "lie": 40,
       "getup": 20
-    },
-    "launchLandBounce": 0
+    }
   },
   "moves": {
     "peck": {

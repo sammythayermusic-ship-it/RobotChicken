@@ -18,6 +18,8 @@ function byte(h: Fnv64, b: number): void {
   const lo = (h.lo ^ b) >>> 0;
   const m = lo * 0x1b3;
   const nlo = m >>> 0;
+  // Exact: m < 2^41, so m / 2^32 is exact in a double and >>> 0 truncates it.
+  // eslint-disable-next-line no-restricted-syntax -- not gameplay arithmetic
   const carry = (m / 4294967296) >>> 0;
   h.hi = (Math.imul(h.hi, 0x1b3) + carry + (lo << 8)) >>> 0;
   h.lo = nlo;

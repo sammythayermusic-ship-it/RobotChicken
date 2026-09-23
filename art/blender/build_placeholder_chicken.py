@@ -71,6 +71,9 @@ HELPER_POS = {"hurt_body": (0.0, 0.82, 0.0), "hit_beak": (0.0, 1.11, 0.55)}
 # hit_beak (z, y) ranges during each attack's ACTIVE samples, and the most
 # forward the beak may be during startup and recovery. The sim reads these
 # positions from hitboxes.json, so they are what makes frame data meaningful.
+# RETRACTED_Z is visual only (wind-up and follow-through): the sim tests hit
+# spheres only on active samples, and a retracted beak still reaches an
+# opponent at pushbox contact.
 ACTIVE_TARGETS = {
     "peck": ((0.85, 1.00), (0.75, 0.90)),
     "shove": ((0.70, 0.80), (0.55, 0.65)),

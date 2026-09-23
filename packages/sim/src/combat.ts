@@ -39,9 +39,9 @@ export function hurtOf(f: FighterState, R: Rules): Hurt {
 /** World-space hit sphere of an attacking fighter this tick: [x, y, r]. */
 export function hitOf(f: FighterState, mv: MoveRules, R: Rules): [number, number, number] {
   const clip = R.clips[mv.clip] as ClipRules;
-  if (clip.hit) {
+  if (mv.hit) {
     const k = sampleFor(f, clip, R) * 3;
-    const h = clip.hit;
+    const h = mv.hit;
     return [f.x + f.facing * (h[k] as number), f.y + (h[k + 1] as number), h[k + 2] as number];
   }
   return [f.x + f.facing * mv.box.x, f.y + mv.box.y, mv.box.r];

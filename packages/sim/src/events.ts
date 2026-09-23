@@ -3,6 +3,7 @@
  * not part of the state and never hashed; the renderer, audio and camera react
  * to them. Pure, so a replay produces exactly the same event stream.
  */
+import { idiv } from "./fixed";
 import { HitKind, Mv, Phase, Reason, St, type FighterState, type MatchState, type MvId, type ReasonId } from "./types";
 
 export type SimEvent =
@@ -47,7 +48,7 @@ export function deriveEvents(prev: MatchState, next: MatchState, heatMax: number
   if (next.round !== prev.round && next.phase === Phase.countdown) ev.push({ kind: "roundStart", round: next.round });
   if (next.phase === Phase.countdown) {
     // 3, 2, 1 on the second boundaries of the countdown.
-    const secs = (t: number) => ((t + 59) / 60) | 0;
+    const secs = (t: number) => idiv(t + 59, 60);
     // The first number shows on the countdown's first tick (match start or a new round).
     if (secs(next.phaseT) !== secs(prev.phaseT) || next.round !== prev.round || prev.tick === 0) {
       const n = secs(next.phaseT);

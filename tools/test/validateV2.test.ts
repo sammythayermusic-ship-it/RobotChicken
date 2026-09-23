@@ -53,6 +53,8 @@ describe("validate v2: the committed placeholder", () => {
     expect(load.budget).toBe(12 * 1024 * 1024);
     expect(load.items.map((i) => [i.file, i.what])).toEqual([
       [PLACEHOLDER_GLB, "chicken"],
+      // The sound-pack override manifest (fetched when the fight starts; empty until Sammy's pack lands).
+      ["apps/web/public/audio/manifest.json", "audio"],
       ["decoders/draco/draco_wasm_wrapper.js", "Draco decoder"],
       ["decoders/draco/draco_decoder.wasm", "Draco decoder"],
     ]);

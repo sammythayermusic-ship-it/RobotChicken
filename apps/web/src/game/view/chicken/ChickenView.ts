@@ -121,7 +121,8 @@ export class ChickenView {
     this.root.rotation.y = this.yaw;
 
     const clip = this.R.clips[this.clip] as ClipRules | undefined;
-    const time = clip ? sampleFor(cur, clip, this.R) / FPS : 0;
+    // Math.fround: the exact float32 key time the exporter writes, so STEP keys land on their own frame (as in the bake).
+    const time = clip ? Math.fround(sampleFor(cur, clip, this.R) / FPS) : 0;
     const w = this.prevClip >= 0 ? Math.min(1, this.blend / BLEND_TICKS) : 1;
     for (const [id, action] of this.actions) {
       if (id === this.clip) {

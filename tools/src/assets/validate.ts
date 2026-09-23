@@ -20,7 +20,7 @@ import { getGLPrimitiveCount } from "@gltf-transform/functions";
 import validator from "gltf-validator";
 import { firstLoad, formatFirstLoad, mb, type FirstLoad } from "./firstLoad";
 import { CONTRACT, MOVES, PUBLIC_DIR, fromRepo, readGlb, readGlbJson, sha256, type Contract, type HitboxesFile, type MovesFile } from "./gltf";
-import { axisScale, buildRig, clipDuration, nodeIndex, poseWorld, tracksOf, transformPoint, type Rig, type Track } from "./sample";
+import { KEY_EPS, axisScale, buildRig, clipDuration, frameTime, nodeIndex, poseWorld, tracksOf, transformPoint, type Rig, type Track } from "./sample";
 import { checkDocumentTextures, checkTierTextures } from "./textures";
 
 export type Severity = "error" | "warning";
@@ -74,6 +74,10 @@ export const ALLOWED_EXTENSIONS = [
 const EPS = 1e-4;
 const ROOT_MOTION_EPS = 1e-3;
 const LOOP_ANGLE_DEG = 2;
+/** How far (units) the body may sit off the origin at idle frame 0; 0.02 = 20 mu. */
+const CENTER_EPS = 0.02;
+/** TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN. */
+const TRIANGLE_MODES = [4, 5, 6];
 
 // --------------------------------------------------------------------------- clip names
 
@@ -146,6 +150,21 @@ function keyValues(tr: Track): number[][] {
   return out;
 }
 
+/**
+ * Whether a STEP key that changes the value is stored a hair after its frame's
+ * instant frameTime(f). three.js posed at frameTime(f) would still show the
+ * previous key there, one frame late, while the bake (which snaps onto keys)
+ * shows this one.
+ */
+function hasLateStepKey(tr: Track, values: number[][], fps: number): boolean {
+  for (let k = 1; k < tr.input.length; k++) {
+    const t = tr.input[k] as number;
+    const at = frameTime(Math.round(t * fps), fps);
+    if (t > at && t - at <= KEY_EPS && !near(values[k]!, values[k - 1]!, 1e-6)) return true;
+  }
+  return false;
+}
+
 function quatAngleDeg(a: number[], b: number[]): number {
   const dot = Math.min(1, Math.abs(a.reduce((s, v, i) => s + v * (b[i] as number), 0)));
   return (2 * Math.acos(dot) * 180) / Math.PI;
@@ -206,42 +225,57 @@ export function validateDocument(
   if (!rigNode) err("rig", `expected one node named "${contract.rig.armature}" (the armature), found ${rigNodes.length}`);
   else if (!isIdentityTRS(rigNode)) err("rig", `"${contract.rig.armature}" must have identity transforms (Ctrl+A > All Transforms in Blender)`);
 
-  // Skinned mesh, joints, triangles, materials.
-  const skinned = nodes.filter((n) => n.getMesh() && n.getSkin());
-  for (const n of nodes) if (n.getMesh() && !n.getSkin()) warn("mesh", `mesh node "${n.getName()}" is not skinned; it will not follow the rig`);
+  const rig = buildRig(doc);
+  const restWorld = poseWorld(rig, [], 0);
+
+  // Meshes. The chicken is one skinned mesh (the spec's budget). Every mesh node
+  // is drawn, so all of them count toward the triangle budget and the material
+  // slots: an extra mesh cannot slip past either.
+  const meshNodes = nodes.filter((n) => n.getMesh());
+  const skinned = meshNodes.filter((n) => n.getSkin());
   if (skinned.length !== 1) err("mesh", `expected exactly one skinned mesh, found ${skinned.length}`);
   const mesh = skinned[0];
   const joints = mesh?.getSkin()?.listJoints() ?? [];
   const rootJoint = byName(contract.rig.rootBone)[0];
-  if (mesh) {
-    if (!isIdentityTRS(mesh)) err("mesh", `skinned mesh "${mesh.getName()}" must have identity transforms`);
-    const prims = mesh.getMesh()!.listPrimitives();
+  for (const n of meshNodes) {
+    if (n.getSkin()) continue;
+    const bone = ancestors(n).find((a) => joints.includes(a));
+    const follows = bone ? `it follows bone "${bone.getName()}" rigidly` : "it does not follow the rig";
+    err("mesh", `mesh node "${n.getName()}" is not skinned (${follows}); the chicken must be one skinned mesh: join it in and weight it to its bone`);
+  }
+  if (meshNodes.length) {
+    const prims = meshNodes.flatMap((n) => n.getMesh()!.listPrimitives());
     stats.primitives = prims.length;
-    stats.triangles = prims.reduce((s, p) => s + (p.getMode() === 4 ? getGLPrimitiveCount(p) : 0), 0);
-    stats.joints = joints.length;
+    stats.triangles = prims.reduce((s, p) => s + (TRIANGLE_MODES.includes(p.getMode()) ? getGLPrimitiveCount(p) : 0), 0);
     if (prims.some((p) => p.getMode() !== 4)) err("mesh", "every primitive must be a triangle list");
     if (stats.triangles > contract.budgets.chickenTriangles) {
       err("budget", `${stats.triangles} triangles exceeds the budget of ${contract.budgets.chickenTriangles}`);
-    }
-    if (joints.length > contract.budgets.joints) {
-      err("joints", `${joints.length} joints exceeds the budget of ${contract.budgets.joints} (export_def_bones drops non-deform bones)`);
     }
     if (prims.length > contract.materials.length) warn("mesh", `${prims.length} primitives = ${prims.length} draw calls per chicken`);
     const mats = [...new Set(prims.map((p) => p.getMaterial()?.getName() ?? "(none)"))].sort();
     stats.materials = mats;
     for (const m of contract.materials) if (!mats.includes(m)) err("materials", `material slot "${m}" is missing (tiers swap materials by name)`);
     for (const m of mats) if (!contract.materials.includes(m)) err("materials", `material "${m}" is not a contract slot (${contract.materials.join(", ")})`);
+  }
+  if (mesh) {
+    if (!isIdentityTRS(mesh)) err("mesh", `skinned mesh "${mesh.getName()}" must have identity transforms`);
+    stats.joints = joints.length;
+    if (joints.length > contract.budgets.joints) {
+      err("joints", `${joints.length} joints exceeds the budget of ${contract.budgets.joints} (export_def_bones drops non-deform bones)`);
+    }
     // Bind-pose bounds (mesh-local = model space, since the mesh node and Rig are identity).
     let lo = [Infinity, Infinity, Infinity];
     let hi = [-Infinity, -Infinity, -Infinity];
-    for (const p of prims) {
+    for (const p of mesh.getMesh()!.listPrimitives()) {
       const pos = p.getAttribute("POSITION");
       if (!pos) continue;
       lo = lo.map((v, i) => Math.min(v, pos.getMin([0, 0, 0])[i] as number));
       hi = hi.map((v, i) => Math.max(v, pos.getMax([0, 0, 0])[i] as number));
     }
     const width = (hi[0] as number) - (lo[0] as number);
+    const midX = ((hi[0] as number) + (lo[0] as number)) / 2;
     if (!(width >= 0.5 && width <= 2)) warn("bounds", `the chicken is ${width.toFixed(2)} units wide; expected 0.5..2 (wrong units or scale?)`);
+    if (Math.abs(midX) > 0.05) warn("bounds", `the chicken is centered at x=${midX.toFixed(3)}; it should be centered left-right on x=0`);
     if (Math.abs(lo[1] as number) > 0.05) warn("bounds", `the lowest vertex is at y=${(lo[1] as number).toFixed(3)}; the feet should rest on y=0`);
   }
   if (!rootJoint || !joints.includes(rootJoint)) {
@@ -252,11 +286,14 @@ export function validateDocument(
     for (const j of joints) {
       if (j !== rootJoint && !ancestors(j).includes(rootJoint)) err("root", `joint "${j.getName()}" is not under "${contract.rig.rootBone}"`);
     }
+    // The sim places the fighter by the model origin; a rotated rest is harmless (children are posed through it).
+    const at = transformPoint(restWorld[rig.index.get(rootJoint)!]!, [0, 0, 0]);
+    if (!near(at, [0, 0, 0])) {
+      err("root", `"${contract.rig.rootBone}" rests at (${at.map((v) => v.toFixed(3)).join(", ")}); it must sit at the origin (move the whole chicken there and apply transforms)`);
+    }
   }
 
   // Hitbox helpers.
-  const rig = buildRig(doc);
-  const restWorld = poseWorld(rig, [], 0);
   const helperIdx: Record<string, number> = {};
   for (const [name, spec] of Object.entries(contract.helpers)) {
     const found = byName(name);
@@ -292,7 +329,7 @@ export function validateDocument(
     else if (Math.abs(sx - 1) > 1e-3 || Math.abs(sy - 1) > 1e-3) warn("helpers", `"${name}" has world scale ${sx.toFixed(3)}; sizes are scaled by it`);
   }
   for (const n of nodes) {
-    if (n.getName().startsWith("hit_") && !(n.getName() in contract.helpers)) warn("helpers", `extra hit helper "${n.getName()}" (baked, but no move uses it yet)`);
+    if (n.getName().startsWith("hit_") && !(n.getName() in contract.helpers)) warn("helpers", `extra hit helper "${n.getName()}" is not in the contract (it is baked into hitboxes.json anyway)`);
   }
 
   // Clips.
@@ -352,13 +389,20 @@ export function validateDocument(
     checkClip(anim, clip, rig, { contract, rigNode, rootJoint, jointSet, helperNodes, helperIdx, moves }, err, warn);
   }
 
-  // Facing: at idle sample 0 the beak must be in front of the body.
+  // Centering and facing at idle sample 0: the body sits over the origin (where
+  // the sim puts the fighter, even when root is there too) and the beak is in front of it.
   const idle = byClip.get("idle");
   const hurtName = Object.keys(contract.helpers).find((k) => contract.helpers[k]?.shape === "capsule");
   const hitNames = Object.keys(contract.helpers).filter((k) => contract.helpers[k]?.shape === "sphere");
   if (idle && hurtName && helperIdx[hurtName] !== undefined) {
     const w = poseWorld(rig, tracksOf(rig, idle), 0);
-    const bodyZ = transformPoint(w[helperIdx[hurtName]]!, [0, 0, 0])[2];
+    const [bodyX, , bodyZ] = transformPoint(w[helperIdx[hurtName]]!, [0, 0, 0]);
+    if (Math.abs(bodyX) > CENTER_EPS || Math.abs(bodyZ) > CENTER_EPS) {
+      err(
+        "center",
+        `at idle frame 0 "${hurtName}" is centered at x=${bodyX.toFixed(3)} z=${bodyZ.toFixed(3)}; the chicken's body must sit over the origin (within ${CENTER_EPS})`,
+      );
+    }
     for (const h of hitNames) {
       if (helperIdx[h] === undefined) continue;
       const z = transformPoint(w[helperIdx[h]]!, [0, 0, 0])[2];
@@ -405,10 +449,12 @@ function checkClip(
   let rootMoves = false;
   let rootTurns = false;
   const loopBad: string[] = [];
+  const lateStep: string[] = [];
   const foreign = new Set<string>();
   for (const tr of tracks) {
     const node = rig.nodes[tr.node]!;
     const values = keyValues(tr);
+    if (tr.interp === "STEP" && hasLateStepKey(tr, values, contract.fps)) lateStep.push(`${node.getName()}.${tr.path}`);
     if (node === ctx.rigNode) err("root-motion", `clip "${name}" animates "${node.getName()}"; only bones may move`);
     if (node === ctx.rootJoint) {
       const rest = rig.rest[tr.node]![tr.path];
@@ -429,6 +475,13 @@ function checkClip(
   if (rootTurns) warn("root-motion", `clip "${name}" rotates or scales "${contract.rig.rootBone}"; prefer animating "body"`);
   if (foreign.size) warn("channels", `clip "${name}" animates non-bone nodes: ${[...foreign].join(", ")}`);
   if (loopBad.length) warn("loop", `loop clip "${name}" ends in a different pose than it starts (${loopBad.slice(0, 4).join(", ")})`);
+  if (lateStep.length) {
+    warn(
+      "timing",
+      `clip "${name}" has STEP keys stored just after their frame time (${lateStep.slice(0, 4).join(", ")}); ` +
+        `three.js would show them a frame late (key f must be at exactly float32 f/${contract.fps})`,
+    );
+  }
 
   const phases = anim.getExtras()["cf_phases"];
   if (clip.phases) {
@@ -468,7 +521,7 @@ function checkActive(
   const behind: string[] = [];
   const below: string[] = [];
   for (let f = s + 1; f <= s + a; f++) {
-    const w = poseWorld(rig, tracks, f / contract.fps);
+    const w = poseWorld(rig, tracks, frameTime(f, contract.fps));
     const m = w[hitIdx]!;
     const [, hy, hz] = transformPoint(m, [0, 0, 0]);
     const bz = transformPoint(w[hurtIdx]!, [0, 0, 0])[2];

@@ -1,6 +1,7 @@
+import { fnvHex, fnvInit, fnvInts } from "./hash";
 import { Rng } from "./rng";
 import { RULES, type Rules } from "./rules";
-import { stateHash } from "./serialize";
+import { STATE_INTS, serialize, stateHash } from "./serialize";
 import { createMatch } from "./state";
 import { step } from "./step";
 import { BUTTON_MASK, Phase, type MatchState } from "./types";
@@ -29,6 +30,8 @@ export interface Replay {
   p2?: InputEvent[];
   gen?: InputGen;
   finalHash: string;
+  /** FNV-1a-64 over every tick's serialized state: covers the whole match, not just its end. */
+  traceHash?: string;
   /** [tick, hash] checkpoints, every 60 ticks by default. */
   cp?: [number, string][];
 }
@@ -36,8 +39,37 @@ export interface Replay {
 export interface ReplayResult {
   state: MatchState;
   hash: string;
+  /** Hash of the whole trajectory (every tick's state), see Replay.traceHash. */
+  trace: string;
   ticks: number;
   cps: [number, string][];
+}
+
+const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
+
+function checkEvents(events: readonly InputEvent[] | undefined, what: string): void {
+  if (!events) return;
+  let last = 0;
+  for (const e of events) {
+    if (!isInt(e.t) || e.t < 1 || e.t <= last) throw new Error(`replay ${what}: event ticks must be integers >= 1, strictly increasing (got ${e.t} after ${last})`);
+    if (!isInt(e.b) || e.b < 0 || e.b > BUTTON_MASK) throw new Error(`replay ${what}: buttons must be an integer 0..${BUTTON_MASK} (got ${e.b})`);
+    last = e.t;
+  }
+}
+
+/** Reject malformed replays instead of silently misapplying them. */
+export function validateReplay(r: Replay): void {
+  if (r.v !== 1) throw new Error(`replay: unsupported format version ${String(r.v)}`);
+  if (!isInt(r.ticks) || r.ticks < 1) throw new Error(`replay: ticks must be a positive integer (got ${r.ticks})`);
+  if (typeof r.matchId !== "string" || r.matchId.length === 0) throw new Error("replay: matchId is required");
+  if (r.gen) {
+    const [lo, hi] = r.gen.hold;
+    if (!isInt(r.gen.seed) || !isInt(lo) || !isInt(hi) || lo < 1 || hi < lo) {
+      throw new Error("replay: gen needs an integer seed and hold [min >= 1, max >= min]");
+    }
+  }
+  checkEvents(r.p1, "p1");
+  checkEvents(r.p2, "p2");
 }
 
 /** Expand change events into one button mask per step (index 0 = step 1). */
@@ -99,6 +131,7 @@ export function replayInputs(r: Replay): [Uint8Array, Uint8Array] {
  * different rules. Stops early at matchEnd.
  */
 export function runReplay(r: Replay, R: Rules = RULES, opts: { every?: number; allowRulesMismatch?: boolean } = {}): ReplayResult {
+  validateReplay(r);
   if (!opts.allowRulesMismatch && r.rulesHash !== R.hash) {
     throw new Error(`replay ${r.name ?? r.matchId}: rulesHash ${r.rulesHash} != current ${R.hash} (re-bless if the change is intended)`);
   }
@@ -106,14 +139,17 @@ export function runReplay(r: Replay, R: Rules = RULES, opts: { every?: number; a
   const [i1, i2] = replayInputs(r);
   let s = createMatch({ matchId: r.matchId }, R);
   const cps: [number, string][] = [];
+  const trace = fnvInit();
+  const buf = new Int32Array(STATE_INTS);
   let t = 0;
   for (; t < r.ticks; t++) {
     s = step(s, i1[t] as number, i2[t] as number, R);
+    fnvInts(trace, serialize(s, buf));
     if (every > 0 && s.tick % every === 0) cps.push([s.tick, stateHash(s)]);
     if (s.phase === Phase.matchEnd) {
       t++;
       break;
     }
   }
-  return { state: s, hash: stateHash(s), ticks: t, cps };
+  return { state: s, hash: stateHash(s), trace: fnvHex(trace), ticks: t, cps };
 }

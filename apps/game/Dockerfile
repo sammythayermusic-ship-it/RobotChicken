@@ -2,7 +2,7 @@
 #
 # Colyseus game server image. The build context is the REPO ROOT (see /.dockerignore):
 #   docker build -f apps/game/Dockerfile -t cockfight-game .
-#   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile
+#   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile --ha=false
 #
 # The build stage bundles everything into dist/server.mjs with esbuild, so the
 # runtime stage is Node plus that one file: no node_modules, no pnpm.
