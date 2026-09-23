@@ -4,7 +4,12 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "assets:placeholder": "tsx src/cli/placeholder.ts",
+    "assets:validate": "tsx src/cli/validate.ts",
+    "assets:bake": "tsx src/cli/bake.ts",
+    "assets:inspect": "tsx src/cli/inspect.ts",
+    "blender": "tsx src/cli/blender.ts"
   },
   "dependencies": {
     "@cockfight/sim": "workspace:*",
