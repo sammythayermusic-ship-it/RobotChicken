@@ -52,3 +52,26 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | Game server = one esbuild bundle | The Docker runtime stage copies only `dist/`: no `node_modules`, no `pnpm deploy`. |
 | `verifyDepsBeforeRun: false` | Filtered installs (CI replay job, Docker) must not trigger pnpm's automatic full reinstall on `pnpm run`. |
 | Env vars added (documented only) | `JUPITER_API_KEY` (Price v2 is deprecated; v3 needs a key), `REDIS_URL` (the Colyseus Redis driver needs a TCP `rediss://` URL, not Upstash REST), `ALLOWED_ORIGINS`, `PAYOUTS_ENABLED=false`. |
+
+## Phase 0 review outcomes
+
+An adversarial review (5 area reviewers, each finding independently re-verified) confirmed 32 low/medium issues; all were fixed before PR #1. The choices worth remembering:
+
+| Decision | Why |
+|---|---|
+| The golden gate checks every checkpoint plus a whole-trajectory hash | After `resetRound` the final state only reflects the last round; a divergence in rounds 1–4 would have passed the cross-machine diff. |
+| `SIM_VERSION` is part of `rulesHash` | The hash covered data, not code. Bump it whenever `step()` behaviour changes (same commit as the golden re-bless). |
+| Rule values are read as checked int32s | A float, typo or missing field used to hash identically and leak into state. `RULES` is frozen. |
+| Moves pick their hit helper by `hitNode` | The data field existed but was ignored; now it resolves per move and fails if the baked helper is missing. |
+| Clips are sampled at `Math.fround(f / 60)` | That is the exact float32 key time the exporter writes; three.js and the bake then agree even on STEP curves. |
+| A chicken must be centered | Root bone at the origin; `hurt_body` at idle frame 0 within 0.02 u of it in x/z. Extra (non-skinned) meshes are errors: the spec says one skinned mesh. |
+| Entry gate: `tierForUsd(usd, GATE_USD_MIN)` | One source of truth for the gate; anyone past it is at least Rust. |
+| Game server runs one machine (`--ha=false`) until Phase 2 | Rooms live in memory; matchmaking and the WebSocket join must reach the same machine. |
+| `matches.reason` adds `sudden_death` and `decision` | A match can be won on rounds at the 5-round cap after a drawn final round. The sim → reason mapping is in `supabase/README.md`. |
+| Daily payouts: one per address per day, linked to `daily_rewards` by (id, address, lamports) | A retry that re-ranks can't double-pay; Phase 3 ranks once and reuses the stored snapshot on retry. |
+| `fee_swaps` holds one row per swap chunk | Jupiter swaps run in ≤ $2k chunks, each with its own signature. |
+| `match_replay_v` is public (finished matches only) | The spec's public replay page needs input logs, and the web app reads public views only. It never exposes IP hashes, fingerprints or flags. |
+| `balance_checks.tokens` is raw base units + `decimals` | Exact; no UI-unit rounding. |
+| New `public` functions are not executable by anon/authenticated by default | A test fails if any function outside an (empty) allowlist is. |
+| Landing showcase: pause button; reduced motion shows still frames | WCAG 2.2.2. Play under reduced motion animates the chickens but keeps the camera still. |
+| Disposing a renderer also disposes three's shared DFG LUT texture | r186 keeps a listener per renderer on it, which leaked every disposed canvas. Recheck on a three upgrade. |
