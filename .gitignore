@@ -1,0 +1,30 @@
+# deps / builds
+node_modules/
+**/.next/
+**/dist/
+**/out/
+coverage/
+**/coverage/
+test-results/
+**/test-results/
+playwright-report/
+**/playwright-report/
+*.tsbuildinfo
+next-env.d.ts
+
+# generated at dev/build time
+apps/web/public/decoders/
+
+# Blender scratch output
+art/blender/out/
+*.blend1
+
+# env
+.env
+.env.*
+!.env.example
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
