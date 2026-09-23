@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { CpuLevel } from "@cockfight/sim";
+import { RULES, runReplay, type CpuLevel, type Replay } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import FightHud from "@/components/hud/FightHud";
 import { useHud } from "@/components/hud/useHud";
@@ -68,6 +68,19 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   const shake = chosenShake ?? (reducedMotion ? 0.3 : 1);
   const audio = useRef<Audio>(null);
   const hud = useMemo(() => new HudStore(), []);
+
+  // Debug: expose the sim's replay runner so e2e can check determinism in every browser engine.
+  useEffect(() => {
+    if (!params.debug) return;
+    const w = window as unknown as { __cockfight?: Record<string, unknown> };
+    w.__cockfight = {
+      ...(w.__cockfight ?? {}),
+      sim: { rulesHash: RULES.hash, run: (r: Replay) => {
+        const res = runReplay(r);
+        return { hash: res.hash, ticks: res.ticks };
+      } },
+    };
+  }, [params.debug]);
   const cold = useHud(hud);
 
   useEffect(() => engine?.setQuality(quality), [engine, quality]);

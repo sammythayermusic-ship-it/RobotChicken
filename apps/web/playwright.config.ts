@@ -46,6 +46,9 @@ export default defineConfig({
       testIgnore: /perf\.spec\.ts/,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, launchOptions: { args: GPU_ARGS } },
     },
+    // The same sim in every JS engine: golden replays must hash identically.
+    { name: "firefox", testMatch: /replay-engines\.spec\.ts/, use: { ...devices["Desktop Firefox"] } },
+    { name: "webkit", testMatch: /replay-engines\.spec\.ts/, use: { ...devices["Desktop Safari"] } },
     {
       // Local only (pnpm test:perf): real-time frame timing needs a real GPU.
       name: "perf",

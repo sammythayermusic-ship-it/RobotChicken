@@ -38,6 +38,32 @@ jobs:
       - run: pnpm --filter @cockfight/game smoke
       - run: pnpm --filter @cockfight/worker build
 
+  # Playwright on the production build: the functional suite in Chromium
+  # (SwiftShader: no GPU on runners) and the golden replays in all three
+  # JS engines (V8, SpiderMonkey, JavaScriptCore).
+  e2e:
+    name: e2e (chromium, firefox, webkit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cockfight/web exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+
   # "Replay of a recorded input log yields an identical state hash on two
   # machines": the golden replays run on x64 Linux and arm64 macOS, and a
   # third job diffs the two outputs.
