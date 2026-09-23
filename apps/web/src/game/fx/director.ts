@@ -1,4 +1,5 @@
-import { Phase, RULES, reasonLabel, type MatchState, type SimEvent } from "@cockfight/sim";
+import { Phase, RULES, St, reasonLabel, type MatchState, type SimEvent } from "@cockfight/sim";
+import type { Tier } from "@cockfight/shared";
 import type { SoundName } from "../audio/names";
 import type { HudStore } from "../hud/hudStore";
 import type { FightCamera } from "../view/camera/FightCamera";
@@ -36,8 +37,10 @@ export class Director {
   private readonly particles: Particles;
   private readonly ko: KoPulse;
   private readonly hud: HudStore;
+  private readonly tiers: [Tier, Tier];
 
-  constructor(opts: { camera: FightCamera; particles: Particles; ko: KoPulse; hud: HudStore; seed: number }) {
+  constructor(opts: { camera: FightCamera; particles: Particles; ko: KoPulse; hud: HudStore; seed: number; tiers?: [Tier, Tier] }) {
+    this.tiers = opts.tiers ?? ["rust", "rust"];
     this.camera = opts.camera;
     this.particles = opts.particles;
     this.ko = opts.ko;
@@ -69,7 +72,9 @@ export class Director {
       const pan = Math.max(-1, Math.min(1, ex / 10)) * 0.6;
       for (const snd of r.sounds) this.play(snd, pan, seed);
       const dir = e.kind === "hit" ? (s.f[e.by].facing) : 1;
-      for (const b of r.bursts) this.particles.burst(b.kind, b.count, ex, ey, dir, seed ^ b.count);
+      // Gold tier: hits throw extra sparks (cosmetic only).
+      const sparkMul = e.kind === "hit" && this.tiers[e.by] === "gold" ? 2 : 1;
+      for (const b of r.bursts) this.particles.burst(b.kind, b.kind === "spark" ? b.count * sparkMul : b.count, ex, ey, dir, seed ^ b.count);
       if (r.trauma) this.camera.addTrauma(r.trauma);
       if (e.kind === "hit") {
         this.camera.onHit((e.damage * 100) / hpMax, dir);
@@ -77,6 +82,14 @@ export class Director {
       }
       if (r.hype) this.spike = Math.min(1, this.spike + r.hype);
       this.onEvent(e, s);
+    }
+
+    // Chrome tier: a dash leaves a light trail.
+    for (let i = 0; i < 2; i++) {
+      const f = s.f[i] as MatchState["f"][0];
+      if (this.tiers[i] === "chrome" && (f.st === St.dashF || f.st === St.dashB) && f.stTick <= 10 && f.hitstop === 0) {
+        this.particles.burst("trail", 2, f.x / MU, f.y / MU + 0.7, 0, (this.seed ^ Math.imul(s.tick, 31) ^ i) >>> 0);
+      }
     }
 
     // Camera and crowd follow the fight every tick.

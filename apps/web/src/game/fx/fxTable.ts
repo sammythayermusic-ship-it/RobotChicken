@@ -6,7 +6,7 @@
 import { Mv, type MvId, type SimEvent, type SimEventKind } from "@cockfight/sim";
 import type { SoundName } from "../audio/names";
 
-export type ParticleKind = "spark" | "screw" | "feather" | "dust" | "flash";
+export type ParticleKind = "spark" | "screw" | "feather" | "dust" | "flash" | "trail";
 
 export interface Burst {
   kind: ParticleKind;

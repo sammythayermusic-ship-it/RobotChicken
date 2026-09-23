@@ -164,7 +164,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     if (disposed) return;
     view = new FightView(renderer, gltf, opts.tiers, match.cur.rng);
     view.particles.enabled = quality.particles;
-    director = new Director({ camera: view.camera, particles: view.particles, ko: view.ko, hud: opts.hud, seed: match.cur.rng });
+    director = new Director({ camera: view.camera, particles: view.particles, ko: view.ko, hud: opts.hud, seed: match.cur.rng, tiers: opts.tiers });
     resize();
     if (opts.arena) {
       try {

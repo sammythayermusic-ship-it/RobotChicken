@@ -11,8 +11,8 @@ import type { ParticleKind } from "./fxTable";
  * uTime uniform changes. Two meshes: additive (sparks, flash) and alpha-blended
  * debris (screws, feathers, dust).
  */
-const KIND_ID: Record<ParticleKind, number> = { spark: 0, flash: 1, screw: 2, feather: 3, dust: 4 };
-const ADDITIVE: ReadonlySet<ParticleKind> = new Set(["spark", "flash"]);
+const KIND_ID: Record<ParticleKind, number> = { spark: 0, flash: 1, screw: 2, feather: 3, dust: 4, trail: 5 };
+const ADDITIVE: ReadonlySet<ParticleKind> = new Set(["spark", "flash", "trail"]);
 
 const VERT = /* glsl */ `
 attribute vec4 aSpawn; // xyz, t0
@@ -32,7 +32,10 @@ void main() {
   vec3 v = aVel.xyz;
   vec3 p;
   float kind = aMeta.x;
-  if (kind > 2.5 && kind < 3.5) {
+  if (kind > 4.5) {
+    // trail: stays where it was dropped, drifts up a touch
+    p = aSpawn.xyz + v * age + vec3(0.0, 0.15 * age, 0.0);
+  } else if (kind > 2.5 && kind < 3.5) {
     // feather: drag, flutter, slow fall
     float k = 3.5;
     p = aSpawn.xyz + v * (1.0 - exp(-k * age)) / k + vec3(sin(age * 7.0 + aMeta.z * 6.28) * 0.15, -0.45 * age, 0.0);
@@ -58,6 +61,8 @@ void main() {
     corner = ax * corner.x * size * stretch + ay * corner.y * size * (1.0 - vLife * 0.7);
   } else if (kind < 1.5) {
     corner *= size * (0.6 + vLife * 1.8);
+  } else if (kind > 4.5) {
+    corner *= size * (1.0 - vLife * 0.6);
   } else {
     float a = aMeta.w * age + aMeta.z * 6.28;
     corner = mat2(cos(a), -sin(a), sin(a), cos(a)) * corner * size * (kind > 3.5 ? (0.6 + vLife * 1.4) : 1.0);
@@ -93,10 +98,14 @@ void main() {
     if (e > 1.0) discard;
     col = vec3(0.92, 0.88, 0.8) * (0.8 + 0.2 * vUv.y);
     a = 1.0 - smoothstep(0.7, 1.0, vLife);
-  } else {                      // dust: soft brown puff
+  } else if (vKind < 4.5) {     // dust: soft brown puff
     float g = smoothstep(1.0, 0.2, r);
     col = vec3(0.35, 0.28, 0.22);
     a = g * 0.45 * (1.0 - vLife);
+  } else {                      // trail: chrome's cold light streak
+    float g = smoothstep(1.0, 0.0, r);
+    col = vec3(0.45, 0.8, 1.9) * g;
+    a = g * (1.0 - vLife);
   }
   if (a <= 0.003) discard;
   gl_FragColor = vec4(col, a);
@@ -242,6 +251,9 @@ export class Particles {
         }
         case "feather":
           pool.emit(t, x, y + 0.2, z, dir * (1 + r(1) * 4) + (r(2) - 0.5) * 3, 1.5 + r(3) * 3, (r(4) - 0.5) * 2, 1.4 + r(5) * 1.2, k, 0.16 + r(6) * 0.08, r(1), (r(2) - 0.5) * 6);
+          break;
+        case "trail":
+          pool.emit(t, x + (r(1) - 0.5) * 0.3, y + (r(2) - 0.5) * 0.5, z * 0.3, 0, 0, 0, 0.35 + r(3) * 0.15, k, 0.35 + r(4) * 0.2, r(5), 0);
           break;
         case "dust":
           pool.emit(t, x + (r(1) - 0.5) * 0.6, 0.05, z, (r(2) - 0.5) * 3, 0.3 + r(3) * 0.6, (r(4) - 0.5), 0.5 + r(5) * 0.4, k, 0.35 + r(6) * 0.3, r(1), (r(2) - 0.5) * 2);
