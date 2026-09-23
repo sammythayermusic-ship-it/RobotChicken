@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Document } from "@gltf-transform/core";
-import { CONTRACT, PLACEHOLDER_GLB, fromRepo, readGlb, readHitboxes } from "../src/assets/gltf";
+import { CONTRACT, PLACEHOLDER_GLB, fromRepo, readGlb, readHitboxes, userCwd, userPath } from "../src/assets/gltf";
+import { repoPath } from "../src/root";
 import { clipNameHint, levenshtein, validateDocument, validateFile, validateGlb, type Issue } from "../src/assets/validate";
 
 const glbPath = fromRepo(PLACEHOLDER_GLB);
@@ -10,6 +12,14 @@ const errors = (issues: Issue[]) => issues.filter((i) => i.severity === "error")
 const errorsOf = (doc: Document) => errors(validateDocument(doc).issues);
 const node = (doc: Document, name: string) => doc.getRoot().listNodes().find((n) => n.getName() === name)!;
 const anim = (doc: Document, name: string) => doc.getRoot().listAnimations().find((a) => a.getName() === name)!;
+/** The next float32 above a positive t (0 stays 0). */
+const nextUp32 = (t: number) => {
+  if (t <= 0) return t;
+  const f = new Float32Array([t]);
+  const bits = new Uint32Array(f.buffer);
+  bits[0] = bits[0]! + 1;
+  return f[0]!;
+};
 
 describe("the committed placeholder", () => {
   it("passes with no errors or warnings (gltf-validator, contract, hitboxes sha256)", async () => {
@@ -110,6 +120,80 @@ describe("mutated copies fail", () => {
     expect(codes).toContain("active");
   });
 
+  it("a STEP key stored a hair after its frame's float32 time is a warning (three.js would show it a frame late)", async () => {
+    const stepPeck = async (shift: (t: number) => number) => {
+      const doc = await readGlb(bytes);
+      const sampler = anim(doc, "peck")
+        .listSamplers()
+        .find((s) => s.getInterpolation() === "LINEAR" && s.getInput()!.getCount() > 2)!;
+      const times = Float32Array.from(sampler.getInput()!.getArray()!, shift);
+      sampler.setInput(doc.createAccessor().setType("SCALAR").setArray(times)).setInterpolation("STEP");
+      return validateDocument(doc).issues;
+    };
+    // Blender's exporter writes key f at exactly Math.fround(f / 60): stepping that is fine.
+    expect(await stepPeck((t) => t)).toEqual([]);
+    const late = await stepPeck(nextUp32);
+    expect(errors(late)).toEqual([]);
+    expect(late.map((i) => i.message)).toEqual([expect.stringContaining('clip "peck" has STEP keys stored just after their frame time')]);
+  });
+
+  it("an extra unskinned mesh is an error, and its triangles and materials count", async () => {
+    const base = validateDocument(await readGlb(bytes)).stats.triangles!;
+    const doc = await readGlb(bytes);
+    const tris = 60_000;
+    const prim = doc
+      .createPrimitive()
+      .setAttribute("POSITION", doc.createAccessor().setType("VEC3").setArray(new Float32Array([0, 0, 0, 0.1, 0, 0, 0, 0.1, 0])))
+      .setIndices(doc.createAccessor().setType("SCALAR").setArray(Uint32Array.from({ length: tris * 3 }, (_, i) => i % 3)))
+      .setMaterial(doc.createMaterial("not_a_slot"));
+    node(doc, "head").addChild(doc.createNode("crest").setMesh(doc.createMesh("crest").addPrimitive(prim)));
+    const r = validateDocument(doc);
+    expect(r.stats.triangles).toBe(base + tris);
+    expect(r.stats.materials).toContain("not_a_slot");
+    const errs = errors(r.issues);
+    expect(errs.map((e) => e.code).sort()).toEqual(["budget", "materials", "mesh"]);
+    expect(errs.find((e) => e.code === "mesh")!.message).toContain('mesh node "crest" is not skinned (it follows bone "head" rigidly)');
+  });
+
+  it("a chicken modeled off the origin (root and its keys moved forward) is an error", async () => {
+    const doc = await readGlb(bytes);
+    const root = node(doc, "root");
+    root.setTranslation([0, 0, 0.3]);
+    // Clips may share one output accessor: shift each accessor once.
+    const outputs = new Set(
+      doc
+        .getRoot()
+        .listAnimations()
+        .flatMap((a) => a.listChannels())
+        .filter((c) => c.getTargetNode() === root && c.getTargetPath() === "translation")
+        .map((c) => c.getSampler()!.getOutput()!),
+    );
+    expect(outputs.size).toBeGreaterThan(0);
+    for (const out of outputs) out.setArray(Float32Array.from(out.getArray() as Float32Array, (v, i) => (i % 3 === 2 ? v + 0.3 : v)));
+    const errs = errorsOf(doc);
+    expect(errs.map((e) => e.code).sort()).toEqual(["center", "root"]);
+    expect(errs.find((e) => e.code === "root")!.message).toContain('"root" rests at (0.000, 0.000, 0.300); it must sit at the origin');
+  });
+
+  it("a body off-center over a root at the origin is an error", async () => {
+    const doc = await readGlb(bytes);
+    const hurt = node(doc, "hurt_body");
+    const [x, y, z] = hurt.getTranslation();
+    hurt.setTranslation([x, y, z + 0.1]);
+    const errs = errorsOf(doc);
+    expect(errs.map((e) => e.code)).toEqual(["center"]);
+    expect(errs[0]!.message).toContain('at idle frame 0 "hurt_body" is centered at x=0.000 z=0.100');
+  });
+
+  it("a mesh off-center left-right is a warning", async () => {
+    const doc = await readGlb(bytes);
+    const positions = new Set(doc.getRoot().listMeshes().flatMap((m) => m.listPrimitives().map((p) => p.getAttribute("POSITION")!)));
+    for (const pos of positions) pos.setArray(Float32Array.from(pos.getArray() as Float32Array, (v, i) => (i % 3 === 0 ? v + 0.1 : v)));
+    const r = validateDocument(doc);
+    expect(errors(r.issues)).toEqual([]);
+    expect(r.issues.map((i) => i.message)).toEqual(["the chicken is centered at x=0.100; it should be centered left-right on x=0"]);
+  });
+
   it("a stale hitboxes.json sha256 is an error", async () => {
     const hitboxes = { ...readHitboxes(), source: { file: PLACEHOLDER_GLB, sha256: "0".repeat(64) } };
     const r = await validateGlb(bytes, { file: PLACEHOLDER_GLB, hitboxes });
@@ -145,5 +229,22 @@ describe("clip name hints", () => {
   it("does not hint unrelated names", () => {
     expect(clipNameHint("idle", ["Action", "entrance_2"])).toBeUndefined();
     expect(clipNameHint("walk_fwd", ["walk_back"])).toBeUndefined();
+  });
+});
+
+describe("command-line paths", () => {
+  it("resolve against CF_CWD, then INIT_CWD, then the process cwd, skipping empty values", () => {
+    expect(userCwd({ CF_CWD: "/user/dir", INIT_CWD: "/repo" })).toBe("/user/dir");
+    expect(userCwd({ CF_CWD: "", INIT_CWD: "/repo" })).toBe("/repo");
+    expect(userCwd({ INIT_CWD: "" })).toBe(process.cwd());
+    expect(userPath("../a.glb", { CF_CWD: "/repo/docs", INIT_CWD: "/repo" })).toBe("/repo/a.glb");
+  });
+
+  const hasPnpm = spawnSync("pnpm", ["--version"]).status === 0;
+  it.skipIf(!hasPnpm)("the root wrapper resolves a path relative to where the user ran it, not the repo root", () => {
+    // The wrapper's nested pnpm resets INIT_CWD to the repo root; the wrapper forwards the user's directory as CF_CWD.
+    const run = spawnSync("pnpm", ["-s", "assets:validate", `../${PLACEHOLDER_GLB}`, "--json"], { cwd: repoPath("docs"), encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toMatchObject({ file: PLACEHOLDER_GLB, ok: true });
   });
 });

@@ -3,9 +3,13 @@
  * three.js: the bake and the validator both pose a gltf-transform Document
  * through this module (three is only the independent oracle in bakeParity).
  *
- * Exporters store key times as float32, so f/60 in float64 rarely equals the
- * stored time exactly. A time within KEY_EPS of a key returns that key's value
- * unchanged; otherwise STEP would pick the previous key at an integer frame.
+ * Exporters store key times as float32: Blender writes key f at exactly
+ * Math.fround(f / 60), which for most frames is slightly above the float64
+ * f / 60. So sim frame f samples every clip at frameTime(f), that float32
+ * instant, here and at runtime. three.js's STEP interpolant shows the last key
+ * at or before t, so posing it at the float64 f / 60 would show key f - 1 on
+ * those frames, a frame away from the bake. A time within KEY_EPS of a key
+ * also returns that key's value unchanged, so the bake is exact on any key.
  */
 import type { Animation, Document, Node } from "@gltf-transform/core";
 
@@ -16,6 +20,16 @@ export type Mat4 = Float64Array;
 
 /** Seconds; far below half a frame (8.3 ms) and far above float32 time error. */
 export const KEY_EPS = 1e-5;
+
+/**
+ * The clip time (seconds) at which sim frame f is sampled: the float32 time
+ * an exporter stores for key f. The bake uses it, and the runtime must pose
+ * with `action.time = Math.fround(f / 60)` (not f / 60) so a STEP key lands on
+ * the same frame in both.
+ */
+export function frameTime(f: number, fps: number): number {
+  return Math.fround(f / fps);
+}
 
 function normalize(v: number[]): number[] {
   const len = Math.hypot(...v);

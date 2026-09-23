@@ -54,6 +54,15 @@ hitboxes.json, re-bless the golden replays (`rulesHash` covers the baked tables)
   a `cf_phases` custom property equal to the contract's phases.
 - **No root motion.** `root` is a Deform bone at the origin and never moves;
   the sim owns position. Move `body` instead.
+- **Centered on the origin.** The sim places the fighter at the model origin,
+  so model the chicken around it: `root`'s head sits exactly at the origin, and
+  at idle frame 0 `hurt_body` is within 0.02 of it in x and z (both are
+  errors). The export and `assets:validate` check the root; `assets:validate`
+  checks the body and warns if the mesh is off-center left-right.
+- **One skinned mesh.** Everything the chicken draws is one mesh with an
+  Armature modifier (at most 15k triangles). An extra mesh fails the export and
+  `assets:validate`, even one parented to a bone: join it in (Ctrl+J) and
+  weight it to its bone.
 - **Bones.** All exported bones must be Deform (`export_def_bones=True` drops the
   rest, so control/IK bones do not count toward the 40-joint budget).
 - **Hitbox helpers.** Empties parented to Deform bones (`Bone` parent type):
@@ -98,7 +107,11 @@ before exporting (`CF_BEAK` lines in the log):
 | super | 11-16 | 0.90-1.00 | ~0.8 |
 | dive_kick | 7-16 | 0.40-0.50 | -0.10-0.00 |
 
-During startup and recovery the beak stays back (z <= 0.6; it rests at 0.55),
-so a hit can only land on active frames. `hurt_body` is vertical at rest,
-centered at y = 0.82 so its bottom touches the ground. `tools/test/bake.test.ts`
-re-checks these ranges on the baked integers.
+During startup and recovery the beak stays back (z <= 0.6; it rests at 0.55).
+That is purely visual, so wind-up and follow-through read clearly. It is not
+what keeps hits to active frames: pushboxes keep grounded fighters at least
+0.8 apart, and at that distance even the retracted beak overlaps the other
+chicken's `hurt_body`. Hits land only on active frames because the sim tests a
+move's hit sphere only during its active samples (`phases`). `hurt_body` is
+vertical at rest, centered at y = 0.82 so its bottom touches the ground.
+`tools/test/bake.test.ts` re-checks these ranges on the baked integers.
