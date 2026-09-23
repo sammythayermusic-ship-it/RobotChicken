@@ -25,6 +25,16 @@ describe("audio recipes", () => {
     expect(Object.keys(RECIPES).sort()).toEqual([...SOUND_NAMES].sort());
   });
 
+  it("loudness overrides stay in a sane range (they size sounds, not replace SOUND_SPECS gains)", () => {
+    for (const n of SOUND_NAMES) {
+      const l = RECIPES[n].loudness;
+      if (l !== undefined) {
+        expect(l, n).toBeGreaterThan(0.03);
+        expect(l, n).toBeLessThanOrEqual(0.2);
+      }
+    }
+  });
+
   it("only loops have a loop tail, and every looping spec has one", () => {
     for (const n of SOUND_NAMES) expect(Boolean(RECIPES[n].loopTail), n).toBe(Boolean(SOUND_SPECS[n].loop));
   });

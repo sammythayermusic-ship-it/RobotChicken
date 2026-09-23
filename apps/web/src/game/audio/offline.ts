@@ -26,12 +26,12 @@ export async function renderRecipe(name: SoundName, recipe: Recipe, sampleRate =
   const rendered = await ctx.startRendering();
   if (!tail) {
     const d = rendered.getChannelData(0);
-    normalize(d, sampleRate);
+    normalize(d, sampleRate, 0.89, recipe.loudness);
     fadeOut(d, Math.round(sampleRate * 0.004));
     return rendered;
   }
   const loop = loopCrossfade(rendered.getChannelData(0), period);
-  normalize(loop, sampleRate);
+  normalize(loop, sampleRate, 0.89, recipe.loudness);
   const buf = new AudioBuffer({ length: period, numberOfChannels: 1, sampleRate });
   buf.copyToChannel(loop, 0);
   return buf;

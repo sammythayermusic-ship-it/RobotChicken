@@ -220,32 +220,37 @@ export const block: Recipe = {
   },
 };
 
-/** Air cut by a beak: band-passed noise sweeping up. */
-function whoosh(ctx: SynthContext, out: AudioNode, r: Rng, from: number, to: number, sweep: number, seconds: number, q: number, color: "white" | "pink"): void {
+/**
+ * Air cut by a beak: noise through two stacked band-passes sweeping up
+ * together (4th order, so it reads as a "swish" and not as hiss).
+ */
+function whoosh(ctx: SynthContext, out: AudioNode, r: Rng, from: number, to: number, sweep: number, seconds: number, q: number, color: "white" | "pink", level = 1): void {
   const t = 0.002;
-  const bp = filter(ctx, "bandpass", from, q);
-  glide(bp.frequency, t, from, to, sweep);
+  const a = filter(ctx, "bandpass", from, q);
+  const b = filter(ctx, "bandpass", from, q);
+  glide(a.frequency, t, from, to, sweep);
+  glide(b.frequency, t, from, to, sweep);
   const g = gain(ctx, 0);
   env(g.gain, t, [
     [0, 0],
-    [sweep * 0.35, 1],
-    [sweep, 0.55],
+    [sweep * 0.35, level],
+    [sweep, level * 0.55],
     [seconds - 0.01, 0],
   ]);
-  chain(noise(ctx, t, seconds, r, color), bp, g, out);
+  chain(noise(ctx, t, seconds, r, color), a, b, g, out);
 }
 
 export const whiffLight: Recipe = {
   seconds: 0.22,
   render(ctx, out, r) {
-    whoosh(ctx, out, r, 400, 2000, 0.12, 0.21, 1.4, "white");
+    whoosh(ctx, out, r, 450, 2400, 0.12, 0.21, 1.8, "white");
   },
 };
 
 export const whiffHeavy: Recipe = {
   seconds: 0.36,
   render(ctx, out, r) {
-    whoosh(ctx, out, r, 250, 1400, 0.2, 0.35, 1.1, "pink");
+    whoosh(ctx, out, r, 260, 1500, 0.2, 0.35, 1.5, "pink");
     // Body: the low rush of a whole robot lunging.
     const g = gain(ctx, 0);
     env(g.gain, 0.002, [
@@ -275,8 +280,8 @@ function servo(ctx: SynthContext, out: AudioNode, t: number, from: number, to: n
 export const dash: Recipe = {
   seconds: 0.26,
   render(ctx, out, r) {
-    whoosh(ctx, out, r, 900, 3500, 0.1, 0.24, 1.3, "white");
-    servo(ctx, out, 0.004, 420, 900, 0.1, 0.18);
+    whoosh(ctx, out, r, 900, 3500, 0.1, 0.24, 1.6, "white", 0.6);
+    servo(ctx, out, 0.004, 420, 900, 0.1, 0.4);
     click(ctx, out, 0.002, r, 0.25, 1500, 0.01);
   },
 };
@@ -286,8 +291,8 @@ export const jump: Recipe = {
   seconds: 0.3,
   render(ctx, out, r) {
     thump(ctx, out, 0.002, 120, 70, 0.05, 0.6, 0.08);
-    servo(ctx, out, 0.01, 260, 640, 0.17, 0.3);
-    whoosh(ctx, out, r, 600, 1600, 0.12, 0.26, 1, "pink");
+    servo(ctx, out, 0.01, 260, 640, 0.17, 0.45);
+    whoosh(ctx, out, r, 600, 1600, 0.12, 0.26, 1.4, "pink", 0.5);
   },
 };
 
@@ -308,6 +313,7 @@ export const land: Recipe = {
 /** Ring-out: a cartoon falling whistle, then the robot lands in the scrap pile. */
 export const ringout: Recipe = {
   seconds: 2.7,
+  loudness: 0.14,
   render(ctx, out, r) {
     const fall = 1.0;
     const wet = withReverb(ctx, out, 1.3, 0.28, r, 0.45);

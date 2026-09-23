@@ -90,6 +90,9 @@ export function weighted(d: Float32Array, sampleRate: number): Float32Array {
   return biquad(biquad(x, sampleRate, "highshelf", 1682, 0.7071, 4), sampleRate, "highpass", 150, 0.7071);
 }
 
+/** What a sustained sound is normalised to unless its recipe asks for more (or less). */
+export const DEFAULT_LOUDNESS = 0.1;
+
 /** Loudness window: EBU R128 "momentary" (400 ms), close to how long the ear integrates a burst. */
 export const LOUDNESS_WINDOW = 0.4;
 
@@ -115,7 +118,7 @@ export function loudness(d: Float32Array, sampleRate: number): number {
  * loudness-limited, so the SOUND_SPECS gains compare like with like.
  * Non-finite samples become 0. Returns the gain applied.
  */
-export function normalize(d: Float32Array, sampleRate: number, peak = 0.89, target = 0.1): number {
+export function normalize(d: Float32Array, sampleRate: number, peak = 0.89, target = DEFAULT_LOUDNESS): number {
   const lv = measure(d, 1);
   if (!lv.finite) for (let i = 0; i < d.length; i++) if (!Number.isFinite(d[i] as number)) d[i] = 0;
   if (lv.peak <= 1e-6) return 1;

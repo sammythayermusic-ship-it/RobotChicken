@@ -10,6 +10,7 @@ import { chain, env, filter, gain, glide, modes, noise, osc, shaper, withReverb,
  */
 export const koHorn: Recipe = {
   seconds: 2.1,
+  loudness: 0.16,
   render(ctx, out, r) {
     const t = 0.003;
     const d = 1.4;

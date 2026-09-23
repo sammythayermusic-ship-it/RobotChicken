@@ -168,6 +168,7 @@ export const screamHeavy: Recipe = {
  */
 export const screamKo: Recipe = {
   seconds: 1.7,
+  loudness: 0.13,
   render(ctx, out, r) {
     const t = 0.003;
     const d = 1.25;

@@ -183,7 +183,7 @@ export class AudioEngine implements AudioSink {
     if (Math.abs(x - this.hypeSent) < 0.02 && now - this.hypeAt < 0.1) return;
     this.hypeSent = x;
     this.hypeAt = now;
-    const level = SOUND_SPECS.crowd_loop.gain * (0.3 + 0.7 * x * x);
+    const level = SOUND_SPECS.crowd_loop.gain * (0.45 + 0.55 * x * x);
     c.level.gain.cancelScheduledValues(now);
     c.level.gain.setTargetAtTime(level, now, 0.3);
     c.level.gain.setTargetAtTime(0, now + 0.6, 0.6);

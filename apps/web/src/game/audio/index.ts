@@ -145,6 +145,6 @@ async function loadSounds(engine: AudioEngine): Promise<void> {
   const fileCount = SOUND_NAMES.filter((n) => engine.sourceOf(n) === "file").length;
   console.info(
     `[cockfight] audio: ${engine.ready}/${SOUND_NAMES.length} sounds ready in ${engine.readyMs} ms ` +
-      `(first hits ${engine.firstHitsMs} ms; ${engine.ready - fileCount} procedural, ${Math.round(renderMs)} ms rendering; ${fileCount} from files)`,
+      `(first hits ${engine.firstHitsMs} ms; ${engine.ready - fileCount} procedural, ${Math.round(renderMs)} ms of render work; ${fileCount} from files)`,
   );
 }

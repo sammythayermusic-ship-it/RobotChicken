@@ -185,6 +185,7 @@ export const crowdSwell: Recipe = {
 /** The big one after a KO or ring-out: fast rise, "YEAH!"s, whistles, applause. */
 export const crowdRoar: Recipe = {
   seconds: 3.6,
+  loudness: 0.15,
   render(ctx, out, r) {
     const d = 3.55;
     const g = gain(ctx, 0);

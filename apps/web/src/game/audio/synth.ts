@@ -29,6 +29,13 @@ export interface Recipe {
    * head, so the seam is as smooth as the rest of the loop.
    */
   loopTail?: number;
+  /**
+   * Loudness (weighted 400 ms RMS, see dsp.ts) a sustained sound is
+   * normalised to; default 0.1. The knob for "this one is bigger": the KO
+   * horn and roar sit above the rest of the mix. Short hits are peak-limited
+   * before they reach it.
+   */
+  loudness?: number;
   render(ctx: SynthContext, out: AudioNode, r: Rng): void;
 }
 

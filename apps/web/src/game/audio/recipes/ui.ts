@@ -63,14 +63,18 @@ export const countdownTick: Recipe = {
   },
 };
 
-/** FIGHT!: a rising two-note stab at 1760 Hz over a whoosh, under the bell. */
+/**
+ * FIGHT!: a rising two-note stab over a whoosh. It always sounds with the
+ * round bell (600 Hz), so it sits a fifth above it (900 / 1800 Hz) rather
+ * than beating against the bell's 1656 Hz partial.
+ */
 export const fight: Recipe = {
   seconds: 0.6,
   render(ctx, out, r) {
     const wet = withReverb(ctx, out, 0.6, 0.18, r, 0.6);
-    brass(ctx, wet, 0.003, 880, 0.09, 0.6, false);
-    brass(ctx, wet, 0.09, 1760, 0.38, 0.75, false);
-    blip(ctx, wet, 0.09, "sine", 1760, 0.35, 0.3, 0.05);
+    brass(ctx, wet, 0.003, 900, 0.09, 0.6, false);
+    brass(ctx, wet, 0.09, 1800, 0.38, 0.75, false);
+    blip(ctx, wet, 0.09, "sine", 1800, 0.35, 0.3, 0.05);
     const n = gain(ctx, 0);
     env(n.gain, 0.003, [
       [0, 0],
@@ -101,6 +105,7 @@ export const heatFull: Recipe = {
 /** Victory fanfare: G-C-E-G pickup into a held C major chord. */
 export const winJingle: Recipe = {
   seconds: 2.4,
+  loudness: 0.12,
   render(ctx, out, r) {
     const wet = withReverb(ctx, out, 1.3, 0.25, r, 0.5);
     const notes: [number, number, number][] = [
