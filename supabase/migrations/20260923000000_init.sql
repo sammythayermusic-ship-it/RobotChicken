@@ -267,6 +267,9 @@ alter table public.abuse_events   enable row level security;
 -- and a win for neither. earned_lamports_* sums paid payouts of both kinds.
 -- The daily reward job must rank a closed day from matches directly: _today
 -- restarts at 00:00 UTC on the first refresh after midnight.
+-- No column may change on every refresh (no now() column): REFRESH ...
+-- CONCURRENTLY diffs whole rows, so such a column would rewrite every row,
+-- every minute, and the writes and WAL would grow with the player count.
 create materialized view public.leaderboard_v as
 with bounds as (
   select date_trunc('day', now(), 'UTC') as day_start, now() - interval '7 days' as week_start
@@ -311,8 +314,7 @@ select
   r.wins_all,
   r.matches_all,
   round(r.wins_all::numeric / nullif(r.matches_all, 0), 4) as win_rate_all,
-  coalesce(e.earned_lamports_all, 0)::bigint                 as earned_lamports_all,
-  now() as refreshed_at
+  coalesce(e.earned_lamports_all, 0)::bigint                 as earned_lamports_all
 from record r
 join public.players pl on pl.address = r.address
 left join earned e on e.address = r.address;

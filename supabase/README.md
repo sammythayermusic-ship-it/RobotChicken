@@ -161,8 +161,16 @@ per address with at least one finished match. Columns:
 - `wins_*` and `matches_*` for three windows: `_today` (the current UTC day,
   for the daily leaderboard), `_7d` (the trailing 7 days) and `_all` (all time);
 - `win_rate_7d` and `win_rate_all` (4 decimals, null with no matches);
-- `earned_lamports_7d` and `earned_lamports_all`: paid payouts of both kinds;
-- `refreshed_at`.
+- `earned_lamports_7d` and `earned_lamports_all`: paid payouts of both kinds.
+
+There is deliberately no `refreshed_at` column. `refresh materialized view
+concurrently` diffs whole rows and rewrites every row that differs, so a
+column that changes on every refresh (such as `now()`) would rewrite every
+row every minute, with writes and WAL growing with the all-time player count
+rather than with activity. A test checks that a refresh with no data change
+rewrites nothing. If the UI needs an "updated N s ago" label, add a one-row
+table that the cron command updates after the refresh, and expose its time
+through `pool_v`.
 
 A draw counts as a match for both players and a win for neither. The unique
 index on `address` is what allows `refresh materialized view concurrently`, so

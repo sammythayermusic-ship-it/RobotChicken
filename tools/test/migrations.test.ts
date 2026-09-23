@@ -331,7 +331,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       daily_rewards: "day date!, rank smallint!, address sol_address!, wins integer!, elo integer!, pool_lamports bigint!, share_bps integer!, lamports bigint!, payout_id uuid",
       fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, at ${ts}!`,
       fee_swaps: `swap_sig sol_signature!, fee_claim_id uuid!, lamports bigint!, at ${ts}!`,
-      leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint, refreshed_at ${ts}`,
+      leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint`,
       matches: `id uuid!, p1 sol_address!, p2 sol_address!, region text!, started_at ${ts}!, ended_at ${ts}, winner sol_address, reason text, rounds jsonb!, input_log bytea, result_hash text, net_quality_p1 real, net_quality_p2 real, payout_lamports bigint!, flag text`,
       payouts: `id uuid!, kind text!, idem_key text!, match_id uuid, to_address sol_address!, lamports bigint!, status text!, tx_sig sol_signature, attempts integer!, next_attempt_at ${ts}, last_error text, created_at ${ts}!, paid_at ${ts}`,
       players: `address sol_address!, username text, username_sig sol_signature, elo integer!, tier text, first_seen ${ts}!, last_seen ${ts}!, flags jsonb!`,
@@ -798,6 +798,29 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         },
       ];
       expect(board).toEqual(expected.sort((a, b) => (a.address < b.address ? -1 : 1)));
+    });
+  });
+
+  it("rewrites no leaderboard_v row on a refresh when nothing changed", async () => {
+    // REFRESH ... CONCURRENTLY compares whole rows and rewrites the ones that
+    // differ, so a column that changes on every refresh (e.g. now()) would
+    // rewrite every row every minute.
+    await scratch(async (c) => {
+      await addPlayers(c, ROOSTER, HEN, CHICK);
+      await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, endedAgo: "1 day" });
+      await addMatch(c, { p1: HEN, p2: CHICK, winner: null, reason: "draw", endedAgo: "10 days" });
+      const refresh = () => as(c, "postgres", () => c.exec("refresh materialized view concurrently public.leaderboard_v"));
+      const ctids = () => rows<{ address: string; ctid: string }>(c, "select address, ctid::text as ctid from public.leaderboard_v order by address");
+      await refresh();
+      const before = await ctids();
+      expect(before).toHaveLength(3);
+      await refresh();
+      expect(await ctids()).toEqual(before);
+      // A real change rewrites only the rows it touches.
+      await c.query("update public.players set elo = 1016 where address = $1", [HEN]);
+      await refresh();
+      const after = await ctids();
+      expect(after.filter((r, i) => r.ctid !== before[i]?.ctid).map((r) => r.address)).toEqual([HEN]);
     });
   });
 
