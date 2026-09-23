@@ -43,6 +43,36 @@ export class MockParam {
     return v;
   }
 
+  /**
+   * The automated value at `time`, following the WebAudio timeline rules for
+   * set / linear / exponential / target events (enough to spot a source that
+   * stops while its envelope is still open, i.e. a click).
+   */
+  valueAt(time: number): number {
+    const evs = this.events.filter((e) => e.kind !== "cancel").sort((a, b) => a.time - b.time) as Exclude<ParamEvent, { kind: "cancel" }>[];
+    let v = this.value;
+    let vt = 0;
+    for (let i = 0; i < evs.length; i++) {
+      const e = evs[i] as Exclude<ParamEvent, { kind: "cancel" }>;
+      if (e.time > time) {
+        if (e.kind === "linear") return v + (e.value - v) * ((time - vt) / (e.time - vt));
+        if (e.kind === "exp" && v !== 0 && Math.sign(v) === Math.sign(e.value)) return v * Math.pow(e.value / v, (time - vt) / (e.time - vt));
+        return v;
+      }
+      if (e.kind === "target") {
+        const next = evs[i + 1];
+        const until = Math.min(time, next ? next.time : Infinity);
+        v = e.value + (v - e.value) * Math.exp(-(until - e.time) / Math.max(1e-9, e.tc));
+        vt = until;
+        if (until === time) return v;
+        continue;
+      }
+      v = e.value;
+      vt = e.time;
+    }
+    return v;
+  }
+
   setValueAtTime(value: number, time: number) {
     this.check("setValueAtTime", time, value);
     this.events.push({ kind: "set", time, value });
