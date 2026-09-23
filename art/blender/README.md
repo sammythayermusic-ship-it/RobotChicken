@@ -54,6 +54,10 @@ hitboxes.json, re-bless the golden replays (`rulesHash` covers the baked tables)
   a `cf_phases` custom property equal to the contract's phases.
 - **No root motion.** `root` is a Deform bone at the origin and never moves;
   the sim owns position. Move `body` instead.
+- **One skinned mesh.** Everything the chicken draws is one mesh with an
+  Armature modifier (at most 15k triangles). An extra mesh fails the export and
+  `assets:validate`, even one parented to a bone: join it in (Ctrl+J) and
+  weight it to its bone.
 - **Bones.** All exported bones must be Deform (`export_def_bones=True` drops the
   rest, so control/IK bones do not count toward the 40-joint budget).
 - **Hitbox helpers.** Empties parented to Deform bones (`Bone` parent type):

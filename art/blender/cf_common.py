@@ -164,6 +164,13 @@ def check_scene(contract):
     skinned = [o for o in meshes if any(m.type == "ARMATURE" and m.object == rig for m in o.modifiers)]
     if len(skinned) != 1:
         raise ExportError(f"expected exactly one mesh with an Armature modifier on '{rig_name}', found {[o.name for o in skinned]}")
+    extra = [o.name for o in meshes if o not in skinned]
+    if extra:
+        # Every exported mesh is drawn and counts toward the triangle budget; the spec allows one skinned mesh.
+        raise ExportError(
+            f"the chicken must be one skinned mesh, but {extra} are also under '{rig_name}': join them into "
+            f"'{skinned[0].name}' (Ctrl+J) and weight them to their bones"
+        )
     if not _is_identity(skinned[0].matrix_world):
         raise ExportError(f"mesh '{skinned[0].name}' must have identity transforms (Object > Apply > All Transforms)")
 
@@ -246,6 +253,18 @@ def read_glb_json(path):
     return json.loads(data[20 : 20 + json_len]), data
 
 
+def _triangles(g, prim):
+    """Triangles one glTF primitive draws (0 for points and lines)."""
+    mode = prim.get("mode", 4)
+    accessor = prim["indices"] if "indices" in prim else prim["attributes"]["POSITION"]
+    count = g["accessors"][accessor]["count"]
+    if mode == 4:  # TRIANGLES
+        return count // 3
+    if mode in (5, 6):  # TRIANGLE_STRIP, TRIANGLE_FAN
+        return max(count - 2, 0)
+    return 0
+
+
 def verify_export(path, contract):
     """Re-read the exported glb and check the contract; returns the CF_REPORT dict."""
     g, data = read_glb_json(path)
@@ -266,11 +285,15 @@ def verify_export(path, contract):
         if extras.get("cf_shape") != spec["shape"] or "cf_radius" not in extras:
             raise ExportError(f"helper '{name}' is missing from the glb or lost its extras (export_extras must be on)")
 
-    skinned = [n for n in nodes if "mesh" in n and "skin" in n]
+    mesh_nodes = [n for n in nodes if "mesh" in n]
+    skinned = [n for n in mesh_nodes if "skin" in n]
     if len(skinned) != 1:
         raise ExportError(f"expected one skinned mesh node, found {len(skinned)}")
-    prims = g["meshes"][skinned[0]["mesh"]]["primitives"]
-    tris = sum(g["accessors"][p["indices"]]["count"] // 3 for p in prims)
+    if len(mesh_nodes) != 1:
+        names = [n.get("name") for n in mesh_nodes if "skin" not in n]
+        raise ExportError(f"the chicken must be one skinned mesh; the glb also has mesh nodes {names}")
+    # Count every mesh node the game would draw, not just the skinned one.
+    tris = sum(_triangles(g, p) for n in mesh_nodes for p in g["meshes"][n["mesh"]]["primitives"])
     joints = g["skins"][skinned[0]["skin"]]["joints"]
     joint_names = [nodes[j].get("name") for j in joints]
     budgets = contract["budgets"]

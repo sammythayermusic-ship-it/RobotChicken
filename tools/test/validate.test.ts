@@ -137,6 +137,24 @@ describe("mutated copies fail", () => {
     expect(late.map((i) => i.message)).toEqual([expect.stringContaining('clip "peck" has STEP keys stored just after their frame time')]);
   });
 
+  it("an extra unskinned mesh is an error, and its triangles and materials count", async () => {
+    const base = validateDocument(await readGlb(bytes)).stats.triangles!;
+    const doc = await readGlb(bytes);
+    const tris = 60_000;
+    const prim = doc
+      .createPrimitive()
+      .setAttribute("POSITION", doc.createAccessor().setType("VEC3").setArray(new Float32Array([0, 0, 0, 0.1, 0, 0, 0, 0.1, 0])))
+      .setIndices(doc.createAccessor().setType("SCALAR").setArray(Uint32Array.from({ length: tris * 3 }, (_, i) => i % 3)))
+      .setMaterial(doc.createMaterial("not_a_slot"));
+    node(doc, "head").addChild(doc.createNode("crest").setMesh(doc.createMesh("crest").addPrimitive(prim)));
+    const r = validateDocument(doc);
+    expect(r.stats.triangles).toBe(base + tris);
+    expect(r.stats.materials).toContain("not_a_slot");
+    const errs = errors(r.issues);
+    expect(errs.map((e) => e.code).sort()).toEqual(["budget", "materials", "mesh"]);
+    expect(errs.find((e) => e.code === "mesh")!.message).toContain('mesh node "crest" is not skinned (it follows bone "head" rigidly)');
+  });
+
   it("a stale hitboxes.json sha256 is an error", async () => {
     const hitboxes = { ...readHitboxes(), source: { file: PLACEHOLDER_GLB, sha256: "0".repeat(64) } };
     const r = await validateGlb(bytes, { file: PLACEHOLDER_GLB, hitboxes });

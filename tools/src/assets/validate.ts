@@ -55,6 +55,8 @@ export const ALLOWED_EXTENSIONS = [
 const EPS = 1e-4;
 const ROOT_MOTION_EPS = 1e-3;
 const LOOP_ANGLE_DEG = 2;
+/** TRIANGLES, TRIANGLE_STRIP, TRIANGLE_FAN. */
+const TRIANGLE_MODES = [4, 5, 6];
 
 // --------------------------------------------------------------------------- clip names
 
@@ -175,35 +177,45 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
   if (!rigNode) err("rig", `expected one node named "${contract.rig.armature}" (the armature), found ${rigNodes.length}`);
   else if (!isIdentityTRS(rigNode)) err("rig", `"${contract.rig.armature}" must have identity transforms (Ctrl+A > All Transforms in Blender)`);
 
-  // Skinned mesh, joints, triangles, materials.
-  const skinned = nodes.filter((n) => n.getMesh() && n.getSkin());
-  for (const n of nodes) if (n.getMesh() && !n.getSkin()) warn("mesh", `mesh node "${n.getName()}" is not skinned; it will not follow the rig`);
+  // Meshes. The chicken is one skinned mesh (the spec's budget). Every mesh node
+  // is drawn, so all of them count toward the triangle budget and the material
+  // slots: an extra mesh cannot slip past either.
+  const meshNodes = nodes.filter((n) => n.getMesh());
+  const skinned = meshNodes.filter((n) => n.getSkin());
   if (skinned.length !== 1) err("mesh", `expected exactly one skinned mesh, found ${skinned.length}`);
   const mesh = skinned[0];
   const joints = mesh?.getSkin()?.listJoints() ?? [];
   const rootJoint = byName(contract.rig.rootBone)[0];
-  if (mesh) {
-    if (!isIdentityTRS(mesh)) err("mesh", `skinned mesh "${mesh.getName()}" must have identity transforms`);
-    const prims = mesh.getMesh()!.listPrimitives();
+  for (const n of meshNodes) {
+    if (n.getSkin()) continue;
+    const bone = ancestors(n).find((a) => joints.includes(a));
+    const follows = bone ? `it follows bone "${bone.getName()}" rigidly` : "it does not follow the rig";
+    err("mesh", `mesh node "${n.getName()}" is not skinned (${follows}); the chicken must be one skinned mesh: join it in and weight it to its bone`);
+  }
+  if (meshNodes.length) {
+    const prims = meshNodes.flatMap((n) => n.getMesh()!.listPrimitives());
     stats.primitives = prims.length;
-    stats.triangles = prims.reduce((s, p) => s + (p.getMode() === 4 ? getGLPrimitiveCount(p) : 0), 0);
-    stats.joints = joints.length;
+    stats.triangles = prims.reduce((s, p) => s + (TRIANGLE_MODES.includes(p.getMode()) ? getGLPrimitiveCount(p) : 0), 0);
     if (prims.some((p) => p.getMode() !== 4)) err("mesh", "every primitive must be a triangle list");
     if (stats.triangles > contract.budgets.chickenTriangles) {
       err("budget", `${stats.triangles} triangles exceeds the budget of ${contract.budgets.chickenTriangles}`);
-    }
-    if (joints.length > contract.budgets.joints) {
-      err("joints", `${joints.length} joints exceeds the budget of ${contract.budgets.joints} (export_def_bones drops non-deform bones)`);
     }
     if (prims.length > contract.materials.length) warn("mesh", `${prims.length} primitives = ${prims.length} draw calls per chicken`);
     const mats = [...new Set(prims.map((p) => p.getMaterial()?.getName() ?? "(none)"))].sort();
     stats.materials = mats;
     for (const m of contract.materials) if (!mats.includes(m)) err("materials", `material slot "${m}" is missing (tiers swap materials by name)`);
     for (const m of mats) if (!contract.materials.includes(m)) err("materials", `material "${m}" is not a contract slot (${contract.materials.join(", ")})`);
+  }
+  if (mesh) {
+    if (!isIdentityTRS(mesh)) err("mesh", `skinned mesh "${mesh.getName()}" must have identity transforms`);
+    stats.joints = joints.length;
+    if (joints.length > contract.budgets.joints) {
+      err("joints", `${joints.length} joints exceeds the budget of ${contract.budgets.joints} (export_def_bones drops non-deform bones)`);
+    }
     // Bind-pose bounds (mesh-local = model space, since the mesh node and Rig are identity).
     let lo = [Infinity, Infinity, Infinity];
     let hi = [-Infinity, -Infinity, -Infinity];
-    for (const p of prims) {
+    for (const p of mesh.getMesh()!.listPrimitives()) {
       const pos = p.getAttribute("POSITION");
       if (!pos) continue;
       lo = lo.map((v, i) => Math.min(v, pos.getMin([0, 0, 0])[i] as number));
