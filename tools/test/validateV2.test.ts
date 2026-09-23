@@ -64,7 +64,7 @@ describe("validate v2: the committed placeholder", () => {
     expect(load.lazy).toEqual([]);
 
     const text = formatReport(r);
-    expect(text).toContain("first load (raw bytes; budget 12.00 MB)");
+    expect(text).toContain("first load, art assets (raw bytes, app code excluded; budget 12.00 MB)");
     expect(text).toContain("textures: none embedded (texture rules skipped)");
     expect(text).toMatch(/animations: [\d.]+ KB of keyframe data/);
   });
@@ -214,6 +214,40 @@ describe("texture rules", () => {
     ]);
   });
 
+  it("a normal map in the two-channel --normal-mode layout fails: three.js reads RGB = XYZ", async () => {
+    // UASTC --normal-mode writes one RRRG sample; ETC1S writes two slices, RRR and GGG (KTX-Software 4.4 basis_encode.cpp).
+    for (const [model, channels, name] of [
+      ["uastc", [5], "RRRG"],
+      ["etc1s", [3, 4], "RRRG"],
+      ["uastc", [6], "RG"],
+    ] as const) {
+      const doc = await readGlb(bytes);
+      basisu(doc);
+      withTexture(doc, fakeKtx2({ width: 1024, transfer: "linear", model, channels: [...channels] }), "image/ktx2", (m, t) => m.setNormalTexture(t));
+      expect(errors(textureIssues(doc)).map((i) => i.message)).toEqual([
+        `texture "shell_map" is a normal map stored as two channels (${name}, what ktx create --normal-mode writes), but three.js normalMap reads RGB = XYZ: re-encode it as RGB without --normal-mode (pnpm textures)`,
+      ]);
+    }
+    // The same layout is fine for a map that is not a normal map, and RGB normals pass.
+    const orm = await readGlb(bytes);
+    basisu(orm);
+    withTexture(orm, fakeKtx2({ width: 1024, transfer: "linear", model: "uastc", channels: [5] }), "image/ktx2", (m, t) => m.setOcclusionTexture(t));
+    expect(textureIssues(orm)).toEqual([]);
+    const rgb = await readGlb(bytes);
+    basisu(rgb);
+    withTexture(rgb, fakeKtx2({ width: 1024, transfer: "linear", model: "uastc" }), "image/ktx2", (m, t) => m.setNormalTexture(t));
+    expect(textureIssues(rgb)).toEqual([]);
+  });
+
+  it("UASTC without Zstandard supercompression is a warning", async () => {
+    const doc = await readGlb(bytes);
+    basisu(doc);
+    withTexture(doc, fakeKtx2({ width: 1024, transfer: "linear", model: "uastc", supercompression: 0 }), "image/ktx2", (m, t) => m.setNormalTexture(t));
+    expect(textureIssues(doc).map((i) => [i.severity, i.message])).toEqual([
+      ["warning", 'texture "shell_map" is UASTC without supercompression, several times larger than it needs to be: re-encode it with --zstd 18 (pnpm textures)'],
+    ]);
+  });
+
   it("reads KTX2, PNG and JPEG headers", () => {
     expect(imageInfo(fakeKtx2({ width: 512, height: 256, transfer: "linear", model: "uastc" }))).toEqual({
       format: "ktx2",
@@ -222,7 +256,11 @@ describe("texture rules", () => {
       levels: 1,
       model: "uastc",
       transfer: "linear",
+      supercompression: "zstd",
+      channels: "rgb",
     });
+    expect(imageInfo(fakeKtx2({ width: 64, model: "etc1s", channels: [0, 15] }))).toMatchObject({ supercompression: "basislz", channels: "rgba" });
+    expect(imageInfo(fakeKtx2({ width: 64, model: "uastc", channels: [5], supercompression: 0 }))).toMatchObject({ supercompression: "none", channels: "rrrg" });
     expect(imageInfo(fakePng(300, 200))).toEqual({ format: "png", width: 300, height: 200 });
     // SOI, an APP0 segment of length 4, then SOF0 with height 0x0100 and width 0x0200.
     const jpeg = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x00, 0x02, 0x00, 0x03);

@@ -65,6 +65,16 @@ function checkImage(r: ImageRules, push: Push): void {
     push("error", `${r.label} holds data (${r.use}) but is encoded ${info.transfer ?? "?"}: re-encode it linear (ktx create --assign-tf linear), or three.js gamma-decodes the values`);
   }
   if (r.normal && info.model === "etc1s") push("warning", `${r.label} is a normal map in ETC1S; UASTC keeps normals clean`);
+  if (r.normal && (info.channels === "rrrg" || info.channels === "rg" || info.channels === "rrr")) {
+    push(
+      "error",
+      `${r.label} is a normal map stored as two channels (${info.channels.toUpperCase()}, what ktx create --normal-mode writes), ` +
+        "but three.js normalMap reads RGB = XYZ: re-encode it as RGB without --normal-mode (pnpm textures)",
+    );
+  }
+  if (info.model === "uastc" && info.supercompression === "none") {
+    push("warning", `${r.label} is UASTC without supercompression, several times larger than it needs to be: re-encode it with --zstd 18 (pnpm textures)`);
+  }
 }
 
 /**

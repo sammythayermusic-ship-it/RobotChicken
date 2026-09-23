@@ -66,6 +66,8 @@ export const PLACEHOLDER_SCRIPT = "art/blender/build_placeholder_chicken.py";
 export const EXPORT_SCRIPT = "art/blender/export_chicken.py";
 /** The web app's static root: a glb must live under it for the game to load it. */
 export const PUBLIC_DIR = "apps/web/public";
+/** Gitignored scratch output: dry-run imports and the import's staging files go here. */
+export const SCRATCH_DIR = "art/blender/out";
 /** Sammy's arena, when it exists (the procedural junkyard needs no files), and its baked lightmap. */
 export const ARENA_GLB = "apps/web/public/models/arena.glb";
 export const ARENA_LIGHTMAP = "apps/web/public/models/arena_lightmap.ktx2";

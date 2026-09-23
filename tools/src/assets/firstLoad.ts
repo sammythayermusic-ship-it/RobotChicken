@@ -1,7 +1,9 @@
 /**
- * The first-load table: every file a new player downloads before the first
- * fight, which the spec caps at 12 MB "on the wire". Counted as raw bytes, an
- * upper bound: glb and KTX2 barely compress, and gzip only helps the decoders.
+ * The first-load table: the art assets a new player downloads before the
+ * first fight, against the 12 MB budget (the spec's "on the wire" cap, scoped
+ * to glb + decoders + audio in docs/decisions.md). The app's own JS, CSS and
+ * fonts are not counted. Raw bytes, an upper bound: glb and KTX2 barely
+ * compress, and gzip only helps the decoders.
  *
  * On first load: the chicken glb, the Draco decoder (when a glb uses Draco),
  * the Rust tier textures, Sammy's arena glb + lightmap when they exist, audio
@@ -95,7 +97,7 @@ export const mb = (bytes: number): string => `${(bytes / MB).toFixed(2)} MB`;
 export function formatFirstLoad(f: FirstLoad): string[] {
   const width = Math.max(...f.items.map((i) => i.file.length), ...f.lazy.map((i) => i.file.length), 10);
   const row = (i: LoadItem) => `    ${i.file.padEnd(width)}  ${mb(i.bytes).padStart(9)}  ${i.what}`;
-  const lines = [`  first load (raw bytes; budget ${mb(f.budget)}):`, ...f.items.map(row), `    ${"total".padEnd(width)}  ${mb(f.total).padStart(9)}  ${((100 * f.total) / f.budget).toFixed(0)}% of the budget`];
+  const lines = [`  first load, art assets (raw bytes, app code excluded; budget ${mb(f.budget)}):`, ...f.items.map(row), `    ${"total".padEnd(width)}  ${mb(f.total).padStart(9)}  ${((100 * f.total) / f.budget).toFixed(0)}% of the budget`];
   if (f.lazy.length) lines.push("  lazy (not counted):", ...f.lazy.map(row));
   return lines;
 }

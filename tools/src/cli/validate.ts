@@ -1,19 +1,18 @@
 /**
- * pnpm assets:validate [glb] [--json] [--arena[=arena.glb]]
+ * pnpm assets:validate [glb] [--json] [--arena=<arena.glb>]
  *
  * Validates the chicken glb (default: the one hitboxes.json tracks) and prints
- * the first-load table. --arena also validates Sammy's arena (default
- * apps/web/public/models/arena.glb with arena_lightmap.ktx2 next to it) and
- * skips cleanly when there is none. Exit 1 on any error.
+ * the first-load table. It also validates Sammy's arena whenever there is one
+ * (apps/web/public/models/arena.glb, with arena_lightmap.ktx2 next to it, or
+ * the file --arena= names) and skips those rules cleanly when there is none.
+ * A bare --arena is accepted and changes nothing. Exit 1 on any error.
  */
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { validateArenaFile } from "../assets/arena";
-import { ARENA_GLB, fromRepo, readHitboxes, toRepo, trackedGlb, userPath, type HitboxesFile } from "../assets/gltf";
-import { formatReport, validateFile, type ValidateReport } from "../assets/validate";
+import { validateArenaIfPresent } from "../assets/arena";
+import { readHitboxes, toRepo, trackedGlb, userPath, type HitboxesFile } from "../assets/gltf";
+import { formatReport, validateFile } from "../assets/validate";
 import { cli, parseArgs } from "./main";
 
-const USAGE = "usage: pnpm assets:validate [glb] [--json] [--arena[=arena.glb]]";
+const USAGE = "usage: pnpm assets:validate [glb] [--json] [--arena=<arena.glb>]  (the arena rules run whenever apps/web/public/models/arena.glb exists)";
 
 cli(async (argv) => {
   const { flags, values, positional } = parseArgs(argv, ["--json", "--arena"], USAGE);
@@ -26,22 +25,13 @@ cli(async (argv) => {
   }
   const file = positional[0] ? userPath(positional[0]) : trackedGlb(hitboxes);
   const chicken = await validateFile(file, { hitboxes, file: toRepo(file) });
-
-  let arena: ValidateReport | undefined;
-  let skipped: string | undefined;
-  if (flags.has("--arena")) {
-    const path = values.has("--arena") ? userPath(values.get("--arena")!) : fromRepo(ARENA_GLB);
-    if (existsSync(path)) arena = await validateArenaFile(path, join(dirname(path), "arena_lightmap.ktx2"));
-    else skipped = `arena: no ${toRepo(path)} (the procedural junkyard needs no files); arena rules skipped`;
-  }
+  const arena = await validateArenaIfPresent(values.has("--arena") ? userPath(values.get("--arena")!) : undefined);
 
   if (flags.has("--json")) {
-    const arenaJson = arena ?? (skipped ? { skipped } : undefined);
-    console.log(JSON.stringify(arenaJson ? { ...chicken, arena: arenaJson } : chicken, null, 2));
+    console.log(JSON.stringify({ ...chicken, arena: "report" in arena ? arena.report : arena }, null, 2));
   } else {
     console.log(formatReport(chicken));
-    if (arena) console.log(`\n${formatReport(arena)}`);
-    if (skipped) console.log(skipped);
+    console.log("report" in arena ? `\n${formatReport(arena.report)}` : arena.skipped);
   }
-  return chicken.ok && (arena?.ok ?? true) ? 0 : 1;
+  return chicken.ok && ("report" in arena ? arena.report.ok : true) ? 0 : 1;
 });

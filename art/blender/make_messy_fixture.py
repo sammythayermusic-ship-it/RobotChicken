@@ -32,18 +32,37 @@ HABITS = {
     "ctrl_bones": "non-deform IK/control bones (ctrl_*), keyed in idle, one IK constraint at zero influence",
     "attack_phases": "shove authored twice as long (54 frames) with cf_phases = [16, 6, 32]",
     "attack_len": "peck stretched to 18 frames and its cf_phases removed",
+    "short_active": "slam authored with a two-frame hit (the contract has four): 38 frames, cf_phases = [14, 2, 22]",
     "fps24": "the scene left at Blender's default 24 fps, every clip timed at 24 fps (keys scaled by 24/60)",
     "frame1": "every clip starts on frame 1 (Blender's default) with no manual frame range",
     "off_nla": "actions never pushed down to the NLA: they only have fake users",
     "active_action": "the last clip worked on (win) is still the active action: on no track, no fake user",
+    "renamed_track": "peck's NLA track renamed to 'Peck attack' (the action is still 'peck')",
     "stray_action": "a leftover 'Action' from testing keys",
     "no_radius": "hitbox empties with a display size but no cf_radius",
+    "unselectable": "Disable Selection on the mesh and the hitbox empties, and on a 'Body' collection holding the mesh",
+    "hidden_collection": "the hitbox empties in a 'Helpers' collection disabled in viewports and hidden in the view layer",
     "hidden_helpers": "hitbox empties hidden in the viewport",
     "rest_position": "the armature left showing its Rest Position",
     "pose_mode": "saved in Pose mode",
 }
-# Every habit export_chicken.py fixes by itself (fps24 only with --retime).
-FIXABLE = ["ctrl_bones", "attack_phases", "frame1", "off_nla", "active_action", "hidden_helpers", "rest_position", "pose_mode"]
+# Every habit export_chicken.py fixes by itself (fps24 only with --retime) whose
+# import bakes the placeholder's own hitboxes. short_active is fixed too, but
+# its retime changes slam's middle active samples by design (heroImport.test.ts
+# checks it on its own).
+FIXABLE = [
+    "ctrl_bones",
+    "attack_phases",
+    "frame1",
+    "off_nla",
+    "active_action",
+    "renamed_track",
+    "unselectable",
+    "hidden_collection",
+    "hidden_helpers",
+    "rest_position",
+    "pose_mode",
+]
 
 
 def build_placeholder():
@@ -104,6 +123,17 @@ def ctrl_bones(rig):
     fc.update()
 
 
+def move_to_collection(objects, name):
+    """Move `objects` out of their collections into a new collection `name` under the scene's."""
+    coll = bpy.data.collections.new(name)
+    bpy.context.scene.collection.children.link(coll)
+    for obj in objects:
+        for old in list(obj.users_collection):
+            old.objects.unlink(obj)
+        coll.objects.link(obj)
+    return coll
+
+
 def apply(habits, rig, contract):
     scn = bpy.context.scene
     helpers = [bpy.data.objects[name] for name in contract["helpers"]]
@@ -119,6 +149,13 @@ def apply(habits, rig, contract):
         peck = bpy.data.actions["peck"]
         cf.resample_action(peck, [0, frames["peck"]["frames"]], [0, 18])
         del peck["cf_phases"]
+    if "short_active" in habits:
+        # Wind-up and recovery unchanged; the hit is two frames, the placeholder's first (contract
+        # sample s+1) and last (s+a) active poses, where the contract has four.
+        s, a, r = frames["slam"]["phases"]
+        slam = bpy.data.actions["slam"]
+        cf.resample_action(slam, [0, s, s + 1, s + a, s + a + r], [0, s, s + 1, s + 2, s + 2 + r])
+        slam["cf_phases"] = [s, 2, r]
     if "fps24" in habits:
         scn.render.fps, scn.render.fps_base = 24, 1.0
         k = 24 / contract["fps"]
@@ -141,6 +178,17 @@ def apply(habits, rig, contract):
         ad.action = win
         ad.action_slot = cf._bone_slots(win)[0]
         win.use_fake_user = False
+    if "renamed_track" in habits:
+        peck = bpy.data.actions["peck"]
+        tracks = [t for t in ad.nla_tracks if len(t.strips) == 1 and t.strips[0].action == peck]
+        if tracks:
+            tracks[0].name = "Peck attack"
+        else:  # off_nla took it off: push it down onto a track named the way an animator might
+            track = ad.nla_tracks.new()
+            track.name = "Peck attack"
+            strip = track.strips.new("peck", int(round(peck.frame_range[0])), peck)
+            if strip.action_slot is None:
+                strip.action_slot = cf._bone_slots(peck)[0]
     if "stray_action" in habits:
         act = bpy.data.actions.new("Action")
         act.use_fake_user = True
@@ -153,6 +201,15 @@ def apply(habits, rig, contract):
     if "no_radius" in habits:
         for e in helpers:
             del e["cf_radius"]
+    if "unselectable" in habits:
+        mesh = next(o for o in rig.children if o.type == "MESH")
+        move_to_collection([mesh], "Body").hide_select = True
+        for obj in [mesh, *helpers]:
+            obj.hide_select = True
+    if "hidden_collection" in habits:
+        coll = move_to_collection(helpers, "Helpers")
+        coll.hide_viewport = True
+        bpy.context.view_layer.layer_collection.children[coll.name].hide_viewport = True
     if "hidden_helpers" in habits:
         for e in helpers:
             e.hide_set(True)

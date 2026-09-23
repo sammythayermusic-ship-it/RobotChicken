@@ -24,8 +24,11 @@ It runs three stages and stops at the first one that fails, saying exactly what 
    and that is what makes the game load it.
 
 The glb goes to `apps/web/public/models/chicken.glb` (`--out` picks another file under
-`apps/web/public/`; the placeholder's file is off limits). It is written only after it
-validates, so a failed import never leaves the game half-updated.
+`apps/web/public/`; the placeholder's file is off limits). Relative paths are relative to
+the directory you run the command from. The glb and the bake are staged in
+`art/blender/out/` (gitignored) and moved into place together only after all three stages
+pass, so a failed or interrupted (Ctrl-C) import never leaves the game half-updated or stray
+files in the repo.
 
 A hero chicken changes gameplay (its helpers are the hitboxes), so a successful import changes
 the rules hash. It prints the next steps:
@@ -40,9 +43,9 @@ Commit the glb, `hitboxes.json` and the re-blessed goldens together, and say why
 
 | Option | What it does |
 |---|---|
-| `--out <file.glb>` | where the glb goes (default `apps/web/public/models/chicken.glb`) |
+| `--out <file.glb>` | where the glb goes (default `apps/web/public/models/chicken.glb`, or `art/blender/out/<name>.glb` in a dry run) |
 | `--retime` | the file is not at 60 fps: scale every clip to 60 fps, keeping its real-time length, instead of failing |
-| `--hitboxes <file.json>` | a dry run: bake somewhere else, so the game keeps loading what it loads now |
+| `--hitboxes <file.json>` | a dry run: bake somewhere else, so the game keeps loading what it loads now. The glb goes to `art/blender/out/<name of the .blend>.glb` unless `--out` says otherwise, and it may never be the glb `hitboxes.json` names |
 
 Exit codes: 0 done, 1 a stage failed, 2 bad arguments, 3 Blender not found (it looks at
 `$BLENDER`, then `/Applications/Blender.app`, then `blender` on `PATH`).
@@ -56,7 +59,9 @@ Exit codes: 0 done, 1 a stage failed, 2 bad arguments, 3 Blender not found (it l
 | the file in Pose or Edit mode, or in NLA tweak mode | switches to Object mode / leaves tweak mode |
 | the armature showing its Rest Position | switches it to Pose Position (otherwise every clip would export as the rest pose) |
 | the hitbox empties hidden | unhides them for the export |
-| an attack whose action has `cf_phases` but a different length or split than the contract | retimes it to the contract phase by phase (wind-up onto startup, hit onto active, recovery onto recovery) |
+| the mesh or the empties with Disable Selection on, or in a collection that is unselectable, disabled in viewports or hidden (eye icon) | clears those for the export (it exports the selection, so they would silently drop out) |
+| a clip's NLA track renamed (`Peck attack` playing the action `peck`) | renames the track back to the action's name (clips are named after their tracks) |
+| an attack whose action has `cf_phases` but a different length or split than the contract | retimes it to the contract phase by phase (wind-up onto startup, hit onto active, recovery onto recovery). If your hit is shorter than the contract's, its first active tick still shows your first hit frame |
 | IK / control bones | nothing: bones not marked Deform are not exported and don't count toward the 40 joints |
 | a scene at 24 fps, with `--retime` | scales every clip by 60/24, keeping its real-time length; a clip within one of your frames of its contract length is stretched onto it exactly |
 
@@ -121,8 +126,11 @@ Install the exporter preset once: copy `art/blender/presets/cockfight_glb.py` to
 | Linux | `~/.config/blender/5.2/scripts/presets/operator/export_scene.gltf/` |
 
 Then select `Rig` and everything parented to it, File → Export → glTF 2.0 (.glb), and pick
-**Cockfight Glb** from the preset menu at the top of the dialog. It sets exactly the scripted
-exporter's settings (a test checks the two stay equal and export the same bytes):
+**Cockfight Glb** from the preset menu at the top of the dialog. It sets every exporter setting
+(all but the file path): the ones below, and every other one at the exporter's default, which is
+what the scripted export uses, so nothing from an earlier export or a remembered setting carries
+over. It is generated from the scripted settings by `art/blender/make_preset.py`, and a test
+checks it is complete and exports the same bytes as the scripted export:
 
 | Setting | Value |
 |---|---|
@@ -139,10 +147,10 @@ above replace it. A manual export gets none of the fixes above, so the file must
 clean. Then run `pnpm assets:validate apps/web/public/models/<file>.glb` and
 `pnpm assets:bake apps/web/public/models/<file>.glb`.
 
-## Validation: `pnpm assets:validate [glb] [--json] [--arena[=file]]`
+## Validation: `pnpm assets:validate [glb] [--json] [--arena=<file>]`
 
-Validates the glb `hitboxes.json` tracks (or the one given). CI runs it on every push and never
-needs Blender. It checks:
+Validates the glb `hitboxes.json` tracks (or the one given), and the arena whenever there is
+one (below). CI runs it on every push and never needs Blender. It checks:
 
 - the contract: rig, root bone, one skinned mesh, joints, triangles, material slots, helpers and
   their extras, the 21 clips with their exact frame counts, no root motion, facing;
@@ -151,31 +159,51 @@ needs Blender. It checks:
   `hurt_body`'s center and reaches above the floor;
 - textures, when there are any (the placeholder has none, so these rules skip): KTX2 with Basis
   inside (`KHR_texture_basisu`), power-of-two sides ≤ 2048, color maps (base color, emissive)
-  sRGB, data maps (normal, metal/rough, occlusion) linear; the same for the tier sets below;
+  sRGB, data maps (normal, metal/rough, occlusion) linear, normal maps RGB (not the two-channel
+  `--normal-mode` layout); the same for the tier sets below;
 - `hitboxes.json` was baked from exactly this file (sha256).
 
-It also prints each clip's animation size and the **first-load table**: every file a new player
-downloads before the first fight, in raw bytes, which must stay ≤ 12 MB. That is the chicken
-glb, the Draco decoder, the Rust tier textures (plus the Basis transcoder once there is any
-KTX2), Sammy's arena and lightmap when they exist, and any audio overrides in
-`apps/web/public/audio/`. The Chrome, Gold and Diamond tier sets load lazily and are listed
-separately.
+It also prints each clip's animation size and the **first-load table**: the art assets a new
+player downloads before the first fight, in raw bytes, which must stay ≤ 12 MB. That is the
+chicken glb, the Draco decoder, the Rust tier textures (plus the Basis transcoder once there is
+any KTX2), Sammy's arena and lightmap when they exist, and any audio overrides in
+`apps/web/public/audio/`. The app's own code (the Next.js and three.js JavaScript, CSS and
+fonts) is not in the table: the 12 MB is the art budget (`docs/decisions.md`, "First load"), so
+leave headroom under the spec's 12 MB on the wire for it. The Chrome, Gold and Diamond tier sets
+load lazily and are listed separately.
 
 ## Textures (later)
 
 Tier sets live in `apps/web/public/textures/chicken/<tier>/` (`rust`, `chrome`, `gold`,
 `diamond`) as `basecolor.ktx2`, `orm.ktx2` (occlusion / roughness / metalness packed),
-`normal.ktx2` and `emissive.ktx2`, each ≤ 2048 and a power of two. Convert 8-bit PNGs with
-[KTX-Software 4.4](https://github.com/KhronosGroup/KTX-Software/releases) (`toktx` is deprecated):
+`normal.ktx2` and `emissive.ktx2`, each ≤ 2048 and a power of two. Put 8-bit PNGs in
+`art/textures/<tier>/{basecolor,orm,normal,emissive}.png` and run
+
+```bash
+pnpm textures             # converts every PNG it finds, then: pnpm assets:validate
+pnpm textures --dry-run   # prints the ktx commands instead (no KTX-Software needed)
+```
+
+It needs [KTX-Software 4.4](https://github.com/KhronosGroup/KTX-Software/releases)'s `ktx`
+(`toktx` is deprecated). For reference, the commands it runs:
 
 ```bash
 # color maps (basecolor, emissive): sRGB, ETC1S
-ktx create --format R8G8B8_SRGB --assign-tf srgb --assign-primaries bt709 --encode basis-lz \
-  --clevel 4 --qlevel 200 --generate-mipmap basecolor.png basecolor.ktx2
-# data maps (orm, normal): linear, UASTC
-ktx create --format R8G8B8_UNORM --assign-tf linear --assign-primaries none --encode uastc \
-  --uastc-quality 2 --zstd 18 --generate-mipmap normal.png normal.ktx2
+ktx create --generate-mipmap --fail-on-color-conversions --format R8G8B8_SRGB --assign-tf srgb \
+  --assign-primaries bt709 --encode basis-lz --clevel 4 --qlevel 200 basecolor.png basecolor.ktx2
+# data maps (orm, normal): linear, UASTC + RDO + Zstandard (--uastc-rdo-l 1.0 for orm, 0.5 for normal)
+ktx create --generate-mipmap --fail-on-color-conversions --format R8G8B8_UNORM --assign-tf linear \
+  --assign-primaries none --encode uastc --uastc-quality 2 --uastc-rdo --uastc-rdo-m --zstd 18 \
+  --uastc-rdo-l 0.5 normal.png normal.ktx2
 ```
+
+- `--assign-tf` matters: without it `ktx` reads an 8-bit PNG as sRGB and gamma-decodes the
+  data maps' numbers into linear (128 becomes 55). `--fail-on-color-conversions` makes any
+  colour conversion an error instead.
+- Normal maps are plain RGB = XYZ tangent-space normals, which is what three.js reads.
+  Don't add `--normal-mode` (it stores X and Y as RGB = X, A = Y); `assets:validate` rejects it.
+- UASTC without `--zstd` is 5.6 MB per 2048 map; two of them alone would nearly fill the
+  first-load budget, so validate warns about it.
 
 The placeholder uses flat materials, so nothing needs converting yet.
 
@@ -184,9 +212,21 @@ The placeholder uses flat materials, so nothing needs converting yet.
 The fight uses a procedural junkyard that needs no files. A hand-made arena goes to
 `apps/web/public/models/arena.glb`, with its baked lighting in
 `apps/web/public/models/arena_lightmap.ktx2` (or as a texture the glb reads through its second
-UV map). `pnpm assets:validate --arena` checks it: at most 60k triangles counting every GPU
-instance, a lightmap of at most 4096, and every mesh has `TEXCOORD_1` for it. With no arena file
-it skips cleanly.
+UV map). `pnpm assets:validate` checks it whenever that file exists (so CI does too;
+`--arena=<file>` checks another file): at most 60k triangles counting every GPU instance, a
+lightmap of at most 4096, every mesh has `TEXCOORD_1` for it, and the anchor empties below. With
+no arena file it skips cleanly.
+
+The game keeps its fires, crowd and floodlights and checks the ring edges from **named empties**
+in the glb (`anchorsFromScene` in `apps/web/src/game/view/arena/layout.ts`; empties export as
+glTF nodes, and three.js drops `.` from names, so `fire_L.001` works):
+
+| Empty | What it marks | If it is missing |
+|---|---|---|
+| `ringedge_L`, `ringedge_R` | the ring edges; **must sit at x = −10 / +10** (±0.05), where the sim rings fighters out. Beyond them the floor must drop away | error |
+| `fire_L*`, `fire_R*` (at least one per side) | one per oil drum, at its base centre; each side's fire light sits 2.1 above the drums' mean, flames 0.95 above each drum | warning: that side uses the procedural drums |
+| `crowd_<n>_a`, `crowd_<n>_b` | the two ends of crowd row *n*, at seat (feet) height; custom property `count` (a positive number, default 30) | warning: the procedural bleachers' crowd |
+| `flood_<n>` + `flood_<n>_target` | a floodlight bank and where its beam lands | warning: the procedural towers' lights |
 
 ## Budgets (checked by `assets:validate`)
 
@@ -195,7 +235,7 @@ it skips cleanly.
 | Chicken | ≤ 15k triangles, one skinned mesh, ≤ 40 joints |
 | Chicken textures | 2k (2048) KTX2, one set per tier |
 | Arena | ≤ 60k triangles, lightmap ≤ 4k (in `TEXCOORD_1`) |
-| First load | ≤ 12 MB; non-Rust tiers and arena extras lazy-load |
+| First load (art assets; app code excluded) | ≤ 12 MB raw; non-Rust tiers and arena extras lazy-load |
 
 ## Testing the pipeline itself
 

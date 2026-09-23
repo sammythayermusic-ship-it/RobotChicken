@@ -10,11 +10,19 @@
  *   3. bake     packages/sim/data/hitboxes.json from the new glb; its
  *               source.file/sha256 then point at it, which is what makes the
  *               game load it (createFightEngine chickenModelUrl)
+ *
+ * A dry run (--hitboxes somewhere else) never touches what the game loads: its
+ * glb defaults to art/blender/out/<name>.glb, and it may not overwrite the glb
+ * hitboxes.json names.
+ *
+ * Both outputs are staged complete in a per-run directory (under the
+ * gitignored art/blender/out/ when the target is in the repo) and moved into
+ * place back to back at the very end; Ctrl-C or SIGTERM removes the staging.
  */
-import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
-import { bakeFile, formatHitboxes, writeHitboxes } from "./bake";
-import { EXPORT_SCRIPT, HITBOXES_JSON, PLACEHOLDER_GLB, PUBLIC_DIR, fromRepo, toRepo, type HitboxesFile } from "./gltf";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { bakeFile, formatHitboxes } from "./bake";
+import { EXPORT_SCRIPT, HERO_GLB, HITBOXES_JSON, PLACEHOLDER_GLB, PUBLIC_DIR, SCRATCH_DIR, fromRepo, readHitboxes, toRepo, trackedGlb, type HitboxesFile } from "./gltf";
 import { cfLines, findBlender, parseReport, runBlender } from "../blender/run";
 import { checkHitboxesForMoves, formatReport, validateFile, type ValidateReport } from "./validate";
 
@@ -23,8 +31,8 @@ export type ImportStage = "setup" | "export" | "validate" | "bake" | "done";
 export interface ImportOptions {
   /** Absolute path of the .blend. */
   blend: string;
-  /** Absolute path of the glb to write. */
-  out: string;
+  /** Absolute path of the glb to write (default: defaultImportOut). */
+  out?: string;
   /** Rescale a scene authored at another frame rate instead of failing. */
   retime?: boolean;
   /** Where to write the bake (default packages/sim/data/hitboxes.json, which decides the glb the game loads). */
@@ -52,27 +60,73 @@ export interface ImportResult {
 }
 
 const samePath = (a: string, b: string) => resolve(a) === resolve(b);
+const isRealHitboxes = (path: string) => samePath(path, fromRepo(HITBOXES_JSON));
 
-/** Refuse inputs that would break the pipeline before spending a Blender run on them. */
-function setupProblems(opts: ImportOptions, hitboxesPath: string): string[] {
+/**
+ * The glb an import writes when --out is not given: the hero file for a real
+ * import, art/blender/out/<blend name>.glb for a dry run (--hitboxes elsewhere),
+ * so a dry run never replaces the glb the game loads.
+ */
+export function defaultImportOut(blend: string, hitboxesPath: string = fromRepo(HITBOXES_JSON)): string {
+  return isRealHitboxes(hitboxesPath) ? fromRepo(HERO_GLB) : join(fromRepo(SCRATCH_DIR), `${basename(blend, extname(blend))}.glb`);
+}
+
+/**
+ * Where an import stages the file it will move to `target`: a per-run
+ * directory on the target's filesystem (so the final rename is atomic). Under
+ * the gitignored scratch dir for targets inside the repo, so an interrupted
+ * run never leaves files `git add -A` would pick up; next to the target otherwise.
+ */
+export function stagingDir(target: string, pid: number = process.pid): string {
+  const inRepo = !isAbsolute(toRepo(target));
+  return join(inRepo ? fromRepo(SCRATCH_DIR) : dirname(target), `.import-${pid}`);
+}
+
+/** The glb packages/sim/data/hitboxes.json names (the one the game loads), or null if it can't be read. */
+function loadedGlb(): string | null {
+  try {
+    return trackedGlb(readHitboxes());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Inputs that would break the pipeline, refused before spending a Blender run
+ * on them. `loaded` is the glb the game loads now (read from hitboxes.json).
+ */
+export function setupProblems(opts: ImportOptions & { out: string }, hitboxesPath: string, loaded: string | null = loadedGlb()): string[] {
   const problems: string[] = [];
   if (!opts.blend.toLowerCase().endsWith(".blend")) problems.push(`--blend ${opts.blend} is not a .blend file`);
   else if (!existsSync(opts.blend)) problems.push(`--blend ${opts.blend} does not exist`);
   if (!opts.out.toLowerCase().endsWith(".glb")) problems.push(`--out ${opts.out} must end in .glb`);
   if (samePath(opts.out, fromRepo(PLACEHOLDER_GLB))) {
     problems.push(`--out must not be ${PLACEHOLDER_GLB}: pnpm assets:placeholder owns it (the hero goes to its own file)`);
+  } else if (!isRealHitboxes(hitboxesPath) && loaded && samePath(opts.out, loaded)) {
+    // A dry run leaves hitboxes.json alone, so replacing this glb would pair a new mesh with the old hitboxes.
+    problems.push(
+      `--out must not be ${toRepo(loaded)} in a dry run (--hitboxes ${toRepo(hitboxesPath)}): ${HITBOXES_JSON} names it, so the game loads it. ` +
+        `Leave --out off (the glb goes to ${toRepo(defaultImportOut(opts.blend, hitboxesPath))}) or pick another file`,
+    );
   }
   // The game fetches the glb hitboxes.json names, so it must be a static file of the web app.
   const rel = toRepo(opts.out);
-  if (samePath(hitboxesPath, fromRepo(HITBOXES_JSON)) && !rel.startsWith(`${PUBLIC_DIR}/`)) {
+  if (isRealHitboxes(hitboxesPath) && !rel.startsWith(`${PUBLIC_DIR}/`)) {
     problems.push(`--out must be inside ${PUBLIC_DIR}/ so the game can load it (hitboxes.json.source.file decides which glb loads)`);
   }
   return problems;
 }
 
-export async function importChicken(opts: ImportOptions): Promise<ImportResult> {
-  const log = opts.log ?? ((line: string) => console.log(line));
-  const hitboxesPath = opts.hitboxes ?? fromRepo(HITBOXES_JSON);
+/** Where the two outputs are written before they are moved into place. */
+interface Staged {
+  glb: string;
+  hitboxes: string;
+}
+
+export async function importChicken(options: ImportOptions): Promise<ImportResult> {
+  const log = options.log ?? ((line: string) => console.log(line));
+  const hitboxesPath = options.hitboxes ?? fromRepo(HITBOXES_JSON);
+  const opts = { ...options, out: options.out ?? defaultImportOut(options.blend, hitboxesPath) };
   const base = { problems: [] as string[], fixes: [] as string[], notes: [] as string[], blenderOutput: "" };
   log(`assets:import ${toRepo(opts.blend)} -> ${toRepo(opts.out)}${opts.retime ? " (--retime)" : ""}`);
 
@@ -83,20 +137,37 @@ export async function importChicken(opts: ImportOptions): Promise<ImportResult> 
     return { ...base, ok: false, stage: "setup", problems: setup };
   }
 
-  // Export to a staging file and move it into place only after it validates:
-  // re-importing over the glb hitboxes.json tracks must never leave the game
-  // loading a new mesh with the old hitboxes.
-  const staged = join(dirname(opts.out), `.${basename(opts.out, extname(opts.out))}.import-${process.pid}.glb`);
+  // Export and bake into staging, and move both into place only after
+  // everything passed: re-importing over the glb hitboxes.json tracks must
+  // never leave the game loading a new mesh with the old hitboxes.
+  const glbDir = stagingDir(opts.out);
+  const hitboxesDir = stagingDir(hitboxesPath);
+  const dirs = [...new Set([glbDir, hitboxesDir])];
+  const staged: Staged = { glb: join(glbDir, basename(opts.out)), hitboxes: join(hitboxesDir, `bake-${basename(hitboxesPath)}`) };
+  const cleanup = () => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  };
+  // Node exits on SIGINT/SIGTERM without running `finally`; clean up first.
+  const onSignal = (signal: NodeJS.Signals) => {
+    cleanup();
+    log(`assets:import interrupted (${signal}); nothing was moved into place`);
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
   try {
+    for (const dir of dirs) mkdirSync(dir, { recursive: true });
     return await stages(opts, staged, hitboxesPath, base, log);
   } finally {
-    rmSync(staged, { force: true });
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+    cleanup();
   }
 }
 
 async function stages(
-  opts: ImportOptions,
-  staged: string,
+  opts: ImportOptions & { out: string },
+  staged: Staged,
   hitboxesPath: string,
   base: Pick<ImportResult, "problems" | "fixes" | "notes" | "blenderOutput">,
   log: (line: string) => void,
@@ -104,7 +175,7 @@ async function stages(
   // 1. export
   const blender = opts.blender ?? findBlender();
   log(`[1/3] export: ${blender} running ${EXPORT_SCRIPT}`);
-  const run = runBlender(fromRepo(EXPORT_SCRIPT), ["--out", staged, ...(opts.retime ? ["--retime"] : [])], {
+  const run = runBlender(fromRepo(EXPORT_SCRIPT), ["--out", staged.glb, ...(opts.retime ? ["--retime"] : [])], {
     blender,
     blend: opts.blend,
     capture: true,
@@ -129,7 +200,7 @@ async function stages(
 
   // 2. validate (hitboxes.json is re-baked next, so its sha256 is not checked here)
   log("[2/3] validate");
-  const report = await validateFile(staged, { hitboxes: null, file: toRepo(opts.out) });
+  const report = await validateFile(staged.glb, { hitboxes: null, file: toRepo(opts.out) });
   log(formatReport(report).replace(/^/gm, "  "));
   if (!report.ok) {
     const problems = report.issues.filter((i) => i.severity === "error").map((i) => `[${i.code}] ${i.message}`);
@@ -142,7 +213,7 @@ async function stages(
   const before = existsSync(hitboxesPath) ? readFileSync(hitboxesPath, "utf8") : "";
   let baked: { hitboxes: HitboxesFile; text: string };
   try {
-    baked = await bakeFile(staged);
+    baked = await bakeFile(staged.glb);
   } catch (e) {
     const problems = [(e as Error).message];
     log(`[3/3] bake FAILED: ${problems[0]}`);
@@ -157,8 +228,14 @@ async function stages(
     return { ...withRun, ok: false, stage: "bake", problems, report, hitboxes };
   }
   const text = formatHitboxes(hitboxes);
-  renameSync(staged, opts.out);
-  writeHitboxes(text, hitboxesPath);
+  // Every write that can fail (a full disk, a missing directory) happens before
+  // either file moves; then the two renames run back to back. The glb goes
+  // first, so hitboxes.json, which decides the glb the game loads, flips last.
+  writeFileSync(staged.hitboxes, text);
+  mkdirSync(dirname(opts.out), { recursive: true });
+  mkdirSync(dirname(hitboxesPath), { recursive: true });
+  renameSync(staged.glb, opts.out);
+  renameSync(staged.hitboxes, hitboxesPath);
   // rulesHash covers the clip tables, not source.file/sha256: only a change there changes gameplay.
   const changed = before !== text;
   const gameplay = changed && JSON.stringify(parseClips(before)) !== JSON.stringify(hitboxes.clips);

@@ -7,14 +7,17 @@
  *   source path, and on another Blender the sha256, differ).
  * - art/blender/make_messy_fixture.py builds the placeholder with UI-authored
  *   habits; the import must fix each one or report it with its exact hint.
- * - The UI preset is valid inside Blender and exports the same bytes.
+ * - An attack authored with a shorter hit than the contract (cf_phases) still
+ *   shows the authored hit pose on its first active tick.
+ * - The UI preset is what make_preset.py generates, sets every exporter
+ *   setting, and exports the same bytes as the scripted export.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { HITBOXES_JSON, PLACEHOLDER_SCRIPT, fromRepo, readHitboxes, type HitboxesFile } from "../src/assets/gltf";
+import { CONTRACT, HITBOXES_JSON, PLACEHOLDER_SCRIPT, fromRepo, readHitboxes, type HitboxesFile } from "../src/assets/gltf";
 import { importChicken, type ImportResult } from "../src/assets/import";
 import { findBlender, runBlender } from "../src/blender/run";
 import { repoPath } from "../src/root";
@@ -58,17 +61,26 @@ describe.skipIf(!blender)("hero import through Blender (local only)", () => {
     return { r, out, hitboxes, log: lines.join("\n") };
   }
 
-  /** Largest difference (mu) between a bake and the committed placeholder's, clip by clip; Infinity if shapes differ. */
-  function worstDiff(baked: HitboxesFile): number {
+  /**
+   * Largest difference (mu) between a bake and the committed placeholder's, clip by clip; Infinity if shapes
+   * differ. `skip(clip, sample)` leaves samples out.
+   */
+  function worstDiff(baked: HitboxesFile, skip: (clip: string, sample: number) => boolean = () => false): number {
     let worst = 0;
     expect(Object.keys(baked.clips)).toEqual(Object.keys(committed.clips));
     for (const [name, want] of Object.entries(committed.clips)) {
       const got = baked.clips[name]!;
       if (got.n !== want.n) return Infinity;
-      const pairs: [number[], number[] | undefined][] = [[want.hurt, got.hurt], ...Object.entries(want.hit).map(([k, v]): [number[], number[] | undefined] => [v, got.hit[k]])];
-      for (const [a, b] of pairs) {
+      // hurt: 5 numbers per sample; each hit table: 3.
+      const pairs: [number[], number[] | undefined, number][] = [
+        [want.hurt, got.hurt, 5],
+        ...Object.entries(want.hit).map(([k, v]): [number[], number[] | undefined, number] => [v, got.hit[k], 3]),
+      ];
+      for (const [a, b, stride] of pairs) {
         if (!b || a.length !== b.length) return Infinity;
-        a.forEach((v, i) => (worst = Math.max(worst, Math.abs(v - b[i]!))));
+        a.forEach((v, i) => {
+          if (!skip(name, Math.floor(i / stride))) worst = Math.max(worst, Math.abs(v - b[i]!));
+        });
       }
     }
     return worst;
@@ -129,8 +141,11 @@ describe.skipIf(!blender)("hero import through Blender (local only)", () => {
         expect(fixes).toContain("'Rig' was showing its Rest Position");
         expect(fixes).toContain("--retime: the scene ran at 24 fps; every clip is scaled by 60/24 = 2.5");
         expect(fixes).toContain("retimed attack 'shove' from its authored split [16, 6, 32] (54 frames) to the contract's [8, 3, 16] (27 frames)");
-        // Actions not on NLA tracks (including the active-only 'win') get name-matched tracks.
-        expect(fixes).toMatch(/put 21 actions that were not on NLA tracks onto tracks named after them: .*\bwin\b/);
+        // A renamed track playing a contract action is renamed back, not reported as a stray to delete.
+        expect(fixes).toContain("NLA track 'Peck attack' plays action 'peck': renamed the track to 'peck'");
+        expect(problems).not.toContain("Peck attack");
+        // Actions not on NLA tracks (including the active-only 'win') get name-matched tracks (peck has its own).
+        expect(fixes).toMatch(/put 20 actions that were not on NLA tracks onto tracks named after them: .*\bwin\b/);
         // Non-deform IK/control bones are fine: excluded from the export.
         expect(r.notes.join("\n")).toContain("3 non-deform bones stay in Blender and are not exported (control/IK bones are fine): ctrl_foot_L, ctrl_foot_R, ctrl_look");
 
@@ -181,9 +196,46 @@ describe.skipIf(!blender)("hero import through Blender (local only)", () => {
       const { r, hitboxes } = await run(fixture("messy_fixable", "fixable"));
       expect(r.problems).toEqual([]);
       expect(r.ok).toBe(true);
-      expect(r.fixes.join("\n")).toMatch(/put 21 actions.*unhid hit_beak, hurt_body/s);
+      const fixes = r.fixes.join("\n");
+      expect(fixes).toMatch(/put 20 actions.*unhid hit_beak, hurt_body/s);
+      expect(fixes).toContain("NLA track 'Peck attack' plays action 'peck': renamed the track to 'peck'");
+      // Unselectable objects and hidden collections would silently drop out of the export (use_selection).
+      for (const cleared of [
+        "Hide in Viewport on collection 'Helpers'",
+        "Disable in Viewports on collection 'Helpers'",
+        "Disable Selection on collection 'Body'",
+        "Disable Selection on 'Chicken'",
+        "Disable Selection on 'hit_beak'",
+        "Disable Selection on 'hurt_body'",
+      ]) {
+        expect(fixes).toContain(cleared);
+      }
       // Frame-1 starts are slid to 0 by the exporter, shove is retimed back phase by phase: the bake matches.
       expect(worstDiff(JSON.parse(readFileSync(hitboxes, "utf8")) as HitboxesFile)).toBeLessThanOrEqual(1);
+    },
+    LONG,
+  );
+
+  it(
+    "an attack authored with fewer active frames than the contract hits from its first active tick",
+    async () => {
+      // slam is [14, 4, 22] in the contract, authored [14, 2, 22]: its two hit frames (15, 16) are the
+      // placeholder's samples 15 and 18. A plain linear retime would show a wind-up/hit blend on tick 15
+      // (authored frame 14.5).
+      const { r, hitboxes } = await run(fixture("messy_short_active", "short_active"));
+      expect(r.problems).toEqual([]);
+      expect(r.fixes.join("\n")).toContain("retimed attack 'slam' from its authored split [14, 2, 22] (38 frames) to the contract's [14, 4, 22] (40 frames)");
+      const baked = JSON.parse(readFileSync(hitboxes, "utf8")) as HitboxesFile;
+      const [s, a] = CONTRACT.clips.find((c) => c.name === "slam")!.phases!;
+      // The first and last active ticks show the authored hit poses, and wind-up, recovery and every other
+      // clip are untouched; only the ticks in between are in-betweens of the two hit frames.
+      const between = (clip: string, f: number) => clip === "slam" && f > s! + 1 && f < s! + a!;
+      expect(worstDiff(baked, between)).toBeLessThanOrEqual(1);
+      const beak = (h: HitboxesFile, f: number) => h.clips["slam"]!.hit["hit_beak"]!.slice(f * 3, f * 3 + 3);
+      for (const f of [s! + 1, s! + a!]) {
+        const diff = Math.max(...beak(baked, f).map((v, i) => Math.abs(v - beak(committed, f)[i]!)));
+        expect(diff, `slam's beak at sample ${f}`).toBeLessThanOrEqual(1);
+      }
     },
     LONG,
   );
