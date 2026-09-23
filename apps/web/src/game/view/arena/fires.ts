@@ -7,7 +7,7 @@ import { FIRE_COL, FIRE_POINT_I } from "./lighting";
 import { rng } from "./rng";
 
 /**
- * Oil-drum fires: flame tongues, a soft halo per drum and rising embers, all
+ * Oil-drum fires: flame tongues, a soft halo per drum, rising embers and lit smoke, all
  * instanced quads in ONE additive draw. Every particle loops in the vertex
  * shader from (uTime, seed): no CPU work per particle, ever. Brightness follows
  * the cluster's flicker, the same value that drives its PointLight.
@@ -15,8 +15,10 @@ import { rng } from "./rng";
 const FLAME = 0;
 const HALO = 1;
 const EMBER = 2;
+const SMOKE = 3;
 const TONGUES = 10;
 const EMBERS = 16;
+const PUFFS = 7;
 
 const VERT = /* glsl */ `
 attribute vec3 aCenter;
@@ -44,6 +46,12 @@ void main() {
     q.y *= 1.25;
   } else if (kind < 1.5) {
     size *= 0.8 + 0.3 * fl;
+  } else if (kind > 2.5) {
+    // Smoke: slow, swelling puffs that lean with a faint breeze, lit orange from below.
+    float life = 4.5 + 2.5 * fract(seed * 5.3);
+    age = fract(uTime / life + seed);
+    c += vec3(sin(age * 2.0 + seed * 10.0) * 0.4 * age + 0.9 * age * age, age * 4.2, -0.6 * age);
+    size *= 0.7 + 2.3 * age;
   } else {
     // Ember: drifts up and sideways on the heat, fades out high above.
     float life = 1.8 + 1.6 * fract(seed * 3.7);
@@ -82,6 +90,10 @@ void main() {
     float g = smoothstep(0.5, 0.0, length(d));
     col = vec3(1.0, 0.36, 0.08);
     a = g * g * 0.22 * vFl;
+  } else if (vKind > 2.5) {
+    float g = smoothstep(0.5, 0.0, length(d));
+    col = mix(vec3(0.9, 0.32, 0.08) * vFl, vec3(0.16, 0.16, 0.19), smoothstep(0.0, 0.35, vAge));
+    a = g * g * 0.16 * smoothstep(0.0, 0.08, vAge) * (1.0 - vAge);
   } else {
     float g = smoothstep(0.5, 0.1, length(d));
     col = vec3(1.8, 0.7, 0.2);
@@ -110,6 +122,7 @@ export function buildFires(clusters: readonly [FireCluster, FireCluster], shared
       for (let i = 0; i < TONGUES; i++) push(d.x + (rand() - 0.5) * 0.4, d.y + 0.95, d.z + (rand() - 0.5) * 0.4, FLAME, 0.55 + rand() * 0.35, ci);
       push(d.x, d.y + 1.25, d.z, HALO, 3.2, ci);
     }
+    for (let i = 0; i < PUFFS; i++) push(cl.light.x + (rand() - 0.5) * 1.2, 1.3, cl.light.z + (rand() - 0.5) * 0.6, SMOKE, 1.0, ci);
     for (let i = 0; i < EMBERS; i++) {
       const d = cl.drums[i % cl.drums.length];
       if (d) push(d.x + (rand() - 0.5) * 0.4, d.y + 1.0, d.z + (rand() - 0.5) * 0.4, EMBER, 0.045 + rand() * 0.03, ci);

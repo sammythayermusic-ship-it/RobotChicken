@@ -32,8 +32,8 @@ float h11(float p) {
 float flashNow() {
   float slot = floor(uTime * 2.5 + aMeta.w * 17.0);
   float inSlot = fract(uTime * 2.5 + aMeta.w * 17.0);
-  float chance = smoothstep(0.55, 1.0, uHype) * 0.07;
-  return step(h11(slot * 1.37 + aMeta.w * 91.7), chance) * (1.0 - smoothstep(0.05, 0.3, inSlot));
+  float chance = smoothstep(0.5, 1.0, uHype) * 0.08;
+  return step(h11(slot * 1.37 + aMeta.w * 91.7), chance) * (1.0 - smoothstep(0.1, 0.45, inSlot));
 }
 // A hop whose height and rate grow with hype.
 float bob() {

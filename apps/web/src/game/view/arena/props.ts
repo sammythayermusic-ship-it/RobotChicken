@@ -316,11 +316,10 @@ function floodTower(b: B, a: Bake, P: Prims, i: number): void {
   obj.updateMatrix();
   const bank = obj.matrix.clone();
   b.add(P.box, M.multiplyMatrices(bank, tf(0, 0, -0.12, 0, 0, 0, 2.2, 1.35, 0.22)), steel);
-  const lamp: Shade<Attr> = (p, n, out) => {
+  const lamp: Shade<Attr> = (_p, _n, out) => {
     out.color[0] = 1;
     out.color[1] = 1;
     out.color[2] = 1;
-    bakeStatic(p, n, a, out.aLight);
     out.aLight[0] = 7.5;
     out.aLight[1] = 8.2;
     out.aLight[2] = 9.5;
@@ -428,8 +427,8 @@ export function buildProps(u: ArenaUniforms, anchors: ArenaAnchors, seed = 1337)
   for (let i = 0; i < a.floods.length; i++) floodTower(b, a, P, i);
   junk(b, a, P, rand);
   stringLights(b, a, P);
-  // Beacon posts: a striped pole and an amber lamp housing (the light itself is a flare in beams.ts).
-  const pole = shader(a, { albedo: (p, _n, out) => out.copy(Math.floor(p.y * 4) % 2 ? lin(0x9a7a10) : lin(0x111111)), base: 0, aoH: 0.4 });
+  // Beacon posts: a hazard-yellow pole and an amber lamp housing (the light itself is a flare in beams.ts).
+  const pole = shader(a, { albedo: flat(lin(0x6a5410), 0.4), base: 0, aoH: 0.4 });
   const housing = shader(a, { albedo: flat(lin(0x3a2a10)), base: 0, aoH: 0.1 });
   for (const q of BEACONS) {
     b.add(P.box, tf(q.x, (q.y - 0.1) / 2, q.z, 0, 0, 0, 0.07, q.y - 0.1, 0.07), pole);

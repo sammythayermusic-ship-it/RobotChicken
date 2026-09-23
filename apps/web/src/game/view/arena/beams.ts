@@ -106,7 +106,7 @@ export function buildBeams(floods: readonly Floodlight[], bulbs: readonly Vec3Li
     // Open cone, apex end at the lamp. Its local +y is the beam axis, pointing back at the lamp.
     const cone = new CylinderGeometry(0.5, 0.5 + Math.tan(halfAngle) * len, len, 28, 1, true).translate(0, -len / 2, 0);
     obj.position.copy(from);
-    obj.up.set(0, 0, 1);
+    obj.up.set(0, 0, 1); // not +y: a glb lamp aimed straight down would make lookAt degenerate
     obj.lookAt(to);
     obj.rotateX(-Math.PI / 2); // lookAt aims +z; the cone runs along -y
     obj.updateMatrix();
