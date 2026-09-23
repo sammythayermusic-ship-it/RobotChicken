@@ -1,7 +1,7 @@
 /**
  * Every SoundName's procedural recipe, and the order they are rendered in.
- * Loaded with a dynamic import from createAudio(), so none of this is in the
- * /play page bundle until the FIGHT click.
+ * The loader imports this dynamically so a bundler may keep it out of the
+ * page's first load (Turbopack currently folds it into the /play chunk).
  */
 import type { SoundName } from "../names";
 import type { Recipe } from "../synth";

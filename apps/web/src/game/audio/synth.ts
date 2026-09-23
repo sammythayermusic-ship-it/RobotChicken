@@ -16,7 +16,6 @@ export type SynthContext = Pick<
   | "createBuffer"
   | "createWaveShaper"
   | "createConvolver"
-  | "createDelay"
 >;
 
 export type Rng = () => number;
