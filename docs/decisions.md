@@ -52,3 +52,26 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | Game server = one esbuild bundle | The Docker runtime stage copies only `dist/`: no `node_modules`, no `pnpm deploy`. |
 | `verifyDepsBeforeRun: false` | Filtered installs (CI replay job, Docker) must not trigger pnpm's automatic full reinstall on `pnpm run`. |
 | Env vars added (documented only) | `JUPITER_API_KEY` (Price v2 is deprecated; v3 needs a key), `REDIS_URL` (the Colyseus Redis driver needs a TCP `rediss://` URL, not Upstash REST), `ALLOWED_ORIGINS`, `PAYOUTS_ENABLED=false`. |
+
+## Phase 1: the local fighter
+
+| Decision | Why |
+|---|---|
+| `step()` is pure and clones internally | Rollback (Phase 2) keeps a history of states; storing references must be safe. Three shallow copies per tick cost ~1 µs. |
+| Both hit directions are detected, then applied | Trades are symmetric; a fast-check property proves swapping the players mirrors every state exactly. In a trade, getting hit beats a dive kick's bounce. |
+| Knockback slides accumulate, then assign once; `slideRem` carries remainders | Order-independent and exact even when a wall shortens a push. |
+| Pushbox split rounds up for both fighters | `(overlap+1)>>1` each: symmetric under mirroring (the overshoot is at most 1 mu). |
+| Hit-stop freezes the fighter completely | Stun, buffer, slide and Heat decay all pause, so a hit-stop can't eat a buffered press and the meter reads exactly +8 after a hit. |
+| Walls stop outward motion only | A fighter left beyond 9.5 u by a ring-out hit that fell short stays there (no teleport) and can walk back in. |
+| No floor past the ring edge | Anyone beyond ±10 u falls, so a KO'd chicken carried out of the pit drops out of sight. Mid-round, that can only be a ring-out. |
+| A round ended by KO starts its 120-tick clock on the next tick | Same timing as a timeout. |
+| CPU lives outside `step()` | It reads the state and returns buttons, seeded from the match id; a CPU match replays from its input log alone. Difficulty = reaction delay (22 / 14 / 8 ticks) and block / punish rates. |
+| Presentation events are derived, not stored | `deriveEvents(prev, next)` diffs two states; events never enter the hash, and replays produce the identical event stream. |
+| The animation mixer is posed from sim state | `action.time` from `(state, stTick)` + `mixer.update(0)`; blends and turns count sim ticks. Hit-stop freezes the pose exactly. |
+| Camera shake is seeded value noise on the tick counter | Replays shake identically at any frame rate. `prefers-reduced-motion` defaults it to 30%. |
+| KO chromatic aberration is a copy-the-framebuffer pass | Costs GPU only during the 0.6 s pulse; a composer would cost every frame on phones. Prewarmed at load. |
+| GPU particles: instanced quads, motion in the vertex shader | CPU work only when a burst is emitted; per frame only `uTime` changes. Low quality keeps just the hit flash. |
+| HUD: hot bars written straight to the DOM, cold values in a store | React never re-renders at 60 Hz. Meters keep a whole-percent `aria-valuenow`. |
+| Tier cosmetics | Chrome: dash light trail. Gold: double sparks on hits. Diamond: iridescent physical material. Mirror matches tint P2 (hue shift, or copper for grey tiers). Gold's KO sting and Diamond's name chant / entrance wait for Sammy's sound pack and hero model. |
+| Perf is measured from FIGHT | Loading and shader warm-up don't count. `/play?bench=1` runs a fixed-seed CPU match on any device and prints copyable percentiles. |
+| Determinism is checked in three JS engines | The golden replays run in Chromium, Firefox and WebKit (e2e) as well as Node on x64 and arm64 (CI). |
