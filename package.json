@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "pnpm --filter @cockfight/web run test:e2e",
+    "test:perf": "pnpm --filter @cockfight/web run test:perf",
     "replay:golden": "pnpm -s --filter @cockfight/sim run replay:golden",
     "assets:placeholder": "pnpm -s --filter @cockfight/tools run assets:placeholder",
     "assets:validate": "CF_CWD=\"$INIT_CWD\" pnpm -s --filter @cockfight/tools run assets:validate",
