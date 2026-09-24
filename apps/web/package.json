@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/copy-decoders.mjs && next dev --port ${WEB_PORT:-3000}",
     "build": "node scripts/copy-decoders.mjs && next build",
+    "export": "node scripts/export-static.mjs",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
