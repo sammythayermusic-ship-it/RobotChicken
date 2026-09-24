@@ -242,7 +242,7 @@ export class Particles {
           break;
         }
         case "flash":
-          pool.emit(t, x, y, 0.3, 0, 0, 0, 0.12, k, 1.5, r(1), 0);
+          pool.emit(t, x, y, 0.3, 0, 0, 0, 0.1, k, 1.05, r(1), 0);
           break;
         case "screw": {
           const sp = 3 + r(1) * 4;

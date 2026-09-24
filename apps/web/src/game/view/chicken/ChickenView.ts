@@ -164,7 +164,7 @@ export class ChickenView {
     const f = this.flash > 0;
     for (const m of this.flashMats) {
       const base = m.userData.baseEmissive as MeshStandardMaterial["emissive"] | undefined;
-      if (f) m.emissive.setRGB(0.55, 0.38, 0.22);
+      if (f) m.emissive.setRGB(0.32, 0.2, 0.1);
       else if (base) m.emissive.copy(base);
     }
   }
