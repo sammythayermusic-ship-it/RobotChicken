@@ -46,10 +46,7 @@ If the Netlify CLI asks which monorepo project to use, deploy from a copy of `ap
   - both fighters predicted and rolled back (instead of the spec's opponent shown 100 ms late);
   - corrections up to 3 units blended instead of snapping above 0.5 (no teleports on missed dashes);
   - the wallet gate running on the game server rather than a Vercel API route;
-  - 10 s reconnect grace, with 20 s of pauses per player per match;
-  - pairing: 120 ms, 200 ms after 20 s, anyone after 60 s;
-  - the match-start balance re-check lets a match go ahead when the chain can't be read;
-  - a pasted address moves that address's ELO even if the paster doesn't own it (until usernames / signing in Phase 3).
+  - *(Confirmed at the Phase 2 review: the 10 s / 20 s disconnect rules, the pairing steps, letting a match go ahead when the chain can't be read, and pasted-address ELO until Phase 3's signing.)*
 - [ ] **Gameplay:**
   - super input (Space with no direction at full Heat; away+Space stays a peck);
   - the dive kick (unblockable but reactable, or blockable);

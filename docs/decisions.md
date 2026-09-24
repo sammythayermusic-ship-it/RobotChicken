@@ -161,7 +161,7 @@ Sammy asked for the playtest to work on phones, so the spec's Phase 2 mobile con
 
 ## Phase 2: online
 
-Agreed with Sammy before the build (2026-09-24): an **open playtest mode** so friends can play online before $COCK exists; **one region (US-East)** to start; **usernames** (message signing) move to Phase 3. ★ = Sammy's call.
+Agreed with Sammy before the build (2026-09-24): an **open playtest mode** so friends can play online before $COCK exists; **one region (US-East)** to start; **usernames** (message signing) move to Phase 3. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 2 review (2026-09-24).
 
 ### Netcode
 
@@ -183,14 +183,14 @@ Agreed with Sammy before the build (2026-09-24): an **open playtest mode** so fr
 | Decision | Why |
 |---|---|
 | Rooms start when both players have loaded (30 s, else cancelled) | Loading the chicken and compiling shaders takes seconds; the sim's 3 s countdown starts only when both can see it. |
-| ★ A dropped player pauses the match for up to 10 s, out of a 20 s budget per player per match | Spec: "10 s grace then forfeit". The budget stops a player stalling a match by dropping over and over (a malformed message or flooding also drops a client). |
+| ✓ A dropped player pauses the match for up to 10 s, out of a 20 s budget per player per match | Spec: "10 s grace then forfeit". The budget stops a player stalling a match by dropping over and over (a malformed message or flooding also drops a client). |
 | Both players gone: the match is off (no result, no ELO) | Unless one comes back while the other's grace has already run out: then the one who came back wins by forfeit. |
 | A forfeit during the 2 s after a deciding KO plays the sim out | The match is already won; walking away from the KO screen mustn't hand it to the loser. |
 | Leaving on purpose forfeits at once | Spec. The result card's "find another match" leaves an over match, which is harmless. |
 | Forfeits record the round they happened in | The database needs 1–5 rounds for a finished match; the forfeit round's winner is the player who stayed. |
 | Results are written once, at the end, by `record_match()` | One transaction: the `matches` row and both ELO updates, locked in address order, idempotent on the match id. The row is not written at match start. |
 | ELO: K = 32, draw = ½, rounded half up, same formula in SQL and TS | A test checks them against each other; a reviewer checked 6,003 cases. |
-| ★ Pasting an address is enough to move its ELO | Anyone can paste someone else's address (≥ $30) and throw matches under it. Harmless for payouts (they go to the holder), but it can move a stranger's rating and leaderboard row until Phase 3's message signing. The queue refuses a second ticket for an address already queued (so a paster can't kick the holder out). |
+| ✓ Pasting an address is enough to move its ELO | Anyone can paste someone else's address (≥ $30) and throw matches under it. Harmless for payouts (they go to the holder), but it can move a stranger's rating and leaderboard row until Phase 3's message signing. The queue refuses a second ticket for an address already queued (so a paster can't kick the holder out). |
 | `input_log` is the replay JSON (UTF-8) | Two `{t, b}` arrays, a few KB; `result_hash = sha256(matchId + winner address + log)`, empty address for a draw or a playtest guest. |
 | Open (playtest) matches never touch the database | They'd pollute ELO and the leaderboard. The game server keeps the last 500 matches (all of them) and a playtest rating table in memory, served at `/api/matches/:id` and `/api/leaderboard`, so replays and a leaderboard work with zero env vars. |
 
@@ -203,9 +203,9 @@ Agreed with Sammy before the build (2026-09-24): an **open playtest mode** so fr
 | Price: Jupiter Price v3; a fixed configured price on devnet | No price API quotes a devnet test mint. The spec's bonding-curve quote (the gate takes the lower price) waits for the launchpad decision (Phase 3); `BalanceGate` already takes several sources and uses the lowest. The price is reused for 20 s. |
 | Only passing checks are cached | Someone $2 short who buys can retry at once instead of waiting 60 s. |
 | Off-curve addresses are refused | A program-derived address can't sign; SOL sent there is lost forever. |
-| ★ The match-start re-check lets a match go ahead if the chain can't be read | Availability over strictness: the player passed the gate at most 5 minutes earlier. A re-check that reads below $30 still removes them (told why) and puts the other player back in the queue. |
+| ✓ The match-start re-check lets a match go ahead if the chain can't be read | Availability over strictness: the player passed the gate at most 5 minutes earlier. A re-check that reads below $30 still removes them (told why) and puts the other player back in the queue. |
 | Turnstile is required in production | An unset secret closes the gate (503) instead of falling back to Cloudflare's always-pass test secret; the token's hostname must be one of `ALLOWED_ORIGINS`. |
-| ★ Pairing: 120 ms RTT, 200 ms after 20 s, anyone after 60 s | Spec, plus the last step: in a thin queue nobody should wait forever. Sides are random. Phase 3's anti-abuse rules (≥ 4 in the queue, IP / fingerprint, rematch cooldown) plug into `canPair()`. |
+| ✓ Pairing: 120 ms RTT, 200 ms after 20 s, anyone after 60 s | Spec, plus the last step: in a thin queue nobody should wait forever. Sides are random. Phase 3's anti-abuse rules (≥ 4 in the queue, IP / fingerprint, rematch cooldown) plug into `canPair()`. |
 | One queue room, created at boot; tokens checked at the HTTP matchmaking step | Clients can't create queue or fight rooms, and a seat is only reserved for a valid token (or, open mode, a name). Fight rooms are private. |
 | Request bodies over 16 KB (or unsized) are refused | Colyseus reads bodies into memory with no cap; a few 200 MB posts would take the 1 GB machine down. |
 | `/gate` rate limit: 20 per minute per IP (IPv6 per /64); on Fly only `Fly-Client-IP` counts | `X-Forwarded-For` is whatever the client sends. |
