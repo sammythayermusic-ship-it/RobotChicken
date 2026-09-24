@@ -52,6 +52,18 @@ fixed-seed CPU match and prints copyable frame-time numbers (open it on a phone 
 with `WEB_PORT=3001 pnpm dev` and the machine's IP, or on a Vercel preview); `&fps=1` shows an
 FPS meter; `&tier=gold` previews a tier.
 
+## Playtest build (static)
+
+Local play needs no server, so a static export can go on any static host for friends to try:
+
+```bash
+pnpm --filter @cockfight/web export        # builds apps/web/out (with Netlify _headers, noindex)
+npx netlify-cli deploy --dir apps/web/out --prod --no-build --site cockfight-playtest
+```
+
+Live at https://cockfight-playtest.netlify.app (Sammy's Netlify account). This is a playtest
+mirror only; production stays on Vercel per the spec.
+
 ## Commands
 
 | Command | What it does |
