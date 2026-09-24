@@ -10,8 +10,8 @@ runs in phases, each one branch and one PR, stopping for review:
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 · Scaffold | Monorepo, deterministic sim skeleton, Supabase migrations, Fly/Vercel configs, CI, placeholder chicken | this PR |
-| 1 · The fighter | Full move set, rounds, Heat/super, ring-outs, arena, HUD, juice, sound, local 2P + CPU, Blender import pipeline | next PR |
+| 0 · Scaffold | Monorepo, deterministic sim skeleton, Supabase migrations, Fly/Vercel configs, CI, placeholder chicken | PR #1 |
+| 1 · The fighter | Full move set, rounds, Heat/super, ring-outs, arena, HUD, juice, sound, local 2P + CPU, Blender import pipeline | PR #2 |
 | 2 · Online | Colyseus matchmaking, prediction/reconciliation, wallet gate, replays, leaderboard | — |
 | 3 · Money | Fee claims, payouts, anti-abuse, /admin | — |
 | 4 · Launch | Mainnet, load test, runbook | — |
@@ -41,13 +41,27 @@ WEB_PORT=3001 pnpm dev
 `/dev/net` (dev builds only) joins a live fight room and shows the tick climbing, proving
 web ↔ game end to end. Nothing needs env vars locally; see `.env.example` for the full list.
 
+## Play it
+
+Open `/play`, pick **VS CPU** (easy / normal / hard) or **2 PLAYERS · 1 KEYBOARD**, press FIGHT.
+Controls and frame data are in `docs/controls.md` (the Controls panel has a key tester for
+keyboard ghosting). Esc or P pauses (quality, screen shake, sound).
+
+Useful links: `/play?mode=cpu&difficulty=hard` skips the picker; `/play?bench=1` runs a
+fixed-seed CPU match and prints copyable frame-time numbers (open it on a phone over your LAN
+with `WEB_PORT=3001 pnpm dev` and the machine's IP, or on a Vercel preview); `&fps=1` shows an
+FPS meter; `&tier=gold` previews a tier.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `pnpm verify` | lint + typecheck + unit tests + asset validation + hitbox bake check + builds |
 | `pnpm test` | every unit test (vitest projects: sim, shared, solana, web, game, worker, tools) |
-| `pnpm test:e2e` | Playwright against a production build (port 3130, `E2E_PORT` to change) |
+| `pnpm test:e2e` | Playwright against a production build (port 3130, `E2E_PORT` to change): the functional suite in Chromium, golden replays in Chromium, Firefox and WebKit |
+| `pnpm test:perf` | local frame-timing check (desktop + Pixel 7 proxy), writes `docs/captures/phase-1/perf.json` |
+| `pnpm assets:import --blend <file>` | exports a hero chicken from Blender, validates it and bakes its hitboxes (`docs/art-pipeline.md`) |
+| `pnpm textures` | converts tier textures to KTX2 (needs KTX-Software 4.4) |
 | `pnpm replay:golden` | replays the golden input logs and prints their final state hashes |
 | `pnpm replay:golden --bless` | re-records them after an intentional rules change (say why in the commit) |
 | `pnpm assets:placeholder` | rebuilds the placeholder chicken with headless Blender, validates, re-bakes hitboxes |
