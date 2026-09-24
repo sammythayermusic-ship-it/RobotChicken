@@ -1,4 +1,4 @@
-import { Phase, RULES, St, reasonLabel, type MatchState, type SimEvent } from "@cockfight/sim";
+import { Mv, Phase, RULES, St, reasonLabel, type FighterState, type MatchState, type MoveRules, type SimEvent } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import type { SoundName } from "../audio/names";
 import type { HudStore } from "../hud/hudStore";
@@ -19,6 +19,12 @@ export interface HypeSink {
 }
 
 const MU = 1000;
+
+/** Space pressed now would dive: the sim's dive rule (fighter.ts), with a press in the rise waiting for it. */
+function canDive(f: FighterState): boolean {
+  const dive = RULES.moves[Mv.dive_kick] as MoveRules;
+  return f.st === St.jump && f.grounded === 0 && f.diveUsed === 0 && (f.vy > 0 || f.y >= dive.minY);
+}
 
 /**
  * Turns sim events into juice: particles, sound, camera, crowd and HUD. Runs
@@ -101,6 +107,7 @@ export class Director {
     this.audio?.setHype(this.hypeLevel);
 
     // HUD: hot bars every tick, cold values when they change.
+    const touchP1 = this.hud.get().mode === "cpu";
     this.hud.setBar("hp0", f0.hp / hpMax);
     this.hud.setBar("hp1", f1.hp / hpMax);
     this.hud.setBar("trail0", f0.hp / hpMax);
@@ -116,6 +123,8 @@ export class Director {
       sd: s.sd === 1,
       wins: [s.w1, s.w2],
       heatFull: [f0.heat >= heatMax, f1.heat >= heatMax],
+      air: touchP1 && f0.grounded === 0,
+      dive: touchP1 && canDive(f0),
       matchWinner: s.matchWinner,
     });
   }

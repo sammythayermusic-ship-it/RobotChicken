@@ -9,7 +9,9 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test --project=chromium --project=firefox --project=webkit",
+    "test:e2e": "playwright test --project=chromium --project=chromium-touch --project=firefox --project=webkit",
+    "test:e2e:desktop": "playwright test --project=chromium --project=firefox --project=webkit",
+    "test:e2e:touch": "playwright test --project=chromium-touch",
     "test:perf": "playwright test --project=perf"
   },
   "dependencies": {

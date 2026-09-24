@@ -5,6 +5,7 @@ import type { CpuLevel } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import { CONTROL_LABELS, SOLO, VERSUS } from "@/game/match/input/bindings";
 import { isControlTarget } from "@/game/match/input/keyboard";
+import { useTouchOnly } from "@/components/touch/useTouchMode";
 
 export interface PlayConfig {
   mode: "cpu" | "2p";
@@ -109,9 +110,28 @@ function ChoiceGroup({ id, caption, wrap, children }: { id: string; caption: str
   );
 }
 
+/** What the on-screen buttons do (phones and tablets). */
+function TouchHelp() {
+  return (
+    <div data-testid="touch-help">
+      <h2 className="mb-1 font-display text-amber-300">ON-SCREEN BUTTONS</h2>
+      <Row label="Walk" keys="◀ ▶ on the pad" />
+      <Row label="Block" keys="hold ▼" />
+      <Row label="Dash" keys="double-tap ◀ or ▶" />
+      <Row label="Peck" keys="PECK" />
+      <Row label="Jump" keys="JUMP" />
+      <Row label="Slam" keys="hold ▼ + SLAM" />
+      <Row label="Dive kick" keys="DIVE (in the air)" />
+      <Row label="Pause" keys="tap the timer" />
+      <p className="mt-2 text-xs text-zinc-400">Upright or sideways: both work. Turning the phone keeps the fight going.</p>
+    </div>
+  );
+}
+
 export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart: (c: PlayConfig) => void }) {
   const [cfg, setCfg] = useState<PlayConfig>(initial);
   const [controls, setControls] = useState(false);
+  const touchOnly = useTouchOnly();
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 py-8" data-testid="mode-picker">
       <h1 className="font-display text-4xl text-white sm:text-5xl">PICK YOUR FIGHT</h1>
@@ -123,6 +143,11 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
           2 PLAYERS · 1 KEYBOARD
         </Choice>
       </ChoiceGroup>
+      {touchOnly && cfg.mode === "2p" ? (
+        <p className="-mt-3 text-xs text-amber-200/80" data-testid="needs-keyboard">
+          2 players needs a keyboard. On a phone, fight the CPU with the on-screen buttons.
+        </p>
+      ) : null}
       {cfg.mode === "cpu" ? (
         <ChoiceGroup id="pick-cpu" caption="CPU">
           {LEVELS.map((l) => (
@@ -157,7 +182,11 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
       </button>
       {controls ? (
         <div className="grid gap-4 text-sm sm:grid-cols-2">
-          {cfg.mode === "cpu" ? (
+          {touchOnly && cfg.mode === "cpu" ? (
+            <div className="sm:col-span-2">
+              <TouchHelp />
+            </div>
+          ) : cfg.mode === "cpu" ? (
             <div>
               <h2 className="mb-1 font-display text-amber-300">YOU</h2>
               <Row label="Walk" keys={CONTROL_LABELS.solo.move} />
@@ -187,9 +216,11 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
           <div className="text-zinc-400 sm:col-span-2">
             <p>Double-tap a direction to dash. Peck + toward = shove, peck + down = slam (unblockable), peck in the air = dive kick. With full Heat, peck with no direction held for the Rooster Rocket (peck + away stays a peck and keeps the meter).</p>
           </div>
-          <div className="sm:col-span-2">
-            <KeyTester />
-          </div>
+          {touchOnly ? null : (
+            <div className="sm:col-span-2">
+              <KeyTester />
+            </div>
+          )}
         </div>
       ) : null}
     </div>

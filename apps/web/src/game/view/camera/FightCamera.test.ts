@@ -2,7 +2,7 @@ import { Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import { RULES } from "@cockfight/sim";
 import { BODY, FightCamera, VFOV } from "./FightCamera";
-import { hudFraction } from "./hudBand";
+import { HUD_BAND_PX, INSET_SHARE, hudBandPx, hudFraction, insetFraction } from "./hudBand";
 
 const WALL = RULES.match.wallEdge / 1000;
 /** Apex of a standing jump, from the sim's own integer arc (2.565 u). */
@@ -160,6 +160,24 @@ describe("FightCamera framing", () => {
     expect(cam.framing.lookY).toBeCloseTo(ground.lookY, 6);
   });
 
+  it("composes tighter on upright and square screens (the width sets the scale there), without a jump", () => {
+    expect(FightCamera.wantWidth(-2.5, 2.5, 412 / 539)).toBe(9);
+    expect(FightCamera.wantWidth(-0.64, 0.64, 0.7)).toBe(6.5);
+    expect(FightCamera.wantWidth(-WALL, WALL, 0.7)).toBe(FightCamera.wantWidth(-WALL, WALL));
+    // An iPhone upright in Safari: the fight area is about square (390 x 370).
+    expect(FightCamera.wantWidth(-2.5, 2.5, 390 / 370)).toBeLessThan(10.5);
+    // Landscape desktops and phones: unchanged.
+    for (const a of [4 / 3, 16 / 10, 16 / 9, 915 / 412]) expect(FightCamera.wantWidth(-2.5, 2.5, a)).toBe(12);
+    // Continuous in aspect: a pixel of height never jumps the framing.
+    for (let a = 0.6; a < 1.6; a += 0.01) {
+      expect(Math.abs(FightCamera.wantWidth(-2.5, 2.5, a + 0.01) - FightCamera.wantWidth(-2.5, 2.5, a))).toBeLessThan(0.1);
+    }
+    const up = new FightCamera(412 / 539);
+    up.setViewport(412, 539);
+    settle(up, [-2.5, 0], [2.5, 0]);
+    expect(up.framing.d).toBeCloseTo(FightCamera.distanceFor(9, 412 / 539), 3);
+  });
+
   it("widens the composed width up to the walls with room for the bodies", () => {
     expect(FightCamera.wantWidth(0, 0)).toBe(9);
     expect(FightCamera.wantWidth(-6, 6)).toBe(19);
@@ -170,6 +188,89 @@ describe("FightCamera framing", () => {
       const hfov = 2 * Math.atan(Math.tan((VFOV * Math.PI) / 360) * aspect);
       expect(2 * d * Math.tan(hfov / 2)).toBeCloseTo(w, 5);
     }
+  });
+});
+
+describe("HUD band tiers", () => {
+  it("wide on desktops, short on phones held sideways, narrow in portrait", () => {
+    expect(hudBandPx(1280, 800)).toBe(HUD_BAND_PX.wide);
+    expect(hudBandPx(1280)).toBe(HUD_BAND_PX.wide);
+    expect(hudBandPx(915, 412)).toBe(HUD_BAND_PX.short);
+    expect(hudBandPx(734, 343)).toBe(HUD_BAND_PX.short);
+    expect(hudBandPx(640, 479)).toBe(HUD_BAND_PX.short);
+    expect(hudBandPx(640, 480)).toBe(HUD_BAND_PX.wide);
+    expect(hudBandPx(412, 915)).toBe(HUD_BAND_PX.narrow);
+    expect(hudBandPx(412, 539)).toBe(HUD_BAND_PX.narrow);
+    expect(hudBandPx(639, 300)).toBe(HUD_BAND_PX.narrow);
+  });
+});
+
+describe("FightCamera bottom inset (on-screen buttons)", () => {
+  /**
+   * Landscape phones, with the buttons' reach up into the canvas (px). The
+   * page reports the reach; FightView keeps INSET_SHARE of it clear, which is
+   * what setViewport takes.
+   */
+  const PHONES: [string, number, number, number][] = [
+    ["Pixel 7 sideways", 915, 412, 140],
+    ["iPhone SE sideways", 667, 375, 134],
+    ["iPhone 15 sideways", 734, 343, 134],
+    ["a tablet sideways", 1180, 820, 134],
+  ];
+
+  it("a zero inset keeps the old bottom edge and the same framing", () => {
+    for (const [w, h] of [[1280, 800], [915, 412], [412, 915]] as const) {
+      const a = new FightCamera(w / h, 5);
+      const b = new FightCamera(w / h, 5);
+      a.setViewport(w, h);
+      b.setViewport(w, h, 0);
+      settle(a, [-2.5, 0], [2.5, 0]);
+      settle(b, [-2.5, 0], [2.5, 0]);
+      expect(b.framing).toEqual(a.framing);
+      expect(b.bottomFrac).toBe(0);
+    }
+    expect(FightCamera.bottomLimit(0.2, 0)).toBe(-0.94);
+  });
+
+  it("never squeezes the usable frame under 0.6 of NDC height", () => {
+    for (const hud of [0, 0.1, 0.2, 0.3, 0.4]) {
+      const top = FightCamera.topLimit(hud);
+      expect(top - FightCamera.bottomLimit(hud, 0.3)).toBeGreaterThanOrEqual(Math.min(0.6, top + 0.94) - 1e-9);
+    }
+  });
+
+  for (const [label, w, h, inset] of PHONES) {
+    for (const [scene, a, b] of SCENES) {
+      it(`${label} (${w}x${h}, ${inset} px of buttons): ${scene} — feet above the inset, heads below the HUD`, () => {
+        const hud = hudFraction(w, h);
+        const frac = insetFraction(inset, h);
+        const hudLine = 1 - 2 * hud;
+        const bot = FightCamera.bottomLimit(hud, frac);
+        expect(bot).toBeGreaterThan(-0.94);
+        const cam = new FightCamera(w / h, 3);
+        cam.setViewport(w, h, inset * INSET_SHARE);
+        settle(cam, a, b);
+        for (const [x, y] of [a, b]) {
+          for (const p of corners(Math.min(10, x), y)) {
+            const q = ndc(cam, p);
+            expect(Math.abs(q.x), `x of ${p.toArray()}`).toBeLessThan(0.98);
+            expect(q.y, `bottom of ${p.toArray()} vs the inset line ${bot}`).toBeGreaterThan(bot - 0.04);
+            expect(q.y, `top of ${p.toArray()} vs the HUD line ${hudLine}`).toBeLessThan(hudLine);
+          }
+        }
+      });
+    }
+  }
+
+  it("keeps a grounded close-range fight the same size (the inset only bites when the fit is tight)", () => {
+    const [w, h, inset] = [734, 343, 134];
+    const a = new FightCamera(w / h);
+    const b = new FightCamera(w / h);
+    a.setViewport(w, h);
+    b.setViewport(w, h, inset * INSET_SHARE);
+    settle(a, [-0.64, 0], [0.64, 0]);
+    settle(b, [-0.64, 0], [0.64, 0]);
+    expect(b.framing.d).toBeCloseTo(a.framing.d, 6);
   });
 });
 

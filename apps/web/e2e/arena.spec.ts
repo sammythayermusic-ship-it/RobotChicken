@@ -116,8 +116,8 @@ test.describe("junkyard arena", () => {
       await stepTicks(page, 200);
       // The camera keeps fighters below this many px; the real HUD must not reach past it.
       const band = await hudBandBottom(page);
-      console.log(`[arena] ${v.name}: HUD band ends at ${band.toFixed(1)} px (camera assumes ${hudBandPx(v.width)})`);
-      expect(band).toBeLessThanOrEqual(hudBandPx(v.width) - 14); // - room for "SUPER READY"
+      console.log(`[arena] ${v.name}: HUD band ends at ${band.toFixed(1)} px (camera assumes ${hudBandPx(v.width, v.height)})`);
+      expect(band).toBeLessThanOrEqual(hudBandPx(v.width, v.height) - 14); // - room for "SUPER READY"
       // The bars stay (they are what the jump must clear); the FIGHT! banner would only cover the fighters.
       await page.addStyleTag({ content: "[data-testid=hud-banner]{display:none !important}" });
 
@@ -137,6 +137,7 @@ test.describe("junkyard arena", () => {
   }
 
   test("quality 'low' cuts the arena's own draws and triangles", async ({ page }) => {
+    test.setTimeout(240_000); // six page loads, each a slow first frame under CI's software GL
     const problems = await watchProblems(page);
     const cost: Record<string, { drawCalls: number; triangles: number }> = {};
     for (const tier of ["high", "medium", "low"] as const) {

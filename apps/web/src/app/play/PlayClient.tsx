@@ -8,12 +8,15 @@ import { RULES, runReplay, type CpuLevel, type Replay } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import FightHud from "@/components/hud/FightHud";
 import { useHud } from "@/components/hud/useHud";
+import { TouchControls } from "@/components/touch/TouchControls";
+import { useTouchMode } from "@/components/touch/useTouchMode";
 import { createAudio, type GameAudio } from "@/game/audio";
 import type { FightEngine, FightMode } from "@/game/engine/createFightEngine";
 import { defaultTier, loadTier, saveTier, type QualityTier } from "@/game/engine/quality";
 import { HudStore } from "@/game/hud/hudStore";
 import { BenchPanel } from "./BenchPanel";
 import { ModePicker, type PlayConfig } from "./ModePicker";
+import "./play.css";
 
 const FightCanvas = dynamic(() => import("@/game/react/FightCanvas"), {
   ssr: false,
@@ -31,9 +34,26 @@ const buildJunkyard = (renderer: WebGLRenderer) => import("@/game/view/arena/Jun
 /**
  * Events that can carry the user activation audio needs. A browser grants it
  * on keydown (but not Esc), a mouse press and a tap's release; pointerup and
- * click come after a mouse press, when the activation is already there.
+ * click come after a mouse press, when the activation is already there. The
+ * on-screen buttons cancel touchstart (no click follows a tap on them), so
+ * touchend is listened for too.
  */
-const GESTURES = ["keydown", "pointerup", "click"] as const;
+const GESTURES = ["keydown", "pointerup", "click", "touchend"] as const;
+
+/**
+ * iOS plays web audio as "ambient" by default, which the ring/silent switch
+ * mutes: most phones would get a silent game. "playback" plays through the
+ * switch but stops the player's own music, so muting the game goes back to
+ * "ambient" (their music can play again).
+ */
+function setAudioSession(muted: boolean): void {
+  try {
+    const session = (navigator as { audioSession?: { type: string } }).audioSession;
+    if (session) session.type = muted ? "ambient" : "playback";
+  } catch {
+    // Not supported: the default category it is.
+  }
+}
 
 export interface PlayParams {
   mode: FightMode | null;
@@ -46,6 +66,10 @@ export interface PlayParams {
   bench: boolean;
   quality: QualityTier | null;
   arena: boolean;
+  /** ?touch=1 shows the on-screen buttons anywhere, ?touch=0 hides them; null decides by device. */
+  touch: boolean | null;
+  /** Debug only (?debug=1&cpu=idle): the CPU stands still. */
+  idleCpu: boolean;
 }
 
 type ActiveConfig = Omit<PlayConfig, "mode"> & { mode: FightMode };
@@ -95,6 +119,8 @@ export default function PlayClient({ params }: { params: PlayParams }) {
     mutedRef.current = muted;
   });
   const hud = useMemo(() => new HudStore(), []);
+  const fightArea = useRef<HTMLDivElement>(null);
+  const touchMode = useTouchMode(params.touch);
 
   // Debug: expose the sim's replay runner so e2e can check determinism in every browser engine.
   useEffect(() => {
@@ -119,6 +145,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
    */
   const getAudio = useCallback((): Promise<GameAudio | null> => {
     if (audioStart.current) return audioStart.current;
+    setAudioSession(mutedRef.current);
     const p: Promise<GameAudio | null> = createAudio()
       .catch(() => null)
       .then((a) => {
@@ -163,7 +190,10 @@ export default function PlayClient({ params }: { params: PlayParams }) {
       live = false;
     };
   }, [engine]);
-  useEffect(() => audio.current?.setMuted(muted), [muted]);
+  useEffect(() => {
+    audio.current?.setMuted(muted);
+    if (audio.current) setAudioSession(muted);
+  }, [muted]);
 
   // Autostart links: create the audio right away, under LOADING, where the
   // AudioContext constructor's ~130 ms stall does not show (on a first key
@@ -229,6 +259,45 @@ export default function PlayClient({ params }: { params: PlayParams }) {
     }
   }, [engine, hud, uiSound]);
 
+  // Phones: the system back gesture (an edge swipe on Android and in iOS
+  // Safari) is easy to hit with a thumb on the d-pad, and it would leave the
+  // fight. While a touch fight runs, one extra history entry sits on top;
+  // going back to it pauses instead. From the pause menu (or a finished
+  // match), back leaves as usual. Next's router copies its own state into
+  // the entry, so going back restores the same page without a reload.
+  const touchFight = touchMode && cfg?.mode === "cpu";
+  const guard = useRef(false);
+  useEffect(() => {
+    if (!touchFight) return;
+    const arm = () => {
+      if (guard.current) return;
+      window.history.pushState(null, "");
+      guard.current = true;
+    };
+    const onPop = () => {
+      if (!guard.current) return;
+      guard.current = false;
+      const e = engineRef.current;
+      const c = hud.get();
+      if (e && !e.paused && c.matchWinner < 0 && !c.loading) {
+        uiSound("pause");
+        e.pause();
+      }
+    };
+    // Re-armed whenever play resumes (the pause flag clears).
+    const onHud = () => {
+      const c = hud.get();
+      if (!c.paused && c.matchWinner < 0 && !c.loading) arm();
+    };
+    onHud();
+    window.addEventListener("popstate", onPop);
+    const off = hud.subscribe(onHud);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      off();
+    };
+  }, [touchFight, hud, uiSound]);
+
   /**
    * The next fight (REMATCH, RESTART, R). One per press: until the new fight
    * has loaded, more presses (a held R's key repeat, a double click) do nothing.
@@ -262,37 +331,65 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   }
 
   const tiers: [Tier, Tier] = [cfg.tier, cfg.mode === "2p" ? cfg.tier : "rust"];
+  // The on-screen buttons play P1 against the CPU (2P needs a keyboard; a demo needs nobody).
+  const touch = touchFight;
+  const ended = cold.matchWinner >= 0;
   return (
-    <main className="fixed inset-0 overflow-hidden overscroll-none bg-black text-white" data-testid="fight-screen">
-      <FightCanvas
-        key={matchId}
-        className="absolute inset-0 touch-none select-none"
-        onEngine={setEngine}
-        options={{
-          mode: cfg.mode,
-          difficulty: cfg.difficulty,
-          tiers,
-          matchId,
-          hud,
-          quality,
-          shake,
-          manual: params.manual,
-          debug: params.debug,
-          bench: params.bench,
-          arena: params.arena ? buildJunkyard : undefined,
-        }}
-      />
-      <FightHud store={hud} />
-      {cold.loading ? (
-        <div className="absolute inset-0 grid place-items-center bg-black/70 font-display text-2xl text-zinc-300">LOADING…</div>
+    <main
+      className="fight-screen fixed inset-0 touch-none overflow-hidden overscroll-none bg-black text-white"
+      data-testid="fight-screen"
+      data-touch={touch ? "" : undefined}
+    >
+      {/* One tree for every layout: moving the canvas under another parent would remount it (a new fight). */}
+      <div ref={fightArea} className="fight-area" data-testid="fight-area">
+        <FightCanvas
+          key={matchId}
+          className="absolute inset-0 touch-none select-none"
+          onEngine={setEngine}
+          options={{
+            mode: cfg.mode,
+            difficulty: cfg.difficulty,
+            tiers,
+            matchId,
+            hud,
+            quality,
+            shake,
+            manual: params.manual,
+            debug: params.debug,
+            idleCpu: params.idleCpu,
+            bench: params.bench,
+            arena: params.arena ? buildJunkyard : undefined,
+          }}
+        />
+        <FightHud store={hud} onPause={cfg.mode === "demo" ? undefined : togglePause} />
+        {cold.loading ? (
+          <div className="absolute inset-0 grid place-items-center bg-black/70 font-display text-2xl text-zinc-300">LOADING…</div>
+        ) : null}
+        {cold.error ? (
+          <div className="absolute inset-0 grid place-items-center bg-black/80 p-6 text-center text-red-300" role="alert">
+            {cold.error}
+          </div>
+        ) : null}
+      </div>
+      {touch ? (
+        <TouchControls
+          engine={engine}
+          hud={hud}
+          active={!!engine && !cold.loading && !cold.error && !cold.paused && !ended}
+          area={fightArea}
+          onPause={togglePause}
+          muted={muted}
+          onToggleMute={() => setMuted((m) => !m)}
+        />
       ) : null}
-      {cold.error ? (
-        <div className="absolute inset-0 grid place-items-center bg-black/80 p-6 text-center text-red-300" role="alert">
-          {cold.error}
-        </div>
-      ) : null}
-      {cold.paused && cold.matchWinner < 0 ? (
-        <div className="absolute inset-0 grid place-items-center bg-black/60" role="dialog" aria-modal="true" aria-label="Paused">
+      {cold.paused && !ended ? (
+        // Scrolls on its own if a short screen (a phone held sideways) can't fit the menu.
+        <div
+          className="absolute inset-0 grid touch-pan-y place-items-center overflow-y-auto overscroll-contain bg-black/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Paused"
+        >
           <div className="flex w-72 flex-col gap-2 rounded-xl border border-zinc-700 bg-zinc-950/95 p-5">
             <h2 className="font-display text-3xl">PAUSED</h2>
             <button type="button" autoFocus className="rounded bg-amber-400 py-2 font-display text-black" onClick={togglePause}>
@@ -311,7 +408,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             <label className="flex items-center justify-between text-sm text-zinc-300">
               Quality
               <select
-                className="rounded bg-zinc-800 px-2 py-1"
+                className="rounded bg-zinc-800 px-2 py-1 text-base"
                 value={quality}
                 onChange={(e) => {
                   const q = e.target.value as QualityTier;
@@ -326,7 +423,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             </label>
             <label className="flex items-center justify-between text-sm text-zinc-300">
               Screen shake
-              <select className="rounded bg-zinc-800 px-2 py-1" value={shake} onChange={(e) => setShake(Number(e.target.value))}>
+              <select className="rounded bg-zinc-800 px-2 py-1 text-base" value={shake} onChange={(e) => setShake(Number(e.target.value))}>
                 <option value={1}>Full</option>
                 <option value={0.3}>Reduced</option>
                 <option value={0}>Off</option>
@@ -342,23 +439,27 @@ export default function PlayClient({ params }: { params: PlayParams }) {
           </div>
         </div>
       ) : null}
-      {cold.matchWinner >= 0 ? (
-        <div className="absolute inset-x-0 bottom-10 flex justify-center gap-3" data-testid="match-end">
+      {ended ? (
+        <div className="fight-end touch-manipulation" data-testid="match-end">
           <button
             type="button"
             autoFocus
-            className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 px-6 py-3 font-display text-xl tracking-wider shadow-[0_4px_0_#7c2d12]"
+            className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 px-5 py-3 font-display text-lg tracking-wider shadow-[0_4px_0_#7c2d12] sm:px-6 sm:text-xl"
             onClick={() => {
               uiSound("ui_select");
               rematch();
             }}
           >
-            REMATCH (R)
+            {touch ? "REMATCH" : "REMATCH (R)"}
           </button>
-          <button type="button" className="rounded-lg border border-zinc-500 bg-black/60 px-6 py-3 font-display text-xl" onClick={() => setCfg(null)}>
+          <button
+            type="button"
+            className="rounded-lg border border-zinc-500 bg-black/60 px-5 py-3 font-display text-lg sm:px-6 sm:text-xl"
+            onClick={() => setCfg(null)}
+          >
             CHANGE MODE
           </button>
-          <Link href="/" className="rounded-lg border border-zinc-700 bg-black/60 px-6 py-3 font-display text-xl text-zinc-300">
+          <Link href="/" className="rounded-lg border border-zinc-700 bg-black/60 px-5 py-3 font-display text-lg text-zinc-300 sm:px-6 sm:text-xl">
             HOME
           </Link>
         </div>

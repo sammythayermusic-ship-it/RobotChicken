@@ -15,6 +15,14 @@ export interface HudCold {
   sd: boolean;
   wins: [number, number];
   heatFull: [boolean, boolean];
+  /**
+   * P1 against the CPU (the on-screen buttons' player) is off the floor: the
+   * context button reads DIVE. Only published in CPU fights: each change
+   * re-renders the page.
+   */
+  air: boolean;
+  /** ...and Space now would dive (or wait in the rise for it): DIVE is live, not dimmed. */
+  dive: boolean;
   /** Banner text and a key that changes each time a banner is shown (restarts its animation). */
   banner: { text: string; key: number; tone: "info" | "ko" | "win" };
   paused: boolean;
@@ -41,6 +49,8 @@ function fresh(): HudCold {
     sd: false,
     wins: [0, 0],
     heatFull: [false, false],
+    air: false,
+    dive: false,
     banner: { text: "", key: 0, tone: "info" },
     paused: false,
     matchWinner: -1,

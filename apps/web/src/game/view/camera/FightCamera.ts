@@ -19,6 +19,19 @@ export const BODY = { half: 0.9, top: 1.65, depth: 0.5 } as const;
 /** Room for the trauma shake and the per-hit kick, which both move the camera sideways. */
 const SHAKE_PAD = 0.35;
 const MIN_W = 9;
+/**
+ * Upright and square screens compose tighter: the width sets the scale there,
+ * and the landscape margins would leave the chickens a few dozen pixels tall
+ * on a phone (the upright touch layout gives the fight an about square area).
+ * The margin eases from the tight to the wide values between these aspects,
+ * so a pixel of height never jumps the framing. The hard fit still keeps
+ * both bodies in frame.
+ */
+const MIN_W_TIGHT = 6.5;
+const MARGIN = 7;
+const MARGIN_TIGHT = 4;
+const TIGHT_UNTIL = 0.95;
+const WIDE_FROM = 1.3;
 /** Both fighters at the walk limits, bodies and shake room included. */
 const MAX_W = 2 * (WALL + BODY.half + SHAKE_PAD);
 const MIN_D = 8;
@@ -33,6 +46,8 @@ const RISE_PER_D = 0.04;
 const EDGE_X = 0.96;
 const EDGE_BOTTOM = -0.94;
 const TOP_PAD = 0.04;
+/** A bottom inset (on-screen buttons) never squeezes the usable frame below this NDC height. */
+const MIN_SPAN = 0.6;
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const damp = (a: number, b: number, k: number, dt: number) => a + (b - a) * (1 - Math.exp(-k * dt));
@@ -97,7 +112,7 @@ function extent(camX: number, f: Fighters): Extent {
  * so it is deterministic from the event stream; render() interpolates.
  *
  * Each tick it eases toward a composed shot (3.5 u of pit either side of the
- * pair, look height 1.5), then applies hard limits so gameplay framing never
+ * pair, easing to 2 u on upright and square screens; look height 1.5), then applies hard limits so gameplay framing never
  * crops a fighter at any aspect, landscape or portrait, and never tucks a
  * jumping fighter under the HUD band: the camera pulls back as far as the
  * bodies need, and cranes up (or pulls back further) to fit a full jump. The
@@ -107,6 +122,7 @@ export class FightCamera {
   readonly camera: PerspectiveCamera;
   readonly shake: ShakeSettings = { amount: 1 };
   private hudFrac = 0.14;
+  private botFrac = 0;
   private cur: Framing & { ko: number } = { x: 0, d: 18, lookY: LOOK_Y, ko: 0 };
   private prev: Framing & { ko: number } = { x: 0, d: 18, lookY: LOOK_Y, ko: 0 };
   private readonly fighters: Fighters = { x1: -2.5, y1: 0, x2: 2.5, y2: 0 };
@@ -126,21 +142,33 @@ export class FightCamera {
 
   /**
    * New viewport shape. `hudFrac` is the share of the height the HUD band
-   * covers (hudFraction(); unchanged when omitted). Refits at once, so a
-   * resize never shows a cropped frame, even while paused.
+   * covers (hudFraction(); unchanged when omitted), `botFrac` the share at
+   * the bottom the fighters' feet stay above (on-screen buttons; unchanged
+   * when omitted). Refits at once, so a resize never shows a cropped frame,
+   * even while paused.
    */
-  setAspect(aspect: number, hudFrac?: number): void {
+  setAspect(aspect: number, hudFrac?: number, botFrac?: number): void {
     this.camera.aspect = aspect;
     if (hudFrac !== undefined) this.hudFrac = clamp(hudFrac, 0, 0.4);
+    if (botFrac !== undefined) this.botFrac = clamp(botFrac, 0, 0.3);
     this.camera.updateProjectionMatrix();
     const vfov = this.fitFov();
     this.enforce(this.cur, vfov);
     this.enforce(this.prev, vfov);
   }
 
-  /** setAspect from a viewport size in CSS px (the HUD band is a fixed pixel height). */
-  setViewport(widthPx: number, heightPx: number): void {
-    this.setAspect(widthPx / Math.max(1, heightPx), hudFraction(widthPx, heightPx));
+  /**
+   * setAspect from a viewport size in CSS px (the HUD band is a fixed pixel
+   * height). `bottomPx`: how much of the bottom to keep the feet above.
+   */
+  setViewport(widthPx: number, heightPx: number, bottomPx = 0): void {
+    const h = Math.max(1, heightPx);
+    this.setAspect(widthPx / h, hudFraction(widthPx, heightPx), bottomPx / h);
+  }
+
+  /** The bottom share in use (0 without on-screen buttons over the canvas). */
+  get bottomFrac(): number {
+    return this.botFrac;
   }
 
   /** Top of the usable frame (NDC y) under a HUD band covering `hudFrac` of the height. */
@@ -148,9 +176,22 @@ export class FightCamera {
     return 1 - 2 * hudFrac - TOP_PAD;
   }
 
-  /** Visible width (units) the composition wants at the fight plane for fighters at x1, x2. */
-  static wantWidth(x1: number, x2: number): number {
-    return clamp(Math.abs(x1 - x2) + 7, MIN_W, MAX_W);
+  /**
+   * Bottom of the usable frame (NDC y) with `botFrac` of the height kept
+   * clear, but never so high that less than MIN_SPAN is left under the HUD
+   * band: a short screen gives up the inset before it gives up the fighters.
+   */
+  static bottomLimit(hudFrac: number, botFrac = 0): number {
+    const room = Math.max(0, (FightCamera.topLimit(hudFrac) - EDGE_BOTTOM - MIN_SPAN) / 2);
+    return EDGE_BOTTOM + 2 * clamp(botFrac, 0, room);
+  }
+
+  /** Visible width (units) the composition wants at the fight plane for fighters at x1, x2 (tighter on upright and square screens). */
+  static wantWidth(x1: number, x2: number, aspect = 16 / 9): number {
+    const t = clamp((aspect - TIGHT_UNTIL) / (WIDE_FROM - TIGHT_UNTIL), 0, 1);
+    const margin = MARGIN_TIGHT + (MARGIN - MARGIN_TIGHT) * t;
+    const minW = MIN_W_TIGHT + (MIN_W - MIN_W_TIGHT) * t;
+    return clamp(Math.abs(x1 - x2) + margin, minW, MAX_W);
   }
 
   /** Distance that shows `width` units horizontally at this aspect (at the fight plane, pitch ignored). */
@@ -163,13 +204,14 @@ export class FightCamera {
    * between the frame's sides and the span from the feet to the top of the
    * highest body fits between the bottom edge and the HUD band.
    */
-  static fitDistance(camX: number, f: Fighters, aspect: number, hudFrac: number, vfov = VFOV): number {
+  static fitDistance(camX: number, f: Fighters, aspect: number, hudFrac: number, vfov = VFOV, botFrac = 0): number {
     const { hx, yTop, yBot } = extent(camX, f);
     const t = tanHalf(vfov);
     const top = FightCamera.topLimit(hudFrac);
+    const bot = FightCamera.bottomLimit(hudFrac, botFrac);
     const hNeed = hx / (EDGE_X * t * aspect);
     const vNeed = yTop - yBot;
-    const vSlope = (top - EDGE_BOTTOM) * t;
+    const vSlope = (top - bot) * t;
     // Start from the flat (no pitch, no depth) answer, then correct: both "have" terms grow ~linearly in d.
     let d = Math.max(MIN_D, hNeed + BODY.depth, vNeed / vSlope);
     for (let i = 0; i < 8; i++) {
@@ -178,7 +220,7 @@ export class FightCamera {
       const uTop = uAt(d, top, t);
       // Depth of the frame's side edge at the height of the HUD line (the worst case for width).
       const hHave = (L2 - a * uTop - d * BODY.depth) / Math.sqrt(L2);
-      const vHave = uTop - uAt(d, EDGE_BOTTOM, t);
+      const vHave = uTop - uAt(d, bot, t);
       const step = Math.max(hNeed - hHave, (vNeed - vHave) / vSlope);
       if (step <= 1e-7) break;
       d += step;
@@ -186,28 +228,28 @@ export class FightCamera {
     return Math.min(MAX_D, d + 1e-4);
   }
 
-  /** Look heights at distance d that keep [yBot, yTop] between the bottom edge and the HUD band. */
-  static lookRange(d: number, f: Fighters, hudFrac: number, vfov = VFOV): [lo: number, hi: number] {
+  /** Look heights at distance d that keep [yBot, yTop] between the bottom limit and the HUD band. */
+  static lookRange(d: number, f: Fighters, hudFrac: number, vfov = VFOV, botFrac = 0): [lo: number, hi: number] {
     const { yTop, yBot } = extent(0, f);
     const t = tanHalf(vfov);
-    return [yTop - uAt(d, FightCamera.topLimit(hudFrac), t), yBot - uAt(d, EDGE_BOTTOM, t)];
+    return [yTop - uAt(d, FightCamera.topLimit(hudFrac), t), yBot - uAt(d, FightCamera.bottomLimit(hudFrac, botFrac), t)];
   }
 
   /**
    * The shot the camera eases toward: the composition (pair centred, 3.5 u of
-   * pit each side, the centre clamped so the view stops 1.5 u past the ring
+   * pit each side, down to 2 u upright, the centre clamped so the view stops 1.5 u past the ring
    * edges), pulled back and craned up only as far as the fit needs. `zoomIn`
    * (the hit punch) eats into the composition's margin, never into the fit.
    * `vfov` is the lens actually in use (the super narrows it).
    */
-  static frame(f: Fighters, aspect: number, hudFrac: number, zoomIn = 0, vfov = VFOV): Framing {
+  static frame(f: Fighters, aspect: number, hudFrac: number, zoomIn = 0, vfov = VFOV, botFrac = 0): Framing {
     const a = clamp(f.x1, -RING, RING);
     const b = clamp(f.x2, -RING, RING);
-    const w = FightCamera.wantWidth(a, b);
+    const w = FightCamera.wantWidth(a, b, aspect);
     const maxX = Math.max(0, RING + 1.5 - w / 2);
     const x = clamp((a + b) / 2, -maxX, maxX);
-    const d = Math.max(FightCamera.fitDistance(x, f, aspect, hudFrac, vfov), FightCamera.distanceFor(w, aspect) - zoomIn);
-    const [lo, hi] = FightCamera.lookRange(d, f, hudFrac, vfov);
+    const d = Math.max(FightCamera.fitDistance(x, f, aspect, hudFrac, vfov, botFrac), FightCamera.distanceFor(w, aspect) - zoomIn);
+    const [lo, hi] = FightCamera.lookRange(d, f, hudFrac, vfov, botFrac);
     return { x, d, lookY: Math.min(Math.max(LOOK_Y, lo), hi) };
   }
 
@@ -245,8 +287,8 @@ export class FightCamera {
   /** Hard limits on a (damped) state: pull back until both bodies fit, then keep the look height in range. */
   private enforce(s: Framing, vfov: number): void {
     const aspect = this.camera.aspect;
-    s.d = Math.max(s.d, FightCamera.fitDistance(s.x, this.fighters, aspect, this.hudFrac, vfov));
-    const [lo, hi] = FightCamera.lookRange(s.d, this.fighters, this.hudFrac, vfov);
+    s.d = Math.max(s.d, FightCamera.fitDistance(s.x, this.fighters, aspect, this.hudFrac, vfov, this.botFrac));
+    const [lo, hi] = FightCamera.lookRange(s.d, this.fighters, this.hudFrac, vfov, this.botFrac);
     s.lookY = Math.min(Math.max(s.lookY, lo), hi);
   }
 
@@ -261,7 +303,7 @@ export class FightCamera {
     f.y2 = y2;
     const amount = this.shake.amount;
     const vfov = this.fitFov();
-    const want = FightCamera.frame(f, this.camera.aspect, this.hudFrac, this.punch * amount, vfov);
+    const want = FightCamera.frame(f, this.camera.aspect, this.hudFrac, this.punch * amount, vfov, this.botFrac);
     const c = this.cur;
     c.x = damp(c.x, want.x, 6, DT);
     c.d = damp(c.d, want.d, 4, DT);

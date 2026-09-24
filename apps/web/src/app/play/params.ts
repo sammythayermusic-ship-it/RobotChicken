@@ -23,5 +23,7 @@ export function parsePlayParams(get: (key: string) => string | null | undefined)
     bench,
     quality: (["high", "medium", "low"] as const).find((q) => q === get("quality")) ?? null,
     arena: get("arena") !== "0",
+    touch: get("touch") === "1" ? true : get("touch") === "0" ? false : null,
+    idleCpu: get("debug") === "1" && get("cpu") === "idle",
   };
 }

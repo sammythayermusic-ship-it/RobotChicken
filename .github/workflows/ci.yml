@@ -54,11 +54,38 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @cockfight/web exec playwright install --with-deps chromium firefox webkit
-      - run: pnpm test:e2e
+      - run: pnpm --filter @cockfight/web run test:e2e:desktop
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+
+  # The on-screen buttons on a phone-sized, touch-enabled Chromium (a Pixel 7),
+  # driven by real multi-finger touches. Its own job: software rendering runs
+  # at about a frame a second, and the desktop suite already takes most of its
+  # time budget.
+  e2e-touch:
+    name: e2e (touch, Pixel 7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cockfight/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @cockfight/web run test:e2e:touch
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report-touch
           path: |
             apps/web/test-results
             apps/web/playwright-report

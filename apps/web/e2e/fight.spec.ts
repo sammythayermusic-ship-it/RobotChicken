@@ -6,6 +6,9 @@ import { liveObjects } from "./support/heap";
 
 const CAP = (name: string) => fileURLToPath(new URL(`../../../docs/captures/phase-1/${name}`, import.meta.url));
 
+/** The bits of window.__cockfight.fight the in-page loops use. */
+type F = { state(): { f: { x: number; hitKind: number }[] }; stepTicks(n: number): void };
+
 test.describe("local fight", () => {
   test("two players on one keyboard: real key presses walk and peck", async ({ page }) => {
     const problems = await watchProblems(page);
@@ -15,16 +18,25 @@ test.describe("local fight", () => {
     expect(s.phase).toBe(1);
     const gap0 = s.f[1]!.x - s.f[0]!.x;
 
-    // P1 holds D (walk right) while ticks advance inside the page.
+    // P1 holds D (walk right) while ticks advance inside the page. Stepping in
+    // one evaluate, not a rendered frame per tick: CI renders in software at
+    // about a frame a second. The key is still a real key press, held.
     await page.keyboard.down("KeyD");
-    for (let i = 0; i < 120 && (await snap(page)).f[1]!.x - (await snap(page)).f[0]!.x > 1100; i++) await stepTicks(page, 1);
+    await page.evaluate(() => {
+      const f = (window as unknown as { __cockfight: { fight: F } }).__cockfight.fight;
+      for (let i = 0; i < 120 && f.state().f[1]!.x - f.state().f[0]!.x > 1100; i++) f.stepTicks(1);
+    });
     await page.keyboard.up("KeyD");
     s = await snap(page);
     expect(s.f[1]!.x - s.f[0]!.x).toBeLessThan(gap0);
 
     // P1 pecks: Space (a tap shorter than a tick still registers).
     await page.keyboard.press("Space");
-    for (let i = 0; i < 12 && (await snap(page)).f[1]!.hitKind === 0; i++) await stepTicks(page, 1);
+    await page.evaluate(() => {
+      const f = (window as unknown as { __cockfight: { fight: F } }).__cockfight.fight;
+      for (let i = 0; i < 12 && f.state().f[1]!.hitKind === 0; i++) f.stepTicks(1);
+    });
+    await stepTicks(page, 0); // one rendered frame for the capture
     s = await snap(page);
     expect(s.f[1]!.hitKind).toBe(1);
     expect(s.f[1]!.hp).toBe(10000 - 600);
@@ -126,6 +138,9 @@ test.describe("local fight", () => {
     await page.getByTestId("fight-button").click();
     await expect(page.getByTestId("fight-screen")).toBeVisible();
     await page.waitForFunction(() => (window as unknown as { __cockfight?: { fight?: { ready(): boolean } } }).__cockfight?.fight?.ready() === true);
+    // A desktop (fine pointer, no touch yet): no on-screen buttons, the fight fills the window.
+    await expect(page.getByTestId("touch-controls")).toHaveCount(0);
+    expect((await page.getByTestId("fight-area").boundingBox())?.height).toBe(page.viewportSize()!.height);
   });
 
   test("restarts, quit-and-fight and rematches start clean and leave one live renderer", async ({ page, browserName }) => {

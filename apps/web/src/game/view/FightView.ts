@@ -9,7 +9,7 @@ import type { QualitySettings, QualityTier } from "../engine/quality";
 import { KoPulse } from "../fx/KoPulse";
 import { Particles } from "../fx/Particles";
 import { FightCamera } from "./camera/FightCamera";
-import { hudFraction } from "./camera/hudBand";
+import { hudFraction, insetFraction } from "./camera/hudBand";
 import { ChickenView, type ChickenAsset } from "./chicken/ChickenView";
 
 /** Arena contract: the procedural junkyard (and later Sammy's arena.glb) implement it. */
@@ -42,12 +42,14 @@ export class FightView {
   private readonly renderer: WebGLRenderer;
   private time = 0;
   private readonly shadows: Mesh[] = [];
+  private bottomPx = 0;
 
   constructor(renderer: WebGLRenderer, asset: ChickenAsset, tiers: [Tier, Tier], seed: number) {
     this.renderer = renderer;
     const el = renderer.domElement;
     this.camera = new FightCamera(el.clientWidth / Math.max(1, el.clientHeight), seed);
-    if (el.clientHeight > 0) this.camera.setViewport(el.clientWidth, el.clientHeight);
+    const box = el.getBoundingClientRect();
+    if (box.height > 0) this.camera.setViewport(box.width, box.height);
     this.scene.background = new Color(0x0b0a10);
     this.scene.fog = new Fog(0x0b0a10, 24, 70);
 
@@ -143,9 +145,25 @@ export class FightView {
    * fixed pixel height, so the camera also needs the canvas's CSS height.
    */
   setAspect(aspect: number): void {
-    const el = this.renderer.domElement;
-    if (el.clientHeight > 0) this.camera.setAspect(aspect, hudFraction(el.clientWidth, el.clientHeight));
+    // The unrounded box: the HUD's container queries see 639.5 px as under 640, clientWidth says 640.
+    const r = this.renderer.domElement.getBoundingClientRect();
+    if (r.height > 0) this.camera.setAspect(aspect, hudFraction(r.width, r.height), this.insetFrac());
     else this.camera.setAspect(aspect);
+  }
+
+  /**
+   * On-screen buttons over the bottom of the canvas (CSS px). The camera
+   * keeps only a share of it clear (insetFraction): the buttons sit in the
+   * corners, and a full inset would shrink the chickens on a short screen.
+   */
+  setBottomInset(px: number): void {
+    this.bottomPx = Math.max(0, px);
+    const el = this.renderer.domElement;
+    if (el.clientHeight > 0) this.camera.setAspect(this.camera.camera.aspect, undefined, this.insetFrac());
+  }
+
+  private insetFrac(): number {
+    return insetFraction(this.bottomPx, this.renderer.domElement.clientHeight);
   }
 
   /** Per sim tick. */

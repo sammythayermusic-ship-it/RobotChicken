@@ -28,7 +28,7 @@ describe("HudStore", () => {
     hud.registerFlash(0, flash.el);
 
     // The end of a match, paused on the way.
-    hud.set({ loading: false, paused: true, matchWinner: 1, phase: 3, round: 3, wins: [1, 2], heatFull: [true, false], sd: true, timerSec: 4 });
+    hud.set({ loading: false, paused: true, matchWinner: 1, phase: 3, round: 3, wins: [1, 2], heatFull: [true, false], air: true, sd: true, timerSec: 4 });
     hud.banner("P2 WINS", "win");
     hud.setBar("hp0", 0);
     hud.setBar("trail0", 0.2);
@@ -50,6 +50,8 @@ describe("HudStore", () => {
       round: 1,
       wins: [0, 0],
       heatFull: [false, false],
+      air: false,
+      dive: false,
       sd: false,
       mode: "2p",
       names: ["P1", "P2"],

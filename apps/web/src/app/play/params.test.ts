@@ -8,7 +8,16 @@ const from = (q: string) => {
 
 describe("parsePlayParams", () => {
   it("defaults to the mode picker", () => {
-    expect(from("")).toMatchObject({ mode: null, difficulty: "normal", tier: "rust", seed: null, manual: false, arena: true, quality: null });
+    expect(from("")).toMatchObject({ mode: null, difficulty: "normal", tier: "rust", seed: null, manual: false, arena: true, quality: null, touch: null });
+  });
+  it("forces the on-screen buttons on or off, else leaves it to the device", () => {
+    expect(from("touch=1").touch).toBe(true);
+    expect(from("touch=0").touch).toBe(false);
+    expect(from("touch=yes").touch).toBe(null);
+  });
+  it("only a debug link can stand the CPU still", () => {
+    expect(from("cpu=idle").idleCpu).toBe(false);
+    expect(from("debug=1&cpu=idle").idleCpu).toBe(true);
   });
   it("reads a direct fight link", () => {
     expect(from("mode=cpu&difficulty=hard&tier=gold&quality=low&arena=0")).toMatchObject({

@@ -17,6 +17,24 @@ The Controls panel on `/play` has a key tester: cheap laptop keyboards can't reg
 combinations at once ("ghosting"); if a key doesn't light up while the other player holds theirs,
 use the alternate key.
 
+## Touch (phones and tablets)
+
+The on-screen buttons show on any touch screen (or with `/play?touch=1`) and play P1 against the CPU.
+They make exactly the keyboard's bits, so every move below works the same way.
+
+| Button | Keyboard equivalent | Notes |
+|---|---|---|
+| D-pad ◀ ▶ | ← → | Walk; double-tap (or rock the thumb back through the middle and out again) to dash. |
+| D-pad ▼ (hold) | ↓ | Block. Diagonals work (▼▶ is ↓ + →). |
+| D-pad ▲ | ↑ | Jump (the context button is easier). |
+| PECK | Space | Every tap is one press. Toward + PECK shoves, ▼ + PECK slams. Reads **SUPER** when the meter is full, the pad is neutral and you're on the ground. |
+| JUMP / SLAM / DIVE | ↑ / ↓ + Space / Space in the air | JUMP on the ground (hold to keep jumping); **SLAM** when ▼ is held as the thumb lands; **DIVE** in the air (pressed early in a jump, it waits for the dive). The label shows what a press will do and holds until you let go. |
+| Timer (top middle) | Esc / P | Pause. Upright, the PAUSE and SOUND pills on the panel pause and mute. |
+
+Upright, the fight sits on top and the controller panel below; the whole left half of the panel is the
+d-pad and the right half presses whichever button is nearer. Sideways, the buttons sit see-through in
+the bottom corners and the camera keeps the fighters' feet above them.
+
 ## Moves
 
 | Move | Input | Frames (startup / active / recovery @ 60 Hz) | Notes |

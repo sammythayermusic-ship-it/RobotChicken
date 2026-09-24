@@ -7,7 +7,8 @@ import type { HudStore } from "../hud/hudStore";
 import { LocalMatch } from "../match/LocalMatch";
 import { SOLO, VERSUS } from "../match/input/bindings";
 import { KeyboardInput } from "../match/input/keyboard";
-import { CpuSource, KeyboardSource, ScriptSource, type InputSource } from "../match/input/source";
+import { CpuSource, KeyboardSource, ScriptSource, TouchSource, type InputSource } from "../match/input/source";
+import { TouchInput } from "../match/input/touch";
 import type { ArenaView } from "../view/FightView";
 import { FightView } from "../view/FightView";
 import { loadGltf } from "./assets";
@@ -31,6 +32,8 @@ export interface FightOptions {
   manual?: boolean;
   /** Expose input-injection debug handles. */
   debug?: boolean;
+  /** Debug only: in a CPU fight, P2 stands still (e2e checks P1's touch input without the CPU in the way). */
+  idleCpu?: boolean;
   /**
    * Build the procedural arena (loaded lazily); off for the fastest tests.
    * Pass a function defined at module scope: an inline arrow in a React
@@ -56,6 +59,13 @@ export interface FightEngine {
   setQuality(tier: QualityTier): void;
   setShake(amount: number): void;
   setAudio(a: AudioSink | null): void;
+  /** The on-screen buttons (VS CPU only: they play P1). */
+  readonly touch: TouchInput | null;
+  /**
+   * How far (CSS px) on-screen buttons reach up into the bottom of the
+   * canvas. The camera keeps a share of it clear of the fighters' feet.
+   */
+  setBottomInset(px: number): void;
   perf(): PerfSnapshot;
   /** Forget frame times so far (e.g. loading and shader warm-up). */
   resetPerf(): void;
@@ -79,6 +89,10 @@ interface DebugFight {
   paused(): boolean;
   /** The camera's shake scale (-1 until the view exists). */
   shake(): number;
+  /** The bottom inset (CSS px) the page reported for the on-screen buttons, and the share the camera keeps clear. */
+  insets(): { bottomPx: number; bottomFrac: number };
+  /** The on-screen buttons' mask on the last tick (0 without touch). */
+  touchMask(): number;
   setInput?(player: 0 | 1, mask: number): void;
   stepTicks?(n: number): void;
   pause?(): void;
@@ -116,18 +130,22 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     renderer.setSize(w, h, false);
     view?.setAspect(w / h);
   };
+  let bottomInset = 0;
 
   const kb = new KeyboardInput(mode === "2p" ? VERSUS : SOLO, window, document);
+  // The on-screen buttons play P1 against the CPU, alongside the keyboard (same bits).
+  const touch = mode === "cpu" ? new TouchInput(window, document) : null;
+  const touchSrc = touch ? new TouchSource(touch) : null;
   const scripts: [ScriptSource, ScriptSource] = [new ScriptSource(), new ScriptSource()];
   const sources: [InputSource, InputSource] =
     mode === "2p"
       ? [new KeyboardSource(kb, 0), new KeyboardSource(kb, 1)]
       : mode === "cpu"
-        ? [new KeyboardSource(kb, 0), new CpuSource(matchId, 1, difficulty)]
+        ? [new KeyboardSource(kb, 0), opts.debug && opts.idleCpu ? new ScriptSource() : new CpuSource(matchId, 1, difficulty)]
         : [new CpuSource(matchId, 0, "hard"), new CpuSource(matchId, 1, difficulty)];
   // Debug injection ORs a scripted mask into each player's input.
   const merged: [InputSource, InputSource] = [
-    { sample: (s, side) => sources[0].sample(s, side) | scripts[0].mask },
+    { sample: (s, side) => sources[0].sample(s, side) | (touchSrc ? touchSrc.sample(s, side) : 0) | scripts[0].mask },
     { sample: (s, side) => sources[1].sample(s, side) | scripts[1].mask },
   ];
   const match = new LocalMatch(matchId, merged);
@@ -167,6 +185,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   const pause = () => {
     loop.paused = true;
     kb.setEnabled(false);
+    touch?.setEnabled(false);
     hud.set({ paused: true });
   };
 
@@ -189,6 +208,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     view = new FightView(renderer, gltf, tiers, match.cur.rng);
     view.setQuality(quality);
     view.camera.shake.amount = shake;
+    view.setBottomInset(bottomInset);
     director = new Director({ camera: view.camera, particles: view.particles, ko: view.ko, hud, seed: match.cur.rng, tiers });
     resize();
     const arenaFactory = buildArena;
@@ -235,6 +255,8 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     matchId: () => matchId,
     paused: () => loop.paused,
     shake: () => view?.camera.shake.amount ?? -1,
+    insets: () => ({ bottomPx: bottomInset, bottomFrac: view?.camera.bottomFrac ?? 0 }),
+    touchMask: () => touch?.lastMask ?? 0,
     B,
   };
   if (opts.debug) {
@@ -258,6 +280,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       // Enabling the keyboard drops anything held or latched, so no key
       // pressed while paused fires on the first tick after it.
       kb.setEnabled(true);
+      touch?.setEnabled(true);
       loop.paused = false;
       loop.resetClock();
       hud.set({ paused: false });
@@ -277,6 +300,12 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     setAudio(a) {
       if (director) director.audio = a;
     },
+    touch,
+    setBottomInset(px) {
+      // Kept, not only applied: the view exists only once the model has loaded.
+      bottomInset = Math.max(0, px);
+      view?.setBottomInset(bottomInset);
+    },
     perf: () => perf.snapshot(renderer.getPixelRatio(), quality.tier),
     resetPerf: () => perf.reset(),
     dispose() {
@@ -286,6 +315,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       ro.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
       kb.dispose();
+      touch?.dispose();
       // Release the GPU side while the chickens and the arena are still in
       // the scene. Their glTF geometries and textures are shared through
       // loadGltf's cache and, like three's DFG LUT, hold a dispose listener

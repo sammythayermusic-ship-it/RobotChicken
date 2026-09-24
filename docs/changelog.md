@@ -2,6 +2,9 @@
 
 ## Phase 1: the local fighter
 
+- **Phones** (on-screen buttons): a d-pad, PECK and a JUMP / SLAM / DIVE context button feeding the same input bits as the keyboard. Upright, a Game Boy style panel under the fight; sideways, see-through buttons in the corners with the camera keeping the fighters' feet above them. Turning the phone keeps the fight going. The timer pauses (plus PAUSE / SOUND pills upright); a compact HUD for phones held sideways; tighter framing upright; no scroll, zoom or long-press menu while fighting; sound despite the iPhone silent switch. Tested with real multi-finger touches (Chromium, Pixel 7) and on an emulated iPhone in WebKit.
+- **CI**: e2e tests fit software GL's ~1 fps (fewer rendered frames, longer timeouts).
+
 - **The full move set in the sim**: peck, shove, slam, dive kick, Rooster Rocket super, dash (with invulnerable frames), jump, block with chip, knockdown and get-up, Heat (latching at full), ring-outs, KOs, double-KO draws, sudden death, the 5-round cap. Hitboxes come from the Blender rig's helpers. Every move is covered by table-driven frame-data tests; fast-check proves integer-only state, purity, rewind-and-replay, mirror symmetry and termination.
 - **CPU opponent** (easy / normal / hard), deterministic and outside `step()`.
 - **Client**: fixed 60 Hz loop with interpolation, keyboard input (vs CPU and 2 players on one keyboard, key tester), the chicken posed from sim state, fight camera with dolly / pull-back / seeded trauma shake, GPU particles (sparks, screws, feathers, dust, flash, chrome dash trail), hit-stop freeze + flash, KO chromatic-aberration pulse.

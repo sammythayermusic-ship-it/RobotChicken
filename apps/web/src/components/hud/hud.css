@@ -27,3 +27,5 @@
 @media (prefers-reduced-motion: reduce) {
   .hud-banner, .hud-banner-hold, .hud-heat-full, .hud-timer-low { animation-duration: 1ms; animation-iteration-count: 1; }
 }
+/* The pause mark after "ROUND n": the timer doubles as the on-screen pause button. */
+.hud-pause-glyph { display: inline-block; width: 7px; height: 8px; border-left: 2px solid currentColor; border-right: 2px solid currentColor; opacity: 0.8; }
