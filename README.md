@@ -16,7 +16,7 @@ runs in phases, each one branch and one PR, stopping for review:
 | 3 · Money | Fee claims, payouts, anti-abuse, /admin | — |
 | 4 · Launch | Mainnet, load test, runbook | — |
 
-`docs/plan.md` is the build plan for Phases 0–1, `docs/decisions.md` records every
+`docs/HANDOFF.md` is the place to start, `docs/plan.md` is the build plan for Phases 0–1, `docs/decisions.md` records every
 non-obvious choice (★ marks the ones for Sammy to confirm), `docs/changelog.md` tracks
 progress.
 
