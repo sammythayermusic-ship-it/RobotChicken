@@ -1,7 +1,7 @@
 # COCKFIGHT — working notes
 
 Browser 1v1 2.5D robot-chicken fighter. Hold $COCK to play, win to earn SOL. The spec is
-`docs/research/spec-extracted.txt` (text of Sammy's PDF); the build plans are `docs/plan.md` (Phases 0–1) and `docs/plan-phase2.md`;
+`docs/research/spec-extracted.txt` (text of Sammy's PDF); the build plans are `docs/plan.md` (Phases 0–1), `docs/plan-phase2.md` and `docs/plan-phase3.md`;
 every non-obvious choice is in `docs/decisions.md`. Phases stop for review; one branch + PR each.
 
 ## Run
