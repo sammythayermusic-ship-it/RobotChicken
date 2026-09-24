@@ -1,34 +1,34 @@
 {
   "desktop": {
-    "fps": 120.14907477718793,
+    "fps": 120.00279773383653,
     "p50": 8.300000000000182,
-    "p95": 9.199999999998909,
-    "p99": 9.300000000001091,
+    "p95": 8.600000000000364,
+    "p99": 9.200000000000728,
     "over16": 0,
-    "frames": 2405,
-    "drawCalls": 22,
-    "triangles": 22482,
-    "programs": 16,
+    "frames": 2402,
+    "drawCalls": 21,
+    "triangles": 22588,
+    "programs": 13,
     "dpr": 1,
     "tier": "high",
     "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
     "seconds": 20,
-    "programsAtFight": 16
+    "programsAtFight": 13
   },
   "mobileProxy": {
-    "fps": 120.05017917564301,
+    "fps": 119.99600179919122,
     "p50": 8.300000000000182,
     "p95": 9.200000000000728,
-    "p99": 9.300000000001091,
+    "p99": 9.300000000000182,
     "over16": 0,
-    "frames": 2402,
-    "drawCalls": 22,
-    "triangles": 22482,
-    "programs": 16,
+    "frames": 2401,
+    "drawCalls": 21,
+    "triangles": 22588,
+    "programs": 13,
     "dpr": 1.25,
     "tier": "medium",
     "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)",
     "seconds": 20,
-    "programsAtFight": 16
+    "programsAtFight": 13
   }
 }
