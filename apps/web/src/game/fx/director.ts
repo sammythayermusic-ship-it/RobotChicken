@@ -107,7 +107,8 @@ export class Director {
     this.audio?.setHype(this.hypeLevel);
 
     // HUD: hot bars every tick, cold values when they change.
-    const touchP1 = this.hud.get().mode === "cpu";
+    const you = this.hud.get().you;
+    const me = you === null ? null : s.f[you];
     this.hud.setBar("hp0", f0.hp / hpMax);
     this.hud.setBar("hp1", f1.hp / hpMax);
     this.hud.setBar("trail0", f0.hp / hpMax);
@@ -123,8 +124,8 @@ export class Director {
       sd: s.sd === 1,
       wins: [s.w1, s.w2],
       heatFull: [f0.heat >= heatMax, f1.heat >= heatMax],
-      air: touchP1 && f0.grounded === 0,
-      dive: touchP1 && canDive(f0),
+      air: me !== null && me.grounded === 0,
+      dive: me !== null && canDive(me),
       matchWinner: s.matchWinner,
     });
   }

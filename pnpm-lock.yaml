@@ -222,6 +222,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@cockfight/net':
+        specifier: workspace:*
+        version: link:../../packages/net
       '@cockfight/shared':
         specifier: workspace:*
         version: link:../../packages/shared

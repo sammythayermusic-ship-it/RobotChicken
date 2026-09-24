@@ -14,6 +14,9 @@ import { createAudio, type GameAudio } from "@/game/audio";
 import type { FightEngine, FightMode } from "@/game/engine/createFightEngine";
 import { defaultTier, loadTier, saveTier, type QualityTier } from "@/game/engine/quality";
 import { HudStore } from "@/game/hud/hudStore";
+import { OnlineLobby } from "@/components/online/OnlineLobby";
+import { OnlineOverlay } from "@/components/online/OnlineOverlay";
+import type { NetSession } from "@/game/net/session";
 import { BenchPanel } from "./BenchPanel";
 import { ModePicker, type PlayConfig } from "./ModePicker";
 import "./play.css";
@@ -56,7 +59,10 @@ function setAudioSession(muted: boolean): void {
 }
 
 export interface PlayParams {
+  /** Autostart: a local mode, or "online" (opens the online lobby). */
   mode: FightMode | null;
+  /** /play?mode=online&wallet=… (the landing page's wallet box) pre-fills the gate. */
+  wallet: string | null;
   difficulty: CpuLevel;
   tier: Tier;
   seed: string | null;
@@ -72,7 +78,7 @@ export interface PlayParams {
   idleCpu: boolean;
 }
 
-type ActiveConfig = Omit<PlayConfig, "mode"> & { mode: FightMode };
+type ActiveConfig = Omit<PlayConfig, "mode"> & { mode: FightMode; net?: NetSession };
 
 const noSubscribe = () => () => {};
 /** Stored quality choice, else by pointer type (client only; "high" while server rendering). */
@@ -92,7 +98,7 @@ function useReducedMotion(): boolean {
 }
 
 export default function PlayClient({ params }: { params: PlayParams }) {
-  const autostart = params.mode !== null;
+  const autostart = params.mode !== null && params.mode !== "online";
   // Autostart links (/play?mode=cpu) have no FIGHT click to start audio. e2e
   // runs (manual) stay silent, and so does a bench, so that its frame times
   // never include audio work.
@@ -100,6 +106,17 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   const [cfg, setCfg] = useState<ActiveConfig | null>(
     autostart ? { mode: params.mode as FightMode, difficulty: params.difficulty, tier: params.tier } : null,
   );
+  /** The online lobby (before a match); `auto` re-queues at once (after a match). */
+  const [lobby, setLobby] = useState<{ auto: boolean } | null>(params.mode === "online" ? { auto: false } : null);
+  const net = cfg?.net ?? null;
+  // An online match is left (a forfeit if it is still on) when its fight screen goes away.
+  useEffect(() => {
+    if (!net) return;
+    return () => {
+      void net.leave();
+      net.dispose();
+    };
+  }, [net]);
   const [round, setRound] = useState(0);
   const [engine, setEngine] = useState<FightEngine | null>(null);
   const defaultQuality = useDefaultQuality();
@@ -228,6 +245,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   }, [engine, autoAudio, getAudio]);
 
   const uiSound = useCallback((name: "pause" | "ui_select" | "ui_back") => audio.current?.play(name), []);
+  const uiSoundRef = useRef(uiSound);
 
   const start = useCallback(
     async (c: PlayConfig) => {
@@ -236,6 +254,10 @@ export default function PlayClient({ params }: { params: PlayParams }) {
       const a = audio.current;
       if (a) void a.resume();
       else await getAudio();
+      if (c.mode === "online") {
+        setLobby({ auto: false });
+        return;
+      }
       setCfg(c);
       setRound((r) => r + 1);
     },
@@ -243,13 +265,31 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   );
 
   const matchId = useMemo(
-    () => (params.seed ? `${params.seed}-${round}` : `local-${round}-${cfg?.mode ?? "x"}-${Math.floor(performance.timeOrigin % 1e9)}`),
-    [params.seed, round, cfg?.mode],
+    () =>
+      net
+        ? net.matchId
+        : params.seed
+          ? `${params.seed}-${round}`
+          : `local-${round}-${cfg?.mode ?? "x"}-${Math.floor(performance.timeOrigin % 1e9)}`,
+    [net, params.seed, round, cfg?.mode],
   );
+
+  const onMatched = useCallback((session: NetSession) => {
+    setLobby(null);
+    setCfg({ mode: "online", difficulty: "normal", tier: session.seating.tiers[session.side], net: session });
+    setRound((r) => r + 1);
+  }, []);
+  /** After an online match: straight back into the queue. */
+  const requeue = useCallback(() => {
+    uiSoundRef.current?.("ui_select");
+    setCfg(null);
+    setLobby({ auto: true });
+  }, []);
 
   const togglePause = useCallback(() => {
     const c = hud.get();
-    if (!engine || c.matchWinner >= 0 || c.loading) return;
+    // An online match runs on the server: nothing to pause.
+    if (!engine || c.matchWinner >= 0 || c.loading || c.mode === "online") return;
     if (engine.paused) {
       uiSound("ui_select");
       engine.resume();
@@ -265,7 +305,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   // going back to it pauses instead. From the pause menu (or a finished
   // match), back leaves as usual. Next's router copies its own state into
   // the entry, so going back restores the same page without a reload.
-  const touchFight = touchMode && cfg?.mode === "cpu";
+  const touchFight = touchMode && (cfg?.mode === "cpu" || cfg?.mode === "online");
   const guard = useRef(false);
   useEffect(() => {
     if (!touchFight) return;
@@ -316,11 +356,19 @@ export default function PlayClient({ params }: { params: PlayParams }) {
         if (!e.repeat) togglePause();
       }
       // Read the store, not a render's snapshot: it is current even between a press and the re-render.
-      if (e.code === "KeyR" && !e.repeat && hud.get().matchWinner >= 0) rematch();
+      if (e.code === "KeyR" && !e.repeat && hud.get().matchWinner >= 0 && cfg.mode !== "online") rematch();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [cfg, togglePause, rematch, hud]);
+
+  if (!cfg && lobby) {
+    return (
+      <main className="min-h-dvh bg-[radial-gradient(ellipse_at_top,#3b1d12,#0b0a10_60%)] text-white">
+        <OnlineLobby auto={lobby.auto} wallet={params.wallet} onMatched={onMatched} onBack={() => setLobby(null)} />
+      </main>
+    );
+  }
 
   if (!cfg) {
     return (
@@ -330,10 +378,14 @@ export default function PlayClient({ params }: { params: PlayParams }) {
     );
   }
 
-  const tiers: [Tier, Tier] = [cfg.tier, cfg.mode === "2p" ? cfg.tier : "rust"];
+  const tiers: [Tier, Tier] = net ? net.seating.tiers : [cfg.tier, cfg.mode === "2p" ? cfg.tier : "rust"];
+  const fightNames: [string, string] | undefined = net
+    ? (net.seating.names.map((n, i) => (i === net.side ? "YOU" : n)) as [string, string])
+    : undefined;
   // The on-screen buttons play P1 against the CPU (2P needs a keyboard; a demo needs nobody).
   const touch = touchFight;
-  const ended = cold.matchWinner >= 0;
+  const online = cfg.mode === "online";
+  const ended = cold.matchWinner >= 0 && !online;
   return (
     <main
       className="fight-screen fixed inset-0 touch-none overflow-hidden overscroll-none bg-black text-white"
@@ -359,9 +411,12 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             idleCpu: params.idleCpu,
             bench: params.bench,
             arena: params.arena ? buildJunkyard : undefined,
+            net: net ?? undefined,
+            names: fightNames,
           }}
         />
-        <FightHud store={hud} onPause={cfg.mode === "demo" ? undefined : togglePause} />
+        <FightHud store={hud} onPause={cfg.mode === "demo" || online ? undefined : togglePause} />
+        {net ? <OnlineOverlay session={net} loading={cold.loading} onRequeue={requeue} /> : null}
         {cold.loading ? (
           <div className="absolute inset-0 grid place-items-center bg-black/70 font-display text-2xl text-zinc-300">LOADING…</div>
         ) : null}

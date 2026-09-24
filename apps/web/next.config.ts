@@ -14,19 +14,28 @@ const nextConfig: NextConfig = {
   ...(staticExport ? { output: "export" as const, trailingSlash: true } : {}),
   // Workspace packages ship TypeScript source with no build step. Turbopack
   // compiles them anyway; this also covers a webpack fallback.
-  transpilePackages: ["@cockfight/sim", "@cockfight/shared", "@cockfight/solana"],
+  transpilePackages: ["@cockfight/sim", "@cockfight/shared", "@cockfight/solana", "@cockfight/net"],
   // The floating dev indicator covers the bottom-left of the viewport, where
   // the fight HUD lives.
   devIndicators: false,
-  ...(staticExport ? {} : { headers: securityAndCacheHeaders }),
+  ...(staticExport ? {} : { headers: securityAndCacheHeaders, rewrites: prettyRoutes }),
 };
+
+/**
+ * /m/<match id> is served by the static /m page, which reads the id from the
+ * address bar. A static export has no rewrites; scripts/export-static.mjs
+ * writes the same rule into out/_redirects for Netlify.
+ */
+async function prettyRoutes() {
+  return [{ source: "/m/:id", destination: "/m" }];
+}
 
 /** Security headers (src/lib/csp.ts) and cache rules, sent by `next start` and Vercel. */
 async function securityAndCacheHeaders() {
   return [
     // connect-src is derived from the same parsed NEXT_PUBLIC_GAME_WS_URL the
     // client inlines at this same build, so the two cannot disagree.
-    { source: "/:path*", headers: securityHeaders({ dev, gameWsUrl: publicEnv.NEXT_PUBLIC_GAME_WS_URL }) },
+    { source: "/:path*", headers: securityHeaders({ dev, gameWsUrl: publicEnv.NEXT_PUBLIC_GAME_WS_URL, supabaseUrl: publicEnv.NEXT_PUBLIC_SUPABASE_URL }) },
     {
       // scripts/copy-decoders.mjs puts the three.js revision in the path, so
       // these bytes can never change under a given URL.

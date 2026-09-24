@@ -8,7 +8,7 @@ import { isControlTarget } from "@/game/match/input/keyboard";
 import { useTouchOnly } from "@/components/touch/useTouchMode";
 
 export interface PlayConfig {
-  mode: "cpu" | "2p";
+  mode: "cpu" | "2p" | "online";
   difficulty: CpuLevel;
   tier: Tier;
 }
@@ -142,6 +142,9 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
         <Choice selected={cfg.mode === "2p"} onSelect={() => setCfg({ ...cfg, mode: "2p" })}>
           2 PLAYERS · 1 KEYBOARD
         </Choice>
+        <Choice selected={cfg.mode === "online"} onSelect={() => setCfg({ ...cfg, mode: "online" })}>
+          ONLINE
+        </Choice>
       </ChoiceGroup>
       {touchOnly && cfg.mode === "2p" ? (
         <p className="-mt-3 text-xs text-amber-200/80" data-testid="needs-keyboard">
@@ -157,20 +160,24 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
           ))}
         </ChoiceGroup>
       ) : null}
-      <ChoiceGroup id="pick-look" caption="Look (preview · tiers unlock by holding $COCK)" wrap>
-        {TIERS.map((t) => (
-          <Choice key={t} selected={cfg.tier === t} onSelect={() => setCfg({ ...cfg, tier: t })}>
-            {t.toUpperCase()}
-          </Choice>
-        ))}
-      </ChoiceGroup>
+      {cfg.mode === "online" ? (
+        <p className="-mt-2 text-sm text-zinc-400">Fight a real player. Your look comes from the $COCK you hold.</p>
+      ) : (
+        <ChoiceGroup id="pick-look" caption="Look (preview · tiers unlock by holding $COCK)" wrap>
+          {TIERS.map((t) => (
+            <Choice key={t} selected={cfg.tier === t} onSelect={() => setCfg({ ...cfg, tier: t })}>
+              {t.toUpperCase()}
+            </Choice>
+          ))}
+        </ChoiceGroup>
+      )}
       <button
         type="button"
         data-testid="fight-button"
         className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 py-4 font-display text-3xl tracking-widest text-white shadow-[0_6px_0_#7c2d12] transition active:translate-y-1 active:shadow-[0_2px_0_#7c2d12]"
         onClick={() => onStart(cfg)}
       >
-        FIGHT!
+        {cfg.mode === "online" ? "GO ONLINE" : "FIGHT!"}
       </button>
       <button
         type="button"
@@ -182,11 +189,11 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
       </button>
       {controls ? (
         <div className="grid gap-4 text-sm sm:grid-cols-2">
-          {touchOnly && cfg.mode === "cpu" ? (
+          {touchOnly && cfg.mode !== "2p" ? (
             <div className="sm:col-span-2">
               <TouchHelp />
             </div>
-          ) : cfg.mode === "cpu" ? (
+          ) : cfg.mode !== "2p" ? (
             <div>
               <h2 className="mb-1 font-display text-amber-300">YOU</h2>
               <Row label="Walk" keys={CONTROL_LABELS.solo.move} />

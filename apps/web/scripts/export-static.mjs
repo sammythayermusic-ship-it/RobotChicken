@@ -25,8 +25,11 @@ run("node", ["node_modules/next/dist/bin/next", "build"], { STATIC_EXPORT: "1" }
 // csp.ts has no imports and only erasable TypeScript, so Node 22 loads it directly.
 const { securityHeaders } = await import(join(web, "src/lib/csp.ts"));
 const gameWsUrl = process.env.NEXT_PUBLIC_GAME_WS_URL || "ws://localhost:2567";
-const lines = ["/*", ...securityHeaders({ dev: false, gameWsUrl }).map((h) => `  ${h.key}: ${h.value}`), "  X-Robots-Tag: noindex"];
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || undefined;
+const lines = ["/*", ...securityHeaders({ dev: false, gameWsUrl, supabaseUrl }).map((h) => `  ${h.key}: ${h.value}`), "  X-Robots-Tag: noindex"];
 lines.push("", "/decoders/*", "  Cache-Control: public, max-age=31536000, immutable");
 lines.push("", "/models/*", "  Cache-Control: public, max-age=0, must-revalidate");
 writeFileSync(join(web, "out/_headers"), lines.join("\n") + "\n");
+// /m/<match id> is the static /m page (it reads the id from the address bar); next start rewrites it the same way.
+writeFileSync(join(web, "out/_redirects"), "/m/*  /m/index.html  200\n");
 console.log("\nexport: static site in apps/web/out (with _headers). Serve it from any static host.");

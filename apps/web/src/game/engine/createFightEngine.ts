@@ -1,13 +1,16 @@
 import { ACESFilmicToneMapping, SRGBColorSpace, WebGLRenderer } from "three";
-import { B, RULES, stateHash, type CpuLevel, type MatchState, type SimEvent } from "@cockfight/sim";
+import { B, RULES, expandInputs, stateHash, type CpuLevel, type MatchState, type Replay, type SimEvent } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import type { AudioSink } from "../fx/director";
 import { Director } from "../fx/director";
 import type { HudStore } from "../hud/hudStore";
+import type { NetSession } from "../net/session";
+import type { MatchDriver } from "../match/driver";
 import { LocalMatch } from "../match/LocalMatch";
+import { OnlineMatch } from "../match/OnlineMatch";
 import { SOLO, VERSUS } from "../match/input/bindings";
 import { KeyboardInput } from "../match/input/keyboard";
-import { CpuSource, KeyboardSource, ScriptSource, TouchSource, type InputSource } from "../match/input/source";
+import { CpuSource, KeyboardSource, ReplaySource, ScriptSource, TouchSource, type InputSource } from "../match/input/source";
 import { TouchInput } from "../match/input/touch";
 import type { ArenaView } from "../view/FightView";
 import { FightView } from "../view/FightView";
@@ -19,7 +22,7 @@ import { PerfMeter, type PerfSnapshot } from "./perf";
 import { qualitySettings, type QualityTier } from "./quality";
 
 export { chickenModelUrl };
-export type FightMode = "cpu" | "2p" | "demo";
+export type FightMode = "cpu" | "2p" | "demo" | "online" | "replay";
 
 export interface FightOptions {
   mode: FightMode;
@@ -49,6 +52,12 @@ export interface FightOptions {
   /** Camera shake scale (1 full, 0.3 reduced, 0 off). setShake() changes it later. */
   shake?: number;
   onMatchEnd?: (winner: number, replayHash: string) => void;
+  /** Online: the fight room session (joined, handlers registered). */
+  net?: NetSession;
+  /** Replay: the recorded match (both players' buttons). */
+  replay?: Replay;
+  /** HUD names; defaults by mode. */
+  names?: [string, string];
 }
 
 export interface FightEngine {
@@ -93,6 +102,8 @@ interface DebugFight {
   insets(): { bottomPx: number; bottomFrac: number };
   /** The on-screen buttons' mask on the last tick (0 without touch). */
   touchMask(): number;
+  /** Online: the session's side, status and prediction stats (null offline). */
+  net(): { side: 0 | 1; status: string; present: number; confirmedTick: number; confirmedHash: string; stats: Record<string, number> } | null;
   setInput?(player: 0 | 1, mask: number): void;
   stepTicks?(n: number): void;
   pause?(): void;
@@ -132,9 +143,16 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   };
   let bottomInset = 0;
 
+  const net = mode === "online" ? (opts.net ?? null) : null;
+  if (mode === "online" && !net) throw new Error("online fight without a session");
+  const replay = mode === "replay" ? (opts.replay ?? null) : null;
+  if (mode === "replay" && !replay) throw new Error("replay fight without a replay");
+  /** The side this browser's player controls (null: nobody, or two players on one keyboard). */
+  const you: 0 | 1 | null = net ? net.side : mode === "cpu" ? 0 : null;
+
   const kb = new KeyboardInput(mode === "2p" ? VERSUS : SOLO, window, document);
-  // The on-screen buttons play P1 against the CPU, alongside the keyboard (same bits).
-  const touch = mode === "cpu" ? new TouchInput(window, document) : null;
+  // The on-screen buttons play this browser's fighter (against the CPU or online), alongside the keyboard (same bits).
+  const touch = you !== null ? new TouchInput(window, document) : null;
   const touchSrc = touch ? new TouchSource(touch) : null;
   const scripts: [ScriptSource, ScriptSource] = [new ScriptSource(), new ScriptSource()];
   const sources: [InputSource, InputSource] =
@@ -142,13 +160,22 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
       ? [new KeyboardSource(kb, 0), new KeyboardSource(kb, 1)]
       : mode === "cpu"
         ? [new KeyboardSource(kb, 0), opts.debug && opts.idleCpu ? new ScriptSource() : new CpuSource(matchId, 1, difficulty)]
-        : [new CpuSource(matchId, 0, "hard"), new CpuSource(matchId, 1, difficulty)];
-  // Debug injection ORs a scripted mask into each player's input.
-  const merged: [InputSource, InputSource] = [
-    { sample: (s, side) => sources[0].sample(s, side) | (touchSrc ? touchSrc.sample(s, side) : 0) | scripts[0].mask },
-    { sample: (s, side) => sources[1].sample(s, side) | scripts[1].mask },
-  ];
-  const match = new LocalMatch(matchId, merged);
+        : replay
+          ? [new ReplaySource(expandInputs(replay.p1, replay.ticks)), new ReplaySource(expandInputs(replay.p2, replay.ticks))]
+          : [new CpuSource(matchId, 0, "hard"), new CpuSource(matchId, 1, difficulty)];
+  let match: MatchDriver;
+  if (net) {
+    // Online: this browser plays one side; the keyboard's player-1 keys and the on-screen buttons drive it.
+    const kbSrc = new KeyboardSource(kb, 0);
+    match = new OnlineMatch(net, (s, side) => kbSrc.sample() | (touchSrc ? touchSrc.sample(s, side) : 0) | scripts[side].mask);
+  } else {
+    // Debug injection ORs a scripted mask into each player's input.
+    const merged: [InputSource, InputSource] = [
+      { sample: (s, side) => sources[0].sample(s, side) | (touchSrc ? touchSrc.sample(s, side) : 0) | scripts[0].mask },
+      { sample: (s, side) => sources[1].sample(s, side) | scripts[1].mask },
+    ];
+    match = new LocalMatch(replay ? replay.matchId : matchId, merged);
+  }
   let view: FightView | null = null;
   let director: Director | null = null;
   let disposed = false;
@@ -159,6 +186,8 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   const loop = new FixedLoop({
     tick: () => {
       if (!view || !director) return;
+      // A replay stops where its log ends (a forfeit ends a match mid-round).
+      if (replay && match.cur.tick >= replay.ticks) return;
       const events = match.tick();
       view.tick(match.cur);
       director.tick(match.cur, events);
@@ -183,6 +212,8 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
 
   /** Stops the sim and hands the keyboard to the pause menu: nothing pressed there reaches the fight. */
   const pause = () => {
+    // An online match runs on the server: there is nothing to pause.
+    if (net) return;
     loop.paused = true;
     kb.setEnabled(false);
     touch?.setEnabled(false);
@@ -190,7 +221,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   };
 
   const onVisibility = () => {
-    if (document.visibilityState === "hidden" && mode !== "demo") pause();
+    if (document.visibilityState === "hidden" && mode !== "demo" && mode !== "replay") pause();
     loop.resetClock();
   };
   document.addEventListener("visibilitychange", onVisibility);
@@ -200,7 +231,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
   // A new fight starts from a clean HUD. The page keeps one store for its
   // whole lifetime, so the last fight's pause flag, winner, round wins, banner
   // and bars must not carry over into this one.
-  hud.reset({ loading: true, mode, names: names(mode, difficulty) });
+  hud.reset({ loading: true, mode, you, names: opts.names ?? names(mode, difficulty) });
 
   const ready = (async () => {
     const gltf = await loadGltf(chickenModelUrl(), renderer);
@@ -234,6 +265,8 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     hud.set({ loading: false });
     loop.start();
     started = true;
+    // Online: tell the server this player has loaded; the match starts when both have.
+    net?.ready();
     canvas.focus({ preventScroll: true });
   })().catch((e: unknown) => {
     // A disposed engine no longer owns the HUD: the next fight does.
@@ -257,6 +290,17 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
     shake: () => view?.camera.shake.amount ?? -1,
     insets: () => ({ bottomPx: bottomInset, bottomFrac: view?.camera.bottomFrac ?? 0 }),
     touchMask: () => touch?.lastMask ?? 0,
+    net: () =>
+      net
+        ? {
+            side: net.side,
+            status: net.snapshot().status,
+            present: net.pred.present,
+            confirmedTick: net.pred.confirmed?.tick ?? -1,
+            confirmedHash: net.pred.confirmed ? stateHash(net.pred.confirmed) : "",
+            stats: { ...net.pred.stats, corrections: net.pred.stats.corrections.length },
+          }
+        : null,
     B,
   };
   if (opts.debug) {
@@ -337,7 +381,7 @@ export function createFightEngine(host: HTMLElement, opts: FightOptions): FightE
 }
 
 function names(mode: FightMode, level: CpuLevel): [string, string] {
-  if (mode === "2p") return ["P1", "P2"];
+  if (mode === "2p" || mode === "online" || mode === "replay") return ["P1", "P2"];
   if (mode === "demo") return ["CPU", "CPU"];
   return ["YOU", `CPU (${level.toUpperCase()})`];
 }

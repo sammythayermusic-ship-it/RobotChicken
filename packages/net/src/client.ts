@@ -188,7 +188,12 @@ export class ClientPredictor {
    */
   tick(sample: (shown: MatchState) => number): number {
     const c = this.confirmed;
-    if (!c || this.paused) return 0;
+    if (!c || this.paused) {
+      // Nothing moves: the shown state stays and no event repeats.
+      this.prev = this.cur;
+      this.events = [];
+      return 0;
+    }
     if (this.realign) this.align(c.tick);
 
     let n = 1;
@@ -326,7 +331,7 @@ export class ClientPredictor {
     }
     if (worst === 0) return;
     const snapped = worst >= SNAP_LIMIT;
-    this.stats.corrections.push({ tick: after.tick, mu: worst, snapped });
+    if (this.stats.corrections.length < 5000) this.stats.corrections.push({ tick: after.tick, mu: worst, snapped });
     if (snapped) {
       this.offset[0].x = this.offset[0].y = this.offset[1].x = this.offset[1].y = 0;
       this.blendLeft = 0;

@@ -39,6 +39,8 @@ export interface PublicMatch {
   p2_tier: Tier;
   /** 0 / 1, or null for a draw. (match_replay_v has the winner's address instead.) */
   winner_side: 0 | 1 | null;
+  /** The winner's wallet (ranked; null for guests and draws): part of the result hash. */
+  winner_address: string | null;
   reason: MatchReason;
   rounds: RoundRecord[];
   input_log: string;
@@ -133,6 +135,7 @@ export class MemoryStore implements RatingStore {
       p1_tier: rec.players[0].tier,
       p2_tier: rec.players[1].tier,
       winner_side: rec.winner,
+      winner_address: rec.winner === null ? null : rec.players[rec.winner].address,
       reason: rec.reason,
       rounds: rec.rounds,
       input_log: rec.inputLog,

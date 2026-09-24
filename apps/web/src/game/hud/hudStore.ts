@@ -7,8 +7,10 @@
  * Framework-free: the engine writes, components under src/components/hud read.
  */
 export interface HudCold {
-  mode: "cpu" | "2p" | "demo";
+  mode: "cpu" | "2p" | "demo" | "online" | "replay";
   names: [string, string];
+  /** The side this browser's player controls (the on-screen buttons' fighter); null for 2P, demos and replays. */
+  you: 0 | 1 | null;
   phase: number;
   round: number;
   timerSec: number;
@@ -16,9 +18,9 @@ export interface HudCold {
   wins: [number, number];
   heatFull: [boolean, boolean];
   /**
-   * P1 against the CPU (the on-screen buttons' player) is off the floor: the
-   * context button reads DIVE. Only published in CPU fights: each change
-   * re-renders the page.
+   * This browser's fighter (the on-screen buttons' player) is off the floor:
+   * the context button reads DIVE. Only published when there is one (CPU and
+   * online fights): each change re-renders the page.
    */
   air: boolean;
   /** ...and Space now would dive (or wait in the rise for it): DIVE is live, not dimmed. */
@@ -43,6 +45,7 @@ function fresh(): HudCold {
   return {
     mode: "cpu",
     names: ["P1", "P2"],
+    you: 0,
     phase: 0,
     round: 1,
     timerSec: 60,
