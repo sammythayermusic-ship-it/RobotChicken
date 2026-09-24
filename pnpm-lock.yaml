@@ -36,6 +36,9 @@ catalogs:
     '@gltf-transform/functions':
       specifier: ^4.5.0
       version: 4.5.0
+    '@noble/curves':
+      specifier: ^2.4.0
+      version: 2.4.0
     '@playwright/test':
       specifier: 1.62.1
       version: 1.62.1
@@ -161,12 +164,18 @@ importers:
 
   apps/game:
     dependencies:
+      '@cockfight/net':
+        specifier: workspace:*
+        version: link:../../packages/net
       '@cockfight/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@cockfight/sim':
         specifier: workspace:*
         version: link:../../packages/sim
+      '@cockfight/solana':
+        specifier: workspace:*
+        version: link:../../packages/solana
       '@colyseus/core':
         specifier: 'catalog:'
         version: 0.18.15(@colyseus/better-call@1.3.3(zod@4.6.5))(@colyseus/schema@5.0.33(typescript@6.0.3))(@colyseus/ws-transport@0.18.2)(@pm2/io@6.1.0(supports-color@7.2.0))(express@5.2.1(supports-color@7.2.0))(supports-color@7.2.0)(zod@4.6.5)
@@ -355,10 +364,16 @@ importers:
       '@cockfight/shared':
         specifier: workspace:*
         version: link:../shared
+      '@noble/curves':
+        specifier: 'catalog:'
+        version: 2.4.0
       bs58:
         specifier: 'catalog:'
         version: 6.0.0
     devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.4
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
@@ -396,6 +411,9 @@ importers:
         specifier: 'catalog:'
         version: 0.186.0
     devDependencies:
+      '@cockfight/net':
+        specifier: workspace:*
+        version: link:../packages/net
       '@types/node':
         specifier: 'catalog:'
         version: 22.20.4
@@ -1103,6 +1121,14 @@ packages:
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
+
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -4064,6 +4090,12 @@ snapshots:
 
   '@next/swc-win32-x64-msvc@16.3.6':
     optional: true
+
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
+  '@noble/hashes@2.4.0': {}
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:

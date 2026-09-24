@@ -11,8 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cockfight/net": "workspace:*",
     "@cockfight/shared": "workspace:*",
     "@cockfight/sim": "workspace:*",
+    "@cockfight/solana": "workspace:*",
     "@colyseus/core": "catalog:",
     "@colyseus/schema": "catalog:",
     "@colyseus/ws-transport": "catalog:",

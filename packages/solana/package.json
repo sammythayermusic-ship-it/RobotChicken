@@ -12,10 +12,12 @@
   },
   "dependencies": {
     "@cockfight/shared": "workspace:*",
-    "bs58": "catalog:"
+    "bs58": "catalog:",
+    "@noble/curves": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@types/node": "catalog:"
   }
 }

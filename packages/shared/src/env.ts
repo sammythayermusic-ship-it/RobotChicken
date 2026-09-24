@@ -40,10 +40,31 @@ export const gameEnv = z.object({
     .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean)),
   // Entry gate in USD; tierForUsd(usd, GATE_USD_MIN) keeps tiers and gate consistent.
   GATE_USD_MIN: z.coerce.number().positive().default(30),
+  /**
+   * "required": the wallet gate (Turnstile + $COCK balance) guards the queue
+   * and results go to Supabase. "open": anyone queues with a name (playtests
+   * before the coin exists); open matches never touch the database. Defaults
+   * to required in production and open everywhere else (see loadGameEnv).
+   */
+  GATE_MODE: z.enum(["open", "required"]).optional(),
+  /** Signs queue tokens (HS256). Unset: a random per-process secret (one machine only). */
   QUEUE_JWT_SECRET: z.string().min(32).optional(),
   REDIS_URL: z.url().optional(),
+  HELIUS_API_KEY: z.string().optional(),
+  /** Overrides the Helius RPC URL built from HELIUS_API_KEY (e.g. a local validator). */
+  SOLANA_RPC_URL: z.url().optional(),
+  JUPITER_PRICE_URL: z.url().default("https://api.jup.ag/price/v3"),
+  JUPITER_API_KEY: z.string().optional(),
+  /**
+   * Devnet / localnet only: a fixed USD price per whole token, because no
+   * price API quotes a devnet test mint. Ignored on mainnet.
+   */
+  GATE_FIXED_PRICE_USD: z.coerce.number().positive().optional(),
+  // Cloudflare's documented always-pass test secret; production must override it.
+  TURNSTILE_SECRET_KEY: z.string().default("1x0000000000000000000000000000000AA"),
 });
-export type GameEnv = z.infer<typeof gameEnv>;
+/** Parsed game env; GATE_MODE is resolved from NODE_ENV when unset. */
+export type GameEnv = Omit<z.infer<typeof gameEnv>, "GATE_MODE"> & { GATE_MODE: "open" | "required" };
 
 /** Phase 0 worker: a health stub. Money settings arrive with Phase 3. */
 export const workerEnv = z.object({
@@ -75,7 +96,8 @@ export const loadGameEnv = (e: EnvSource): GameEnv => {
   if (!env.ALLOWED_ORIGINS && env.WEB_PORT && /^\d+$/.test(env.WEB_PORT)) {
     env.ALLOWED_ORIGINS = `http://localhost:${env.WEB_PORT},http://127.0.0.1:${env.WEB_PORT}`;
   }
-  return gameEnv.parse(env);
+  const parsed = gameEnv.parse(env);
+  return { ...parsed, GATE_MODE: parsed.GATE_MODE ?? (parsed.NODE_ENV === "production" ? "required" : "open") };
 };
 export const loadWorkerEnv = (e: EnvSource): WorkerEnv => workerEnv.parse(clean(e));
 export const loadWebPublicEnv = (e: EnvSource): WebPublicEnv => webPublicEnv.parse(clean(e));

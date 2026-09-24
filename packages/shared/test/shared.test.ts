@@ -42,6 +42,12 @@ describe("env", () => {
     expect(loadGameEnv({ WEB_PORT: "3001" }).ALLOWED_ORIGINS).toEqual(["http://localhost:3001", "http://127.0.0.1:3001"]);
     expect(loadGameEnv({ WEB_PORT: "3001", ALLOWED_ORIGINS: "https://a.fun" }).ALLOWED_ORIGINS).toEqual(["https://a.fun"]);
   });
+  it("the gate is open outside production and required in production unless set", () => {
+    expect(loadGameEnv({}).GATE_MODE).toBe("open");
+    expect(loadGameEnv({ NODE_ENV: "production" }).GATE_MODE).toBe("required");
+    expect(loadGameEnv({ NODE_ENV: "production", GATE_MODE: "open" }).GATE_MODE).toBe("open");
+    expect(() => loadGameEnv({ GATE_MODE: "maybe" })).toThrow();
+  });
   it("rejects a bad mint", () => {
     expect(() => loadGameEnv({ NEXT_PUBLIC_COCK_MINT: "not-an-address" })).toThrow();
   });

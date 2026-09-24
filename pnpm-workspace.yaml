@@ -53,3 +53,4 @@ catalog:
   "@electric-sql/pglite": ^0.5.8
   smol-toml: ^1.9.0
   bs58: ^6.0.0
+  "@noble/curves": ^2.4.0

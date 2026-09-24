@@ -5,6 +5,7 @@ import { ColyseusTestServer } from "@colyseus/testing";
 import { createMatch, step, type MatchState } from "@cockfight/sim";
 import { loadGameEnv } from "@cockfight/shared/env";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { Msg } from "@cockfight/net";
 import { FightRoom } from "../src/rooms/FightRoom";
 import { listen, makeServer } from "../src/server";
 
@@ -78,26 +79,37 @@ afterAll(async () => {
 });
 
 describe("FightRoom", () => {
-  it("seats two players, rejects a third, and runs the sim on the server clock", async () => {
+  it("an ad hoc room (dev, open gate) seats two named guests and waits for both to be ready", async () => {
     const room = await colyseus.createRoom<FightRoom>("fight");
     expect(room).toBeInstanceOf(FightRoom);
     expect(room.patchRate).toBe(50);
+    expect(room.roomId).toMatch(/^[0-9a-f-]{36}$/); // the match id
+    expect(room.state.matchId).toBe(room.roomId);
 
-    const p1 = await colyseus.connectTo(room);
-    const p2 = await colyseus.connectTo(room);
+    const p1 = await colyseus.connectTo(room, { name: "Rooster" });
+    const p2 = await colyseus.connectTo(room, { name: "Hen" });
     expect(room.clients.length).toBe(2);
     await expect(colyseus.sdk.joinById(room.roomId)).rejects.toThrow();
+    expect(room.state.seats.map((s) => s.name)).toEqual(["Rooster", "Hen"]);
 
+    // Nothing runs until both are ready.
+    for (let i = 0; i < 6; i++) await room.waitForNextTimestep();
+    expect(room.status).toBe("waiting");
+    expect(room.sim).toEqual(replay(room.roomId, 0));
+    p1.send(Msg.ready);
+    p2.send(Msg.ready);
+    const deadline = Date.now() + 3000;
+    while (room.status !== "live" && Date.now() < deadline) await room.waitForNextTimestep();
+    expect(room.status).toBe("live");
     for (let i = 0; i < 6; i++) await room.waitForNextTimestep();
 
-    // Read tick and sim in the same synchronous turn, so no step lands in between.
+    // No inputs sent: the room runs exactly the no-input sim.
     const tick = room.state.tick;
     const sim = room.sim;
     expect(tick).toBeGreaterThanOrEqual(6);
     expect(sim).toEqual(replay(room.roomId, tick));
     expect(clock(room.state)).toEqual(clock(replay(room.roomId, tick)));
 
-    // What the clients decode is the same clock at whatever tick the last patch carried.
     await p1.waitForNextPatch();
     const seen = clock(p1.state as never);
     expect(seen.tick).toBeGreaterThan(0);
@@ -140,18 +152,18 @@ describe("HTTP", () => {
   });
 
   it("matchmaking answers with a seat reservation and echoes only allowed origins", async () => {
-    const ok = await fetch(`${base}/matchmake/joinOrCreate/lobby`, {
+    const ok = await fetch(`${base}/matchmake/joinOrCreate/queue`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: ALLOWED },
-      body: "{}",
+      body: JSON.stringify({ name: "Probe" }),
     });
     expect(ok.status).toBe(200);
     expect(ok.headers.get("access-control-allow-origin")).toBe(ALLOWED);
     expect(ok.headers.get("vary")).toBe("Origin");
     const seat = await ok.json();
-    expect(seat).toMatchObject({ name: "lobby", roomId: expect.any(String), sessionId: expect.any(String) });
+    expect(seat).toMatchObject({ name: "queue", roomId: expect.any(String), sessionId: expect.any(String) });
 
-    const evil = await fetch(`${base}/matchmake/joinOrCreate/lobby`, {
+    const evil = await fetch(`${base}/matchmake/joinOrCreate/queue`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: "https://evil.example" },
       body: "{}",
@@ -159,13 +171,24 @@ describe("HTTP", () => {
     await evil.body?.cancel();
     expect(evil.headers.get("access-control-allow-origin")).toBe(ALLOWED);
 
-    const preflight = await fetch(`${base}/matchmake/joinOrCreate/lobby`, {
+    const preflight = await fetch(`${base}/matchmake/joinOrCreate/queue`, {
       method: "OPTIONS",
       headers: { origin: "https://evil.example", "access-control-request-method": "POST" },
     });
     expect(preflight.status).toBe(204);
     expect(preflight.headers.get("access-control-allow-origin")).not.toBe("https://evil.example");
     expect(preflight.headers.get("access-control-allow-origin")).not.toBe("*");
+  });
+
+  it("GET /config tells the web app the gate mode", async () => {
+    const res = await fetch(`${base}/config`);
+    expect(await res.json()).toEqual({ gate: "open", gateUsd: 30, mint: null, cluster: "devnet", region: "local" });
+  });
+
+  it("POST /gate says the gate is open in open mode", async () => {
+    const res = await fetch(`${base}/gate`, { method: "POST", headers: { "content-type": "text/plain", origin: ALLOWED }, body: "{}" });
+    expect(res.status).toBe(409);
+    expect(res.headers.get("access-control-allow-origin")).toBe(ALLOWED);
   });
 
   it("refuses WebSocket upgrades from other browser origins", async () => {

@@ -3,11 +3,14 @@
  *
  * Copies dist/ into an empty temp directory, so nothing can resolve from
  * node_modules (the same situation as the runtime image), boots it with
- * NODE_ENV=production and checks, over real sockets:
- *   1. GET /health
- *   2. POST /matchmake/joinOrCreate/lobby returns a seat reservation (+ CORS echo)
+ * NODE_ENV=production and GATE_MODE=open (the playtest setup) and checks,
+ * over real sockets:
+ *   1. GET /health and GET /config
+ *   2. POST /matchmake/joinOrCreate/queue returns a seat reservation (+ CORS echo)
  *   3. that reservation can be consumed over WebSocket
- *   4. a fight room's state ticks (sim + schema + patches work in the bundle)
+ *   4. a second player queues, both are matched, join the fight room, send
+ *      ready, and receive confirmed frames with a rising tick (sim, schema,
+ *      binary messages and the net codecs all work in the bundle)
  *   5. SIGTERM drains and exits 0
  * Exits non-zero on any failure, printing the server's output.
  */
@@ -16,7 +19,8 @@ import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, type SeatReservation } from "@colyseus/sdk";
+import { Client, type Room, type SeatReservation } from "@colyseus/sdk";
+import { Msg, decodeFrames } from "@cockfight/net";
 
 const ORIGIN = "https://smoke.cockfight.test";
 const dist = join(import.meta.dirname, "..", "dist");
@@ -79,7 +83,7 @@ async function main(): Promise<void> {
   // A minimal env: nothing from the dev shell (NODE_OPTIONS, loaders) leaks in.
   const child = spawn(process.execPath, ["--enable-source-maps", "server.mjs"], {
     cwd: dir,
-    env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", PORT: String(port), ALLOWED_ORIGINS: ORIGIN },
+    env: { PATH: process.env.PATH ?? "", NODE_ENV: "production", GATE_MODE: "open", PORT: String(port), ALLOWED_ORIGINS: ORIGIN },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout?.on("data", (d: Buffer) => (log += d.toString()));
@@ -92,39 +96,52 @@ async function main(): Promise<void> {
     }
     console.log(`ok   GET /health -> ${JSON.stringify(health)}`);
 
-    const res = await fetch(`${base}/matchmake/joinOrCreate/lobby`, {
+    const config = (await (await fetch(`${base}/config`)).json()) as { gate?: string };
+    if (config.gate !== "open") fail(`unexpected /config: ${JSON.stringify(config)}`);
+    console.log(`ok   GET /config -> ${JSON.stringify(config)}`);
+
+    const res = await fetch(`${base}/matchmake/joinOrCreate/queue`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: ORIGIN },
-      body: "{}",
+      body: JSON.stringify({ name: "Smoke A", guestId: "smoke-guest-a", rtt: 10 }),
     });
     if (res.status !== 200) fail(`matchmake returned ${res.status}: ${await res.text()}`);
     if (res.headers.get("access-control-allow-origin") !== ORIGIN) {
       fail(`matchmake CORS: allow-origin ${res.headers.get("access-control-allow-origin")}, expected ${ORIGIN}`);
     }
     const seat = (await res.json()) as SeatReservation;
-    if (seat.name !== "lobby" || !seat.roomId || !seat.sessionId) fail(`bad seat reservation: ${JSON.stringify(seat)}`);
-    console.log(`ok   POST /matchmake/joinOrCreate/lobby -> room ${seat.roomId}, session ${seat.sessionId}`);
+    if (seat.name !== "queue" || !seat.roomId || !seat.sessionId) fail(`bad seat reservation: ${JSON.stringify(seat)}`);
+    console.log(`ok   POST /matchmake/joinOrCreate/queue -> room ${seat.roomId}, session ${seat.sessionId}`);
 
     const client = new Client(base);
-    const lobby = await within(5000, "consume lobby seat", client.consumeSeatReservation(seat));
-    if (lobby.roomId !== seat.roomId || lobby.sessionId !== seat.sessionId) fail("WebSocket join landed in the wrong seat");
-    console.log(`ok   WebSocket join of lobby ${lobby.roomId}`);
-    await lobby.leave();
+    const qa = await within(5000, "consume queue seat", client.consumeSeatReservation(seat));
+    if (qa.roomId !== seat.roomId || qa.sessionId !== seat.sessionId) fail("WebSocket join landed in the wrong seat");
+    console.log(`ok   WebSocket join of queue ${qa.roomId}`);
 
-    const fight = await within(5000, "join fight", client.joinOrCreate("fight"));
+    type Matched = { reservation: SeatReservation; side: number; matchId: string };
+    const matchedOf = (q: Room) => new Promise<Matched>((resolve) => q.onMessage("matched", (m: Matched) => resolve(m)));
+    const ma = matchedOf(qa);
+    const qb = await within(5000, "second player queues", client.joinOrCreate("queue", { name: "Smoke B", guestId: "smoke-guest-b", rtt: 10 }));
+    const mb = matchedOf(qb);
+    const [a, b] = await within(5000, "both matched", Promise.all([ma, mb]));
+    if (a.matchId !== b.matchId) fail("the two players were matched into different rooms");
+    console.log(`ok   matched into ${a.matchId}`);
+    await qa.leave();
+    await qb.leave();
+
+    const fights = await within(5000, "join fight", Promise.all([a, b].map((m) => client.consumeSeatReservation(m.reservation))));
     const ticks: number[] = [];
-    await within(
-      5000,
-      "two fight state patches with a rising tick",
-      new Promise<void>((resolve) => {
-        fight.onStateChange((s: { tick: number }) => {
-          ticks.push(s.tick);
-          if (ticks.length >= 2 && ticks[ticks.length - 1]! > ticks[0]!) resolve();
-        });
-      }),
-    );
-    console.log(`ok   fight room ${fight.roomId} ticking: ${ticks.join(" -> ")}`);
-    await fight.leave();
+    const rising = new Promise<void>((resolve) => {
+      fights[0]!.onMessage(Msg.frames, (bytes: Uint8Array) => {
+        const f = decodeFrames(bytes);
+        if (f) ticks.push(f.first);
+        if (ticks.length >= 30 && ticks[ticks.length - 1]! > ticks[0]!) resolve();
+      });
+    });
+    for (const f of fights) f.send(Msg.ready);
+    await within(5000, "confirmed frames with a rising tick", rising);
+    console.log(`ok   fight ${a.matchId} ticking: ${ticks[0]} -> ${ticks[ticks.length - 1]}`);
+    for (const f of fights) await f.leave();
 
     child.kill("SIGTERM");
     const { code, signal } = await within(10_000, "exit after SIGTERM", exited(child));
