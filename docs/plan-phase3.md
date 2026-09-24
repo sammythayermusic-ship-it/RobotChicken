@@ -9,9 +9,10 @@ money until Phase 4 (mainnet); everything is built and tested against devnet fir
 
 | Choice | Decision |
 |---|---|
-| Fee | 3% on every $COCK trade; $COCK is paired to GME (GME is the quote token). |
+| Launchpad | **pump.fun**, Custom Pair with **PUMP** as the quote token, creator rewards to **Creator** (never Holders: that switch is one-way and sends fees to holders), Mayhem mode off. |
+| Fee | **3% creator fee**, set in the Advanced → "Creator fee (%)" field at launch, on top of pump.fun's own trading fee. |
 | Split | 70% of claimed fees to players, 30% to the project (servers, art, marketing, reserve). |
-| Payout currency | **GME**, not SOL (the spec's "one flag"). Fees already arrive as GME, so no swap sits between a win and the payout. |
+| Payout currency | **PUMP**. Custom Pairs pay creator fees in the quote token, so fees arrive as PUMP and winners are paid in PUMP: no swap anywhere between a trade and a payout. |
 | Entry | Hold ≥ $30 of $COCK at queue time and at match start. Nothing is wagered. |
 | Tiers | **Rust $30 · Chrome $250 · Gold $1,000**, prize weight **1× · 2.5× · 6×**. The spec's four cosmetic tiers become three; Diamond's cosmetics fold into Gold. Tiers still never touch fighter stats. |
 | Matchmaking | Same tier first; after 60 s in queue, any tier. A cross-tier match pays **the lower tier's rate** to whoever wins. |
@@ -23,23 +24,24 @@ money until Phase 4 (mainnet); everything is built and tested against devnet fir
 ## Money flow
 
 ```
-trader swaps $COCK ⇄ GME on the Meteora pool (3% fee stays in the pool)
+trader swaps $COCK ⇄ PUMP on pump.fun (bonding curve, then PumpSwap); the 3% creator fee accrues
         │  hourly claim (worker)
         ▼
-CREATOR_WALLET  (GME)  ──── 30% stays here: the project share, Sammy moves it by hand
-        │  70% is booked to the player ledger (Postgres), not moved yet
-        │  hourly top-up: only what HOT_WALLET needs for the next 36 h + today's daily pool
+LAUNCH_WALLET  (PUMP, Sammy's)  ──── 30%: the project share, via pump.fun's "Share creator rewards"
+        │  70% shared to HOT_WALLET the same way (★ verify on the throwaway token; else the worker
+        │  claims everything with a claim-only key and forwards 30% to Sammy hourly)
         ▼
-HOT_WALLET  (GME + a little SOL for fees)  ── pays wins within seconds, top 10 at 00:00 UTC
+HOT_WALLET  (PUMP + a little SOL for fees)  ── claims its share hourly; pays wins within seconds, top 10 at 00:00 UTC.
+                                              Holds ≤ 36 h of payouts: anything above that is swept to a COLD_WALLET (Sammy's)
         │
-SEED_WALLET (GME, Sammy's launch seed) ── worker may draw ≤ 1/14 of the original seed per day,
+SEED_WALLET (PUMP, Sammy's launch seed) ── worker may draw ≤ 1/14 of the original seed per day,
                                           only to lift quiet days to the guaranteed minimums
 ```
 
-Only the worker holds private keys (HOT_WALLET and SEED_WALLET). CREATOR_WALLET's
-key is Sammy's; the worker needs it only if fee claiming must be signed by the
-creator, in which case the claim signer is a separate key with no other rights
-(★ confirm with the launchpad's config; see Fee claiming).
+Only the worker holds private keys (HOT_WALLET and SEED_WALLET). LAUNCH_WALLET's
+key is Sammy's. If pump.fun's reward sharing can't route 70% to HOT_WALLET directly,
+the fallback is a claim-only key that can collect creator fees and nothing else
+(★ settled on the throwaway token; see Fee claiming).
 
 ## Per-win payout
 
@@ -49,7 +51,7 @@ tier, the smaller each prize gets, so the total paid in a day can never exceed t
 budget.
 
 ```
-B24   = GME claimed in the trailing 24 h (gross)
+B24   = PUMP claimed in the trailing 24 h (gross)
 D     = 0.5 × B24 + seedTopUp            daily per-win budget
 W     = Σ over matches in the trailing 24 h of weight(tier of that match)
 base  = D / max(W, W_floor)              W_floor = 200 (weighted matches)
@@ -57,7 +59,7 @@ p(t)  = clamp(base × w_t, P_min × w_t, P_max × w_t) × q
 ```
 
 - `w_t` = 1 / 2.5 / 6 for Rust / Chrome / Gold. A cross-tier match uses the lower tier.
-- `P_min`, `P_max` are set in USD and converted to GME at the hourly claim price:
+- `P_min`, `P_max` are set in USD and converted to PUMP at the hourly claim price:
   **$0.75 and $75 for Rust** (so Gold's cap is $450). Both tunable in `/admin`.
 - `q` = net-quality multiplier from the spec: 1 normally, 0.5 if the winner dropped
   > 15% of inputs, 0 if > 30% or for a forfeit under 30 s.
@@ -65,11 +67,11 @@ p(t)  = clamp(base × w_t, P_min × w_t, P_max × w_t) × q
   server reads it at match end and enqueues the payout in the same transaction as
   the result.
 
-**Worked example** (GME at $25): $500k daily volume → $15k fees → 600 GME. Per-win
-budget 300 GME. 1,500 matches: 1,000 Rust, 400 Chrome, 100 Gold → W = 1,000 + 1,000 +
-600 = 2,600 → base 0.115 GME (~$2.90). Rust win pays $2.90, Chrome $7.20, Gold $17.30.
-Daily pool 120 GME ($3,000): first place $750. At $50k volume the numbers are a
-tenth of that, and Rust wins fall to the $0.75 floor, which the seed covers.
+**Worked example**: $500k daily volume → $15k in creator fees. Per-win budget
+$7,500. 1,500 matches: 1,000 Rust, 400 Chrome, 100 Gold → W = 1,000 + 1,000 + 600 =
+2,600 → base $2.90. A Rust win pays $2.90, Chrome $7.20, Gold $17.30 (all in PUMP at
+that hour's price). Daily pool $3,000: first place $750. At $50k volume the numbers
+are a tenth of that, and Rust wins fall to the $0.75 floor, which the seed covers.
 
 ## The seed and the guaranteed minimums
 
@@ -94,8 +96,8 @@ top it up at any time; a top-up raises `seedOriginal` for the 1/14 rule.
 2. `seedDraw` ≤ `seedOriginal / 14` per UTC day.
 3. HOT_WALLET is topped up only to `p × max(W, W_floor) × 1.5 + today's daily pool`;
    a compromise costs at most ~36 h of payouts plus one day's pool.
-4. Per-transaction, per-hour and per-day GME caps in the worker (`MAX_PAYOUT_GME`,
-   `MAX_HOURLY_GME`, `MAX_DAILY_GME`). Any cap hit pauses payouts and pings Telegram;
+4. Per-transaction, per-hour and per-day caps in the worker (`MAX_PAYOUT_USD`,
+   `MAX_HOURLY_USD`, `MAX_DAILY_USD`, converted to PUMP hourly). Any cap hit pauses payouts and pings Telegram;
    queued payouts wait as `deferred` and resume when Sammy clears the flag.
 5. Every payout is idempotent: key `win:<matchId>` or `daily:<day>:<rank>`. A retry
    never pays twice; a crash mid-send is reconciled from the chain on restart.
@@ -118,37 +120,39 @@ top it up at any time; a top-up raises `seedOriginal` for the 1/14 rule.
   wallet, fingerprint, IP; one-click void / ban 24 h / clear; pool knobs; the
   pause switch; the seed and cap settings.
 
-## Fee claiming (Meteora)
+## Fee claiming (pump.fun)
 
-The spec locks a Meteora DBC-style launch with GME as quote and a 3% total fee.
-Meteora's docs list DAMM v2 fee tiers (25/30/100/200/400/600 bps) plus a
-"customizable" config, and migration keepers for a fixed set of quote tokens plus
-"Jupiter Verified" tokens above a score threshold. To verify on devnet in week 1
-(★ the launchpad choice is still Sammy's):
+Sammy chose pump.fun (2026-09-24) over the spec's Meteora DBC: a Custom Pair with
+PUMP as quote and the creator fee set to 3% at launch. Pump.fun has no devnet, so
+the claim path is proven on a **throwaway token** on mainnet (about 0.05 SOL plus a
+few dollars of PUMP in tiny trades, made by Sammy in the browser) launched with
+exactly the real settings. That run settles:
 
-- a DBC config with GME quote and a 3% fee (custom config key);
-- who claims (creator vs partner) and in which token; the worker's claim signer;
-- whether the keeper migrates a GME-quoted pool to DAMM v2 or the worker must call
-  `migrate` itself;
-- after migration, the locked LP position earns fees in **both** tokens: the
-  worker claims both and swaps any $COCK to GME through Jupiter in chunks ≤ $2k.
+- that the 3% applies on the bonding curve **and** after graduation on PumpSwap
+  (or what changes at graduation), and that it arrives in PUMP;
+- how "Share creator rewards" (set from the coin page after creation) splits fees,
+  and whether HOT_WALLET can be a direct 70% recipient;
+- the exact claim instruction and accounts for the worker (pump program before
+  graduation, PumpSwap after), and how often claiming is worth the transaction fee;
+- pump.fun's own trading fee on top of the 3%, so the site can state the total.
 
-Every claim, swap and top-up is a `fee_claims` row, so the front page can show
-gross fees, the player share and the project share to the lamport.
+Every claim and top-up is a `fee_claims` row, so the front page can show gross
+fees, the player share and the project share to the lamport.
 
-## Paying in GME: the details
+## Paying in PUMP: the details
 
-- GME mint (Solana) is set as `GME_MINT` in env; decimals read from chain at boot.
-- A winner may have no GME token account. The worker creates it (about 0.002 SOL of
+- The PUMP mint is `PAYOUT_MINT` in env; decimals are read from chain at boot, so
+  switching the payout token later is one variable.
+- A winner may have no PUMP token account. The worker creates it (about 0.002 SOL of
   rent, paid by HOT_WALLET's SOL) in the same transaction as the first payout.
   SOL for fees and rent is a separate small balance with its own low-balance alert.
-- Gate pricing stays in USD via Jupiter ($COCK in USD, GME in USD). `P_min`, `P_max`,
-  `G_win`, `G_daily` are USD too, converted at each hourly claim, so a GME price move
-  changes the GME amounts, not the dollar value.
+- Gate pricing stays in USD via Jupiter ($COCK in USD, PUMP in USD). `P_min`, `P_max`,
+  `G_win`, `G_daily` are USD too, converted at each hourly claim, so a PUMP price move
+  changes the PUMP amounts, not the dollar value.
 
 ## Data
 
-New tables: `fee_claims` (stage, gme, cock, sig, price), `pool_state` (one row,
+New tables: `fee_claims` (stage, pump, sig, price), `pool_state` (one row,
 recomputed each minute), `payouts` (kind win/daily/seed-topup, idempotency key,
 gme, sig, status pending/sent/paid/deferred/failed/voided), `daily_pools` (day,
 gross, pool, seed part, paid), `seed` (original, remaining, draws), `flags`,
@@ -160,7 +164,7 @@ gains the pool figures), `payouts_v` (Solscan links per match).
 - Front page: "next win pays" per tier, today's pool with countdown and what each
   rank earns right now, all-time fees / paid / seed remaining, last 10 payouts with
   Solscan links.
-- Result screen: the GME amount and a Solscan link within ~10 s of the KO.
+- Result screen: the PUMP amount and a Solscan link within ~10 s of the KO.
 - Profile: tier, caps used today, today's earnings, rank.
 - `/how-it-works`: the whole economy in plain words (also the explainer video's script).
 - Share card and the replay page's OG image.
@@ -173,9 +177,10 @@ gains the pool figures), `payouts_v` (Solscan links per match).
    "can't run out" is proven before a wallet exists.
 2. **Worker**: claim loop, pool recompute, payout queue with the caps and
    idempotency, daily job, seed draw, Telegram alerts, chain reconciliation.
-   Devnet end to end with a test GME mint and plain SPL transfers.
-3. **Meteora on devnet**: create the GME-quoted DBC pool, trade against it, claim,
-   migrate, claim from DAMM v2. Settles the ★ launchpad questions.
+   Devnet end to end with a test mint standing in for PUMP and plain SPL transfers.
+3. **Throwaway token on pump.fun**: Sammy launches it with the real settings and
+   makes a few tiny trades; the worker claims from it end to end. Settles the ★
+   fee-claim questions above.
 4. **Game server**: tiers in the queue and `canPair()`, cross-tier rate, payout
    enqueue at match end, per-wallet caps, q-multiplier, usernames by signing.
 5. **Web**: pool on the front page, result screen payout, profile, `/how-it-works`,
@@ -195,7 +200,7 @@ gains the pool figures), `payouts_v` (Solscan links per match).
   cinematic inserts of the chickens rendered from the Blender files. Sammy mixes
   the sound himself. No ElevenLabs anywhere in the pipeline.
 - **Explainer video (2–3 min)**: motion-graphics over the `/how-it-works` script:
-  hold $30, fight, win, GME lands in your wallet, top 10 daily, where the money
+  hold $30, fight, win, PUMP lands in your wallet, top 10 daily, where the money
   comes from. Voice-over recorded by Sammy (he has the studio); on-screen numbers
   pulled from the real pool so nothing in the video can go stale on day one.
 - **Launch sequence**: teaser clips from the playtest → explainer → domain live with
@@ -203,7 +208,7 @@ gains the pool figures), `payouts_v` (Solscan links per match).
 
 ## Open ★ for Sammy (asked as each comes up)
 
-- Launchpad: Meteora DBC confirmed once the devnet run settles the fee/claim details.
+- The fee-claim details above, settled on the throwaway token.
 - `G_win`, `G_daily` and the seed size: set them the day the wallet is funded.
 - Whether drawn matches pay (spec's open question): proposed **no**, both players
   re-queue at once.
