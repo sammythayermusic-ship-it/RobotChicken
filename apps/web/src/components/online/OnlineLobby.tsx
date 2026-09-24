@@ -54,78 +54,126 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
   );
   const [turnstile, setTurnstile] = useState<string | null>(null);
   const [tsKey, setTsKey] = useState(0);
+  const [tsFailed, setTsFailed] = useState(false);
   const [size, setSize] = useState(0);
   const [rtt, setRtt] = useState<number | null>(null);
   const [me, setMe] = useState<{ tier: Tier; usd: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const queue = useRef<QueueHandle | null>(null);
+  /**
+   * Each queue attempt gets a number; cancelling, going back or unmounting
+   * bumps it. Every await re-checks it, so a stale attempt (a join or a
+   * "matched" that lands after the player cancelled) cleans up after itself
+   * instead of taking over the screen.
+   */
+  const attempt = useRef(0);
+  const vsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onMatchedRef = useRef(onMatched);
+  const gateUsdRef = useRef(30);
   useEffect(() => {
     onMatchedRef.current = onMatched;
+    gateUsdRef.current = config?.gateUsd ?? 30;
   });
+
+  const stopQueue = useCallback(async () => {
+    attempt.current++;
+    if (vsTimer.current) clearTimeout(vsTimer.current);
+    vsTimer.current = null;
+    const q = queue.current;
+    queue.current = null;
+    await q?.leave();
+  }, []);
 
   const enterQueue = useCallback(
     async (opts: { token?: string; name?: string }, who: { name: string; tier: Tier }) => {
+      await stopQueue();
+      const my = attempt.current;
+      const live = () => attempt.current === my;
       setPhase({ kind: "queue", since: Date.now() });
+      let q: QueueHandle | null = null;
       try {
         const ms = await probeRtt();
+        if (!live()) return;
         setRtt(ms);
-        const q = await joinQueue({ ...opts, guestId: opts.name ? guestId() : undefined, rtt: ms }, who);
+        q = await joinQueue({ ...opts, guestId: opts.name ? guestId() : undefined, rtt: ms }, who);
+        if (!live()) {
+          await q.leave();
+          return;
+        }
         queue.current = q;
         q.onSize(setSize);
         const session = await q.matched;
+        if (!live()) {
+          await session.leave();
+          session.dispose();
+          return;
+        }
         queue.current = null;
         setPhase({ kind: "matched", opponent: session.seating.names[session.side === 0 ? 1 : 0] });
         // A beat to read the VS card, then the fight loads.
-        setTimeout(() => onMatchedRef.current(session), 900);
+        vsTimer.current = setTimeout(() => {
+          vsTimer.current = null;
+          if (live()) onMatchedRef.current(session);
+          else {
+            void session.leave();
+            session.dispose();
+          }
+        }, 900);
       } catch (e) {
-        queue.current = null;
+        if (!live()) return;
+        if (queue.current === q) queue.current = null;
         if (e instanceof QueueKick && e.reason === "gate") {
           saveToken(null);
-          setPhase({ kind: "short", usd: e.usd ?? 0, shortUsd: e.shortUsd ?? 0, gateUsd: config?.gateUsd ?? 30 });
-        } else if (e instanceof QueueKick && e.reason === "replaced") {
-          setPhase({ kind: "error", message: "You joined the queue from another tab. Playing there instead.", retry: true });
-        } else {
-          setPhase({ kind: "error", message: e instanceof Error ? e.message : "Couldn't reach the game server.", retry: true });
+          setPhase({ kind: "short", usd: e.usd ?? 0, shortUsd: e.shortUsd ?? 0, gateUsd: gateUsdRef.current });
+          return;
         }
+        const msg = e instanceof Error && e.message ? e.message : "Couldn't reach the game server.";
+        // A saved queue token the server no longer takes: forget it (the form asks for a fresh check).
+        if (opts.token && /token/i.test(msg)) saveToken(null);
+        setPhase({ kind: "error", message: msg, retry: true });
       }
     },
-    [config?.gateUsd],
+    [stopQueue],
+  );
+
+  const loadConfig = useCallback(
+    (autoQueue: boolean) => {
+      let alive = true;
+      fetchConfig()
+        .then((c) => {
+          if (!alive) return;
+          setConfig(c);
+          setPhase({ kind: "form" });
+          if (!autoQueue) return;
+          if (c.gate === "open") {
+            const n = savedName();
+            if (n) void enterQueue({ name: n }, { name: n, tier: "rust" });
+          } else {
+            const t = savedToken();
+            if (t) {
+              setMe({ tier: t.tier as Tier, usd: t.usd });
+              void enterQueue({ token: t.token }, { name: anonName(t.address), tier: t.tier as Tier });
+            }
+          }
+        })
+        .catch(() => alive && setPhase({ kind: "error", message: "Can't reach the game server right now.", retry: false }));
+      return () => {
+        alive = false;
+      };
+    },
+    [enterQueue],
   );
 
   // Server config (open or gated), remembered identity, and auto re-queue.
-  useEffect(() => {
-    let alive = true;
-    fetchConfig()
-      .then((c) => {
-        if (!alive) return;
-        setConfig(c);
-        setPhase({ kind: "form" });
-        if (!auto) return;
-        if (c.gate === "open") {
-          const n = savedName();
-          if (n) void enterQueue({ name: n }, { name: n, tier: "rust" });
-        } else {
-          const t = savedToken();
-          if (t) {
-            setMe({ tier: t.tier as Tier, usd: t.usd });
-            void enterQueue({ token: t.token }, { name: anonName(t.address), tier: t.tier as Tier });
-          }
-        }
-      })
-      .catch(() => alive && setPhase({ kind: "error", message: "Can't reach the game server right now.", retry: false }));
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
+  useEffect(() => loadConfig(auto), []);
 
-  // Leave the queue if this screen goes away mid-wait.
+  // Leave the queue (and drop a match not yet shown) if this screen goes away.
   useEffect(
     () => () => {
-      void queue.current?.leave();
+      void stopQueue();
     },
-    [],
+    [stopQueue],
   );
 
   useEffect(() => {
@@ -173,10 +221,13 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
   };
 
   const cancel = async () => {
-    const q = queue.current;
-    queue.current = null;
-    await q?.leave();
     setPhase({ kind: "form" });
+    await stopQueue();
+  };
+
+  const back = () => {
+    void stopQueue();
+    onBack();
   };
 
   const gated = config?.gate === "required";
@@ -186,7 +237,7 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
     <div className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 py-8" data-testid="online-lobby">
       <div className="flex items-center justify-between">
         <h1 className="font-display text-4xl text-white sm:text-5xl">ONLINE</h1>
-        <button type="button" className="text-sm text-zinc-400 underline underline-offset-4" onClick={onBack}>
+        <button type="button" className="text-sm text-zinc-400 underline underline-offset-4" onClick={back}>
           Back
         </button>
       </div>
@@ -238,7 +289,23 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
           <p className="text-xs text-zinc-400">
             Hold at least ${config.gateUsd} of $COCK to play. The address is only read, never charged, and nothing you hold is wagered.
           </p>
-          <Turnstile key={tsKey} siteKey={publicEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY} onToken={setTurnstile} />
+          <Turnstile key={tsKey} siteKey={publicEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY} onToken={setTurnstile} onError={() => setTsFailed(true)} />
+          {tsFailed ? (
+            <p className="text-sm text-red-200" role="alert">
+              The bot check didn&apos;t load. Check your connection (or ad blocker), then{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  setTsFailed(false);
+                  setTsKey((k) => k + 1);
+                }}
+              >
+                try again
+              </button>
+              .
+            </p>
+          ) : null}
           <button
             type="submit"
             disabled={!turnstile}
@@ -251,9 +318,22 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
       ) : null}
 
       {phase.kind === "error" ? (
-        <p role="alert" className="rounded-lg border border-red-500/50 bg-red-950/40 p-3 text-sm text-red-200" data-testid="lobby-error">
-          {phase.message}
-        </p>
+        <div role="alert" className="flex flex-col gap-2 rounded-lg border border-red-500/50 bg-red-950/40 p-3 text-sm text-red-200" data-testid="lobby-error">
+          <p>{phase.message}</p>
+          {!config ? (
+            <button type="button" className="self-start rounded border border-red-300/60 px-3 py-1 font-display text-red-100" onClick={() => {
+                setPhase({ kind: "loading" });
+                loadConfig(auto);
+              }}>
+              TRY AGAIN
+            </button>
+          ) : null}
+          {/reload/i.test(phase.message) ? (
+            <button type="button" className="self-start rounded border border-red-300/60 px-3 py-1 font-display text-red-100" onClick={() => window.location.reload()}>
+              RELOAD
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {phase.kind === "checking" ? <p className="text-zinc-300">Reading your wallet…</p> : null}

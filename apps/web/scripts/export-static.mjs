@@ -9,6 +9,7 @@
  * and X-Robots-Tag: noindex so a test link stays out of search results.
  */
 import { spawnSync } from "node:child_process";
+import nextEnv from "@next/env";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,9 @@ const run = (cmd, args, env = {}) => {
 run("node", ["scripts/copy-decoders.mjs"]);
 run("node", ["node_modules/next/dist/bin/next", "build"], { STATIC_EXPORT: "1" });
 
+// The URLs may live in .env.production (next build reads it): load the same
+// files so _headers allows exactly what the bundle connects to.
+nextEnv.loadEnvConfig(web, false);
 // csp.ts has no imports and only erasable TypeScript, so Node 22 loads it directly.
 const { securityHeaders } = await import(join(web, "src/lib/csp.ts"));
 const gameWsUrl = process.env.NEXT_PUBLIC_GAME_WS_URL || "ws://localhost:2567";

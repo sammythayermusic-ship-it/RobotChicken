@@ -26,8 +26,8 @@ export function httpBase(wsUrl: string = publicEnv.NEXT_PUBLIC_GAME_WS_URL): str
   return u.origin;
 }
 
-export async function fetchConfig(base = httpBase(), signal?: AbortSignal): Promise<ServerConfig> {
-  const res = await fetch(`${base}/config`, { signal, cache: "no-store" });
+export async function fetchConfig(base = httpBase()): Promise<ServerConfig> {
+  const res = await fetch(`${base}/config`, { signal: AbortSignal.timeout(8000), cache: "no-store" });
   if (!res.ok) throw new Error(`game server /config: HTTP ${res.status}`);
   return (await res.json()) as ServerConfig;
 }
@@ -41,6 +41,7 @@ export async function postGate(address: string, turnstile: string, base = httpBa
     method: "POST",
     headers: { "content-type": "text/plain;charset=UTF-8" },
     body: JSON.stringify({ address, turnstile }),
+    signal: AbortSignal.timeout(20_000),
   });
   try {
     return (await res.json()) as GateAnswer;
@@ -55,7 +56,7 @@ export async function probeRtt(base = httpBase(), tries = 3): Promise<number> {
   for (let i = 0; i < tries; i++) {
     const t0 = performance.now();
     try {
-      const res = await fetch(`${base}/health`, { cache: "no-store" });
+      const res = await fetch(`${base}/health`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
       await res.body?.cancel();
       if (res.ok) best = Math.min(best, performance.now() - t0);
     } catch {

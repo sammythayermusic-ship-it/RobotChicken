@@ -34,15 +34,22 @@ const REASON: Record<string, string> = {
 type Verify = { replay: boolean; result: boolean; rules: boolean };
 
 /** The match id from /m/<id> (rewritten here) or /m?id=<id>. */
-function useMatchId(): string | null {
+function useMatchId(): string | null | undefined {
   const sp = useSearchParams();
   const fromQuery = sp.get("id");
-  const [fromPath, setFromPath] = useState<string | null>(null);
+  // undefined until the address bar has been read (after mount), then the id or null.
+  const [fromPath, setFromPath] = useState<string | null | undefined>(undefined);
   useEffect(() => {
-    const seg = window.location.pathname.split("/").filter(Boolean);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the address bar is only readable after mount
-    if (seg[0] === "m" && seg[1]) setFromPath(decodeURIComponent(seg[1]));
+    const read = () => {
+      const seg = window.location.pathname.split("/").filter(Boolean);
+      setFromPath(seg[0] === "m" && seg[1] ? decodeURIComponent(seg[1]) : null);
+    };
+    read();
+    // Back / forward between two replays re-reads the id.
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
   }, []);
+  if (fromPath === undefined) return undefined;
   return fromPath ?? fromQuery;
 }
 
@@ -60,9 +67,9 @@ export default function ReplayClient() {
   const hud = useMemo(() => new HudStore(), []);
 
   useEffect(() => {
-    if (id === null) return;
+    if (id === undefined) return;
     let alive = true;
-    if (!UUID.test(id)) {
+    if (id === null || !UUID.test(id)) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- derived from the address bar, once
       setState({ kind: "missing" });
       return;
@@ -79,11 +86,23 @@ export default function ReplayClient() {
           const w = window as unknown as { __cockfight?: Record<string, unknown> };
           w.__cockfight = { ...(w.__cockfight ?? {}), replay: { ticks: m.replay.ticks, finalHash: m.replay.finalHash, winnerSide: m.winnerSide, reason: m.reason } };
         }
-        // Re-run the whole match headless and check it against what the server stored.
+        // Re-run the whole match headless and check it against what the server
+        // stored. A check that can't run (no WebCrypto on a plain-http LAN
+        // address, a malformed log) leaves the replay playable, just unverified.
         const rulesOk = m.replay.rulesHash === RULES.hash;
-        const out = rulesOk ? runReplay(m.replay) : null;
-        const hash = await resultHash(m.id, m.winnerAddress, m.inputLog);
-        if (alive) setVerify({ rules: rulesOk, replay: out?.hash === m.replay.finalHash, result: hash === m.resultHash });
+        let replayOk = false;
+        let resultOk = false;
+        try {
+          replayOk = rulesOk && runReplay(m.replay).hash === m.replay.finalHash;
+        } catch {
+          replayOk = false;
+        }
+        try {
+          resultOk = (await resultHash(m.id, m.winnerAddress, m.inputLog)) === m.resultHash;
+        } catch {
+          resultOk = false;
+        }
+        if (alive) setVerify({ rules: rulesOk, replay: replayOk, result: resultOk });
       })
       .catch((e: unknown) => alive && setState({ kind: "error", message: e instanceof Error ? e.message : "Couldn't load the match." }));
     return () => {

@@ -4,7 +4,7 @@
  * messages but never reorders them). Time advances in 1 ms steps; the server
  * and each client run their own 60 Hz clocks, which may drift.
  */
-import { CPU_LEVELS, Rng, cpuThink, createCpu, serialize, type CpuLevel, type MatchState } from "@cockfight/sim";
+import { CPU_LEVELS, Rng, cpuThink, createCpu, serialize, type CpuLevel, type MatchState, type SimEvent } from "@cockfight/sim";
 import { ClientPredictor } from "../src/client";
 import { Msg, SYNC_EVERY, decodeFrames, decodeInputs, decodeSync, encodeFrames, encodeSync } from "../src/protocol";
 import { ServerMatch } from "../src/server";
@@ -56,6 +56,8 @@ export interface SimOptions {
   stalls?: [number, number][];
   matchId?: string;
   delay?: number;
+  /** Keep every event each client showed. */
+  collectEvents?: boolean;
 }
 
 export interface SimResult {
@@ -63,6 +65,7 @@ export interface SimResult {
   clients: [ClientPredictor, ClientPredictor];
   /** Confirmed state hash per client at the server's final tick. */
   converged: [boolean, boolean];
+  events?: [SimEvent[], SimEvent[]];
 }
 
 function makeBot(kind: Bot, matchId: string, side: 0 | 1, seed: number): (s: MatchState) => number {
@@ -98,6 +101,7 @@ export function simulate(o: SimOptions): SimResult {
   let nextServer = 0;
   const nextClient = [3.1, 7.7];
   const endMs = o.seconds * 1000;
+  const events: [SimEvent[], SimEvent[]] = [[], []];
 
   // Start: both "ready", the server syncs its initial state.
   for (const side of [0, 1] as const) {
@@ -135,6 +139,7 @@ export function simulate(o: SimOptions): SimResult {
       }
       if ((nextClient[side] as number) <= now) {
         c.tick(bots[side] as (s: MatchState) => number);
+        if (o.collectEvents) events[side].push(...c.events);
         for (const msg of c.takeOutgoing()) up[side]!.send(now, Msg.input, msg);
         nextClient[side] = (nextClient[side] as number) + 1000 / (hz[side] as number);
       }
@@ -154,5 +159,5 @@ export function simulate(o: SimOptions): SimResult {
   }
   const sh = serialize(server.state).join(",");
   const converged = clients.map((c) => c.confirmed !== null && c.confirmed.tick === server.tick && serialize(c.confirmed).join(",") === sh) as [boolean, boolean];
-  return { server, clients, converged };
+  return { server, clients, converged, events: o.collectEvents ? events : undefined };
 }

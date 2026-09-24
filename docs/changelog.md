@@ -1,5 +1,19 @@
 # Changelog
 
+## Phase 2: online
+
+- **Online matches**: queue from `/play` → ONLINE, get paired, fight a real player. The server runs the authoritative sim at 60 Hz; each browser predicts both fighters and rolls back when the server's inputs arrive (2-tick input delay, clock kept in step by input margin, corrections blended so nothing teleports). Reconnects resume from a full sync; a player who stays gone past the 10 s grace forfeits (20 s of pauses per player per match); leaving forfeits at once; both gone calls the match off.
+- **Open playtest mode** (`GATE_MODE=open`): queue with a name, no wallet, nothing written to the database; playtest results and ratings are kept in memory.
+- **Wallet gate** (`GATE_MODE=required`, on the game server): paste a wallet, pass Turnstile, the server sums its $COCK over RPC and prices it (Jupiter v3, or a fixed price on devnet), then issues a 5-minute queue token. Under $30 shows how far off you are with a buy link. Tier from the USD held. Balances are re-checked right before each match.
+- **Matchmaking**: one queue, pairing by RTT (120 ms → 200 ms after 20 s → anyone after 60 s), one ticket per player, clients must run the server's sim rules.
+- **Results**: `record_match()` stores the match (input log, result hash, net quality) and both ELO updates in one transaction; `record_gate()` audits every gate check. ELO K = 32.
+- **Replay page** `/m/<id>`: plays any match back from its input log and marks it ✓ verified when a headless re-run reaches the stored final state and result hash.
+- **Leaderboard** `/leaderboard`: today (UTC), 7 days, all time; ELO, wins, win rate.
+- **Landing page**: the wallet box opens the online lobby; leaderboard link.
+- **`packages/net`**: protocol, `ServerMatch`, `ClientPredictor`, results / ELO, and a simulated-network harness (whole matches between CPU bots at 40–300 ms RTT, jitter, stalls and clock drift).
+- **Tests**: net harness (0 desyncs, 0 snaps at 80 ms, input quality > 0.97 up to 300 ms), game server end to end over real sockets (open and ranked with faked chain / Turnstile / Supabase), SQL functions on PGlite, and a Playwright spec where two browsers meet, one vanishes and forfeits after the grace, and the replay reproduces the match's final hash.
+- **Review fixes**: an adversarial review (3 reviewers: netcode, security, web client) found 30+ issues; all high and medium ones were fixed before the PR (the notable ones are in `docs/decisions.md`: forfeits after a deciding KO, both players dropping, pause budget, stale inputs, lost hit effects after rollbacks, Turnstile in production, tokenless queue seats, body size limit, lobby cancel races, lost connections).
+
 ## Phase 1: the local fighter
 
 - **Phones** (on-screen buttons): a d-pad, PECK and a JUMP / SLAM / DIVE context button feeding the same input bits as the keyboard. Upright, a Game Boy style panel under the fight; sideways, see-through buttons in the corners with the camera keeping the fighters' feet above them. Turning the phone keeps the fight going. The timer pauses (plus PAUSE / SOUND pills upright); a compact HUD for phones held sideways; tighter framing upright; no scroll, zoom or long-press menu while fighting; sound despite the iPhone silent switch. Tested with real multi-finger touches (Chromium, Pixel 7) and on an emulated iPhone in WebKit.

@@ -1,7 +1,7 @@
 import { createServer as createNetServer, type AddressInfo } from "node:net";
 import type { Client as SdkClient, Room as SdkRoom } from "@colyseus/sdk";
 import { ClientPredictor, Msg, decodeFrames, decodeSync } from "@cockfight/net";
-import type { MatchState } from "@cockfight/sim";
+import { RULES, type MatchState } from "@cockfight/sim";
 
 export async function freePort(): Promise<number> {
   const srv = createNetServer();
@@ -30,7 +30,7 @@ export interface Matched {
 
 /** Join the queue and resolve with the "matched" message (or reject on "kicked"). */
 export async function queueUp(sdk: SdkClient, options: Record<string, unknown>): Promise<{ queue: SdkRoom; matched: Promise<Matched> }> {
-  const queue = await sdk.joinOrCreate("queue", options);
+  const queue = await sdk.join("queue", { rules: RULES.hash, ...options });
   const matched = new Promise<Matched>((resolve, reject) => {
     queue.onMessage("matched", (m: Matched) => resolve(m));
     queue.onMessage("kicked", (m: { reason: string; message: string }) => reject(Object.assign(new Error(m.message), { kicked: m })));

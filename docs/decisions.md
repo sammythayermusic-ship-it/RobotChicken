@@ -158,3 +158,67 @@ Sammy asked for the playtest to work on phones, so the spec's Phase 2 mobile con
 | `?debug=1&cpu=idle` stands the CPU still | e2e checks P1's touch input without the CPU hitting P1 mid-check. Ignored without debug. |
 | CI e2e: more time under software GL | CI renders about a frame a second (SwiftShader has no parallel shader compile). The keyboard walk steps the sim inside the page instead of rendering a frame per tick; the six-page quality test gets 240 s; tests get 150 s under software GL; the touch suite runs as its own CI job (`test:e2e:touch`) beside the desktop one (`test:e2e:desktop`). |
 
+
+## Phase 2: online
+
+Agreed with Sammy before the build (2026-09-24): an **open playtest mode** so friends can play online before $COCK exists; **one region (US-East)** to start; **usernames** (message signing) move to Phase 3. ★ = Sammy's call.
+
+### Netcode
+
+| Decision | Why |
+|---|---|
+| ★ Both fighters are predicted and rolled back, not "the opponent interpolated 100 ms behind" | In a fighter, a 100 ms-old opponent means getting hit by moves you never saw start, and hits resolve against positions you weren't shown. The deterministic sim makes rollback cheap: the client keeps the server's confirmed state and re-simulates ~5–10 ticks (a few µs each) when new confirmations arrive. The spec's 2-tick input delay is kept, which keeps rollbacks short. |
+| Own protocol on `packages/net`, not Colyseus' `defineInput` / `Predict` | The client needs the server's exact buttons per tick to re-run the same sim; schema snapshots can't carry the 73-field state (Schema's 63-field cap) and aren't needed when the inputs are. Room metadata (seats, status, result) still uses Schema. |
+| Snapshots: the buttons used, every tick, plus a full-state sync twice a second | "Snapshots must carry the full sim state" (open question): they do, at 2 Hz and on join / resume, as a desync check. Every tick the server sends the two masks it used (6 bytes). A client whose confirmed state differs from a sync adopts the server's (counted; 0 in every test). |
+| Clock: the client runs a tick more or less to keep its inputs ~2 ticks early | The server reports how early each player's inputs arrive; no clock maths, robust to drift (tested at 59.9 vs 60.05 Hz) and jitter. |
+| Tick-ahead limit: 40 ticks, not the spec's "+3" | Open question resolved. A predicting client's inputs arrive ~INPUT_DELAY + 2 ticks early, and the same limit caps how far a client predicts, which has to cover a whole round trip: 40 ticks keeps players up to ~500 ms playable (tested at 300 ms: input quality > 0.97). Far-future inputs are rejected and counted (Phase 3 can flag them). |
+| ★ Corrections up to 3 u blend (at most 0.15 u per frame, over 3–20 frames); only bigger ones snap | The spec says snap above 0.5 u, but a dash moves 0.16 u a tick: every dash the prediction learns about 4 ticks late (80 ms RTT) would teleport the chicken, ~30 times a minute in the harness. Blended, the drawn chicken never moves faster than a dash would, and the harness sees 0 snaps at 80 ms. Presentation only: the sim state is never touched. |
+| Events after a rollback are re-derived tick by tick and deduplicated | A hit the prediction missed still gets its sparks and sound (late); one it already showed doesn't show twice. Only hits, KOs, ring-outs, round / match ends and full Heat are shown late; a late jump or walk is skipped. |
+| A missing input repeats the last one for 15 ticks, then goes neutral | A dead connection is only noticed at the WebSocket ping timeout; until then a held attack would keep swinging. Pings are every 1.5 s with 2 retries (~3–4.5 s to notice, default was 6–9 s). |
+| Net quality = share of fighting ticks with the input on time | Stored per player (`net_quality_p1/p2`); Phase 3 halves / voids payouts from it. |
+| Clients must run the server's sim rules | The queue refuses a client whose `rulesHash` differs ("reload the page"): a stale cached page would desync every sync. |
+
+### Matches
+
+| Decision | Why |
+|---|---|
+| Rooms start when both players have loaded (30 s, else cancelled) | Loading the chicken and compiling shaders takes seconds; the sim's 3 s countdown starts only when both can see it. |
+| ★ A dropped player pauses the match for up to 10 s, out of a 20 s budget per player per match | Spec: "10 s grace then forfeit". The budget stops a player stalling a match by dropping over and over (a malformed message or flooding also drops a client). |
+| Both players gone: the match is off (no result, no ELO) | Unless one comes back while the other's grace has already run out: then the one who came back wins by forfeit. |
+| A forfeit during the 2 s after a deciding KO plays the sim out | The match is already won; walking away from the KO screen mustn't hand it to the loser. |
+| Leaving on purpose forfeits at once | Spec. The result card's "find another match" leaves an over match, which is harmless. |
+| Forfeits record the round they happened in | The database needs 1–5 rounds for a finished match; the forfeit round's winner is the player who stayed. |
+| Results are written once, at the end, by `record_match()` | One transaction: the `matches` row and both ELO updates, locked in address order, idempotent on the match id. The row is not written at match start. |
+| ELO: K = 32, draw = ½, rounded half up, same formula in SQL and TS | A test checks them against each other; a reviewer checked 6,003 cases. |
+| ★ Pasting an address is enough to move its ELO | Anyone can paste someone else's address (≥ $30) and throw matches under it. Harmless for payouts (they go to the holder), but it can move a stranger's rating and leaderboard row until Phase 3's message signing. The queue refuses a second ticket for an address already queued (so a paster can't kick the holder out). |
+| `input_log` is the replay JSON (UTF-8) | Two `{t, b}` arrays, a few KB; `result_hash = sha256(matchId + winner address + log)`, empty address for a draw or a playtest guest. |
+| Open (playtest) matches never touch the database | They'd pollute ELO and the leaderboard. The game server keeps the last 500 matches (all of them) and a playtest rating table in memory, served at `/api/matches/:id` and `/api/leaderboard`, so replays and a leaderboard work with zero env vars. |
+
+### Queue and gate
+
+| Decision | Why |
+|---|---|
+| ★ The wallet gate runs on the game server (`POST /gate`), not in a Vercel API route | The spec wanted the game server to never call Helius, but the match-start re-check needs a balance read anyway. One place for the Helius key, no extra hop for the re-check, and the web app stays a static site (the Netlify playtest keeps working). The 5-minute queue JWT is kept (Turnstile tokens are single use; the tier badge shows before queueing). "Who writes `balance_checks`" (open question): the game server, through `record_gate()`. |
+| No Redis in Phase 2 | One machine keeps the queue, rooms and the 60 s balance cache in memory. A second machine or region needs Redis and per-machine WebSocket routing (the `fly-replay` question); deferred with Sammy's one-region choice. |
+| Price: Jupiter Price v3; a fixed configured price on devnet | No price API quotes a devnet test mint. The spec's bonding-curve quote (the gate takes the lower price) waits for the launchpad decision (Phase 3); `BalanceGate` already takes several sources and uses the lowest. The price is reused for 20 s. |
+| Only passing checks are cached | Someone $2 short who buys can retry at once instead of waiting 60 s. |
+| Off-curve addresses are refused | A program-derived address can't sign; SOL sent there is lost forever. |
+| ★ The match-start re-check lets a match go ahead if the chain can't be read | Availability over strictness: the player passed the gate at most 5 minutes earlier. A re-check that reads below $30 still removes them (told why) and puts the other player back in the queue. |
+| Turnstile is required in production | An unset secret closes the gate (503) instead of falling back to Cloudflare's always-pass test secret; the token's hostname must be one of `ALLOWED_ORIGINS`. |
+| ★ Pairing: 120 ms RTT, 200 ms after 20 s, anyone after 60 s | Spec, plus the last step: in a thin queue nobody should wait forever. Sides are random. Phase 3's anti-abuse rules (≥ 4 in the queue, IP / fingerprint, rematch cooldown) plug into `canPair()`. |
+| One queue room, created at boot; tokens checked at the HTTP matchmaking step | Clients can't create queue or fight rooms, and a seat is only reserved for a valid token (or, open mode, a name). Fight rooms are private. |
+| Request bodies over 16 KB (or unsized) are refused | Colyseus reads bodies into memory with no cap; a few 200 MB posts would take the 1 GB machine down. |
+| `/gate` rate limit: 20 per minute per IP (IPv6 per /64); on Fly only `Fly-Client-IP` counts | `X-Forwarded-For` is whatever the client sends. |
+
+### Web
+
+| Decision | Why |
+|---|---|
+| The engine takes a match driver (local or online) | `OnlineMatch` draws the prediction and samples this player's buttons; everything else (view, director, HUD, audio, touch) is unchanged. Online fights never pause; the on-screen buttons play whichever side this browser has; the back gesture isn't intercepted online. |
+| `NetSession` registers the sim handlers when the fight room is joined | Nothing the server sends is dropped while the fight loads. |
+| The SDK reconnects on its own (from the first second) | Colyseus waits 5 s of uptime by default; a drop in a match's first seconds would otherwise be a forfeit. A connection lost for good shows "connection lost" with a way out. |
+| `/m/<id>` is the static `/m` page | `next start` rewrites it; the static export writes a Netlify `_redirects` rule. The page re-simulates the match headless and shows ✓ verified when it reaches the stored final state and the result hash matches. The OG image / share card is Phase 3 (with share cards). Replays are silent for now. |
+| Ranked replays show both chickens as Rust | `match_replay_v` has no tier column (tiers can change after a match). Playtest replays (from the game server) have their tiers. |
+| The leaderboard shows Supabase's ranked standings when configured, else the playtest ones | One source at a time; the page says which. |
+| The landing page's wallet box opens `/play?mode=online&wallet=…` | The gate itself runs in the lobby (Turnstile, balance, how far from $30, buy link). |
+| The browser doesn't parse the public env with zod | zod 4 probes `new Function("")` on its first parse, a CSP violation (no `'unsafe-eval'`). The server validates the same inlined values at build; the browser applies the defaults (a test keeps them equal). The online e2e now fails on any CSP violation too. |

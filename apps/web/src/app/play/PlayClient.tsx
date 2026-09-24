@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { NetSnapshot } from "@/game/net/session";
 import type { WebGLRenderer } from "three";
 import { RULES, runReplay, type CpuLevel, type Replay } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
@@ -109,6 +110,11 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   /** The online lobby (before a match); `auto` re-queues at once (after a match). */
   const [lobby, setLobby] = useState<{ auto: boolean } | null>(params.mode === "online" ? { auto: false } : null);
   const net = cfg?.net ?? null;
+  const netSnap = useSyncExternalStore<NetSnapshot | null>(
+    net ? net.subscribe : noSubscribe,
+    () => (net ? net.snapshot() : null),
+    () => null,
+  );
   // An online match is left (a forfeit if it is still on) when its fight screen goes away.
   useEffect(() => {
     if (!net) return;
@@ -306,9 +312,11 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   // match), back leaves as usual. Next's router copies its own state into
   // the entry, so going back restores the same page without a reload.
   const touchFight = touchMode && (cfg?.mode === "cpu" || cfg?.mode === "online");
+  // The back gesture pauses a CPU fight; an online fight can't pause, so back leaves as usual.
+  const backGuard = touchMode && cfg?.mode === "cpu";
   const guard = useRef(false);
   useEffect(() => {
-    if (!touchFight) return;
+    if (!backGuard) return;
     const arm = () => {
       if (guard.current) return;
       window.history.pushState(null, "");
@@ -336,7 +344,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
       window.removeEventListener("popstate", onPop);
       off();
     };
-  }, [touchFight, hud, uiSound]);
+  }, [backGuard, hud, uiSound]);
 
   /**
    * The next fight (REMATCH, RESTART, R). One per press: until the new fight
@@ -386,6 +394,8 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   const touch = touchFight;
   const online = cfg.mode === "online";
   const ended = cold.matchWinner >= 0 && !online;
+  // An online match that's over (or off, or lost): the result card takes the taps, not the fight controls.
+  const netDone = !!netSnap && (netSnap.status === "over" || netSnap.status === "cancelled" || netSnap.lost);
   return (
     <main
       className="fight-screen fixed inset-0 touch-none overflow-hidden overscroll-none bg-black text-white"
@@ -422,7 +432,19 @@ export default function PlayClient({ params }: { params: PlayParams }) {
         ) : null}
         {cold.error ? (
           <div className="absolute inset-0 grid place-items-center bg-black/80 p-6 text-center text-red-300" role="alert">
-            {cold.error}
+            <div className="flex flex-col items-center gap-3">
+              <p>{cold.error}</p>
+              {online ? (
+                <div className="flex gap-2">
+                  <button type="button" className="rounded-lg bg-amber-400 px-4 py-2 font-display text-black" onClick={requeue}>
+                    FIND ANOTHER MATCH
+                  </button>
+                  <Link href="/" className="rounded-lg border border-zinc-600 px-4 py-2 font-display text-zinc-200">
+                    HOME
+                  </Link>
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </div>
@@ -430,7 +452,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
         <TouchControls
           engine={engine}
           hud={hud}
-          active={!!engine && !cold.loading && !cold.error && !cold.paused && !ended}
+          active={!!engine && !cold.loading && !cold.error && !cold.paused && !ended && !netDone}
           area={fightArea}
           onPause={togglePause}
           muted={muted}

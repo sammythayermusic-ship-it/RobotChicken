@@ -11,7 +11,7 @@ import { BalanceGate, FixedPrice, JupiterPrice, RpcBalanceReader, isWalletAddres
 import type { GameEnv } from "@cockfight/shared/env";
 import type { Tier } from "@cockfight/shared";
 import { QueueTokens } from "./token";
-import { verifyTurnstile } from "./turnstile";
+import { TURNSTILE_TEST_SECRET, verifyTurnstile } from "./turnstile";
 import type { SupabaseStore } from "./results";
 
 export type GateMode = "open" | "required";
@@ -39,6 +39,10 @@ export class GateService {
   private readonly supabase: SupabaseStore | null;
   private readonly f: typeof fetch;
   private readonly hits = new Map<string, number[]>();
+  /** Null: Turnstile isn't configured (production without a secret), so the gate stays shut. */
+  private readonly turnstileSecret: string | null;
+  /** In production, the hostnames a Turnstile token must come from (the web app's). */
+  private readonly turnstileHosts: string[] | undefined;
 
   constructor(env: GameEnv, supabase: SupabaseStore | null, f: typeof fetch = fetch, balance?: BalanceGate | null) {
     this.env = env;
@@ -47,6 +51,8 @@ export class GateService {
     this.f = f;
     this.tokens = new QueueTokens(env.QUEUE_JWT_SECRET);
     this.balance = balance === undefined ? buildBalanceGate(env, f) : balance;
+    this.turnstileSecret = env.TURNSTILE_SECRET_KEY ?? (env.NODE_ENV === "production" ? null : TURNSTILE_TEST_SECRET);
+    this.turnstileHosts = env.NODE_ENV === "production" && env.TURNSTILE_SECRET_KEY ? env.ALLOWED_ORIGINS.map((o) => new URL(o).hostname) : undefined;
   }
 
   config(): GateConfig {
@@ -66,7 +72,8 @@ export class GateService {
     const b = (typeof body === "object" && body !== null ? body : {}) as { address?: unknown; turnstile?: unknown };
     const address = typeof b.address === "string" ? b.address.trim() : "";
     if (!isWalletAddress(address)) return fail(400, "address", "That isn't a Solana wallet address.");
-    if (!(await verifyTurnstile(this.env.TURNSTILE_SECRET_KEY, b.turnstile, ip, this.f))) {
+    if (!this.turnstileSecret) return fail(503, "not_configured", "The wallet gate isn't set up on this server yet.");
+    if (!(await verifyTurnstile(this.turnstileSecret, b.turnstile, ip, this.f, this.turnstileHosts))) {
       return fail(403, "turnstile", "The bot check failed. Try again.");
     }
     if (!this.balance) return fail(503, "not_configured", "The wallet gate isn't set up on this server yet.");
@@ -109,9 +116,9 @@ export class GateService {
     }
   }
 
-  /** 20 checks per IP per minute. */
+  /** 20 checks per IP (IPv6: per /64) per minute. */
   private allow(ip: string | null): boolean {
-    const key = ip ?? "?";
+    const key = ipBucket(ip);
     const now = Date.now();
     const recent = (this.hits.get(key) ?? []).filter((t) => now - t < 60_000);
     if (recent.length >= 20) {
@@ -120,7 +127,10 @@ export class GateService {
     }
     recent.push(now);
     this.hits.set(key, recent);
-    if (this.hits.size > 50_000) this.hits.clear();
+    if (this.hits.size > 20_000) {
+      // Forget idle IPs only; active limits stay in force.
+      for (const [k, v] of this.hits) if (v.every((t) => now - t >= 60_000)) this.hits.delete(k);
+    }
     return true;
   }
 }
@@ -142,13 +152,26 @@ function heliusUrl(cluster: string, key: string): string {
   return `https://${host}/?api-key=${encodeURIComponent(key)}`;
 }
 
-/** The player's IP as Fly's proxy reports it (or the first forwarded hop). */
-export function clientIp(headers: Headers): string | null {
+/**
+ * The player's IP. On Fly (FLY_APP_NAME is set) only Fly-Client-IP counts:
+ * Fly's proxy sets it, while X-Forwarded-For can carry whatever the client
+ * sent. Elsewhere (local dev, tests) the first forwarded hop is used.
+ */
+export function clientIp(headers: Headers, onFly: boolean = !!process.env.FLY_APP_NAME): string | null {
   const fly = headers.get("fly-client-ip");
   if (fly) return fly.trim();
+  if (onFly) return null;
   const fwd = headers.get("x-forwarded-for");
   if (fwd) return (fwd.split(",")[0] ?? "").trim() || null;
   return null;
+}
+
+/** Rate-limit key: the IPv4 address, or the /64 of an IPv6 one (one customer usually gets a whole /64). */
+export function ipBucket(ip: string | null): string {
+  if (!ip) return "?";
+  if (!ip.includes(":")) return ip;
+  const parts = ip.split("::")[0]!.split(":");
+  return `${parts.slice(0, 4).join(":")}::/64`;
 }
 
 const round2 = (x: number) => Math.floor(x * 100) / 100;

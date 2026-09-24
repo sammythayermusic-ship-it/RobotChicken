@@ -10,6 +10,13 @@ import { MAX_LEAD, type InputBatch } from "./protocol";
 
 const RING = 64; // > MAX_LEAD + INPUT_DELAY, a power of two
 const MASK = RING - 1;
+/**
+ * After this many missing ticks in a row a player's buttons go neutral
+ * instead of repeating: a connection that died silently (a phone switching
+ * networks) is only noticed at the transport's ping timeout, and until then
+ * a held attack would keep swinging on its own.
+ */
+export const STALE_AFTER = 15;
 
 export interface SideStats {
   /** Input ticks accepted. */
@@ -40,6 +47,8 @@ export class ServerMatch {
   private readonly early: [Int8Array, Int8Array] = [new Int8Array(RING), new Int8Array(RING)];
   /** Buttons used on the previous tick (repeated when an input is missing). */
   private readonly last: [number, number] = [0, 0];
+  /** Consecutive ticks each player's input was missing. */
+  private readonly missRun: [number, number] = [0, 0];
   /** Buttons used per tick (index = tick - 1): the replay log. */
   private readonly log: [number[], number[]] = [[], []];
   /** Smallest margin since the last takeMargin() (-1 = something was missing). */
@@ -94,8 +103,10 @@ export class ServerMatch {
         b[side] = this.masks[side][k] as number;
         this.minMargin[side] = Math.min(this.minMargin[side], this.early[side][k] as number);
         this.tags[side][k] = -1;
+        this.missRun[side] = 0;
       } else {
-        b[side] = this.last[side];
+        this.missRun[side]++;
+        b[side] = this.missRun[side] > STALE_AFTER ? 0 : this.last[side];
         this.minMargin[side] = -1;
         if (fighting) this.stats[side].missed++;
       }

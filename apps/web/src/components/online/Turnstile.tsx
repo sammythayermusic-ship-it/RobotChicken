@@ -23,7 +23,13 @@ function loadTurnstile(): Promise<TurnstileApi> {
     const s = document.createElement("script");
     s.src = SRC;
     s.async = true;
-    s.onload = () => (window.turnstile ? resolve(window.turnstile) : reject(new Error("turnstile failed to load")));
+    s.onload = () => {
+      if (window.turnstile) resolve(window.turnstile);
+      else {
+        loading = null;
+        reject(new Error("turnstile failed to load"));
+      }
+    };
     s.onerror = () => {
       loading = null;
       reject(new Error("turnstile failed to load"));
@@ -38,11 +44,13 @@ function loadTurnstile(): Promise<TurnstileApi> {
  * `onToken` with a single-use token, or null when it expires or fails. Mount
  * it again (a new `key`) for a fresh token.
  */
-export function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (t: string | null) => void }) {
+export function Turnstile({ siteKey, onToken, onError }: { siteKey: string; onToken: (t: string | null) => void; onError?: () => void }) {
   const box = useRef<HTMLDivElement>(null);
   const cb = useRef(onToken);
+  const errCb = useRef(onError);
   useEffect(() => {
     cb.current = onToken;
+    errCb.current = onError;
   });
   useEffect(() => {
     let id: string | null = null;
@@ -55,10 +63,16 @@ export function Turnstile({ siteKey, onToken }: { siteKey: string; onToken: (t: 
           theme: "dark",
           callback: (t: string) => cb.current(t),
           "expired-callback": () => cb.current(null),
-          "error-callback": () => cb.current(null),
+          "error-callback": () => {
+            cb.current(null);
+            errCb.current?.();
+          },
         });
       })
-      .catch(() => cb.current(null));
+      .catch(() => {
+        cb.current(null);
+        errCb.current?.();
+      });
     return () => {
       alive = false;
       if (id && window.turnstile) window.turnstile.remove(id);

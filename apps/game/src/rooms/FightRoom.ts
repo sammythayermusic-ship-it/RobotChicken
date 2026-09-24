@@ -8,21 +8,28 @@
  * - Clients send buttons (binary Msg.input); every tick the room sends each
  *   client the buttons it used for both players (Msg.frames) and, twice a
  *   second, the full sim state (Msg.sync) as a desync check.
- * - A dropped player pauses the sim for up to RECONNECT_GRACE_S seconds.
- *   Coming back resumes from a full sync; not coming back forfeits the match
- *   to the player still here. Leaving on purpose forfeits at once.
+ * - A dropped player pauses the sim. They get RECONNECT_GRACE_S seconds to
+ *   come back, out of a PAUSE_BUDGET_S budget for the whole match (so a
+ *   player can't stall a match by dropping over and over). Coming back
+ *   resumes from a full sync; not coming back forfeits the match to the
+ *   player still here. Leaving on purpose forfeits at once.
+ * - Both players gone: the match is off (no result). If one of them comes
+ *   back while the other's grace has run out, the one who came back wins.
+ * - A forfeit while the sim is between rounds (the 2 s after a KO) first
+ *   plays the sim to the end of that pause: if that round already decided the
+ *   match, the result stands as the sim decided it.
  * - The queue creates these rooms (with ROOM_KEY) and reserves both seats.
  *   Outside production with the open gate, a room created without the key is
  *   an ad hoc room anyone can join by id (tests, /dev/net).
  */
 import { randomUUID } from "node:crypto";
-import { logger, Room, type Client, type RoomException, type RoomMethodName } from "@colyseus/core";
+import { logger, Room, type AuthContext, type Client, type RoomException, type RoomMethodName } from "@colyseus/core";
 import {
   Msg, SYNC_EVERY, ServerMatch, decodeInputs, encodeFrames, encodeReplayLog, encodeSync, forfeitRound, outcome, resultHash, roundEnded,
   type RoundRecord,
 } from "@cockfight/net";
 import { RECONNECT_GRACE_S, SNAPSHOT_HZ, TICK_RATE } from "@cockfight/shared";
-import { serialize, type MatchState } from "@cockfight/sim";
+import { Phase, serialize, type MatchState } from "@cockfight/sim";
 import { getContext } from "../context";
 import { withRetry, type MatchRecord } from "../results";
 import { ROOM_KEY, cleanName, type FightOptions, type PlayerInfo, type SeatAuth } from "../seats";
@@ -32,8 +39,15 @@ import { FightState, Seat } from "../state";
 export const READY_TIMEOUT_S = 30;
 /** A finished room stays up this long (KO screen, result) before closing. */
 export const LINGER_S = 60;
+/** Total pause time each player may cause in one match. */
+export const PAUSE_BUDGET_S = 20;
 
 type Status = "waiting" | "live" | "paused" | "over" | "cancelled";
+
+/** Seat data for a player in an ad hoc room (assigned a side on join). */
+interface GuestAuth {
+  guest: string;
+}
 
 export class FightRoom extends Room<{ state: FightState }> {
   override maxClients = 2;
@@ -47,14 +61,27 @@ export class FightRoom extends Room<{ state: FightState }> {
   #players: [PlayerInfo | null, PlayerInfo | null] = [null, null];
   #adhoc = false;
   #clients: [Client | null, Client | null] = [null, null];
-  /** Sides whose player dropped and may still come back. */
-  #away = new Set<0 | 1>();
+  /** Sides whose player dropped and may still come back: when their grace ends (ms). */
+  #away = new Map<0 | 1, number>();
+  #dropAt: [number, number] = [0, 0];
+  /** Pause time each side has left (ms). */
+  #budget: [number, number] = [PAUSE_BUDGET_S * 1000, PAUSE_BUDGET_S * 1000];
   /** Sides whose player is gone for good (left, or the grace ran out). */
   #gone = new Set<0 | 1>();
   #rounds: RoundRecord[] = [];
   #startedAt = new Date();
-  #pauseEndsAt = 0;
-  #finishing = false;
+  #finishing: Promise<void> | null = null;
+
+  /**
+   * Matchmaking requests from clients (join by id, create). Seats come from
+   * the queue (reserved server-side, which skips this); only an ad hoc dev
+   * room may be joined directly.
+   */
+  static override async onAuth(_token: string, options: { name?: unknown } | undefined, _ctx: AuthContext): Promise<GuestAuth> {
+    const { env } = getContext();
+    if (env.NODE_ENV === "production" || env.GATE_MODE === "required") throw new Error("matches are joined through the queue");
+    return { guest: cleanName(options?.name) ?? "" };
+  }
 
   /** Current sim state (tests). */
   get sim(): MatchState | undefined {
@@ -81,6 +108,8 @@ export class FightRoom extends Room<{ state: FightState }> {
     }
     const matchId = seated ? (options.matchId as string) : randomUUID();
     this.roomId = matchId;
+    // Never offered to a client's joinOrCreate: seats are reserved by the queue.
+    if (seated) void this.setPrivate(true);
     this.#sm = new ServerMatch(matchId);
     this.state.matchId = matchId;
     this.state.ranked = seated ? !!options.ranked : false;
@@ -122,21 +151,17 @@ export class FightRoom extends Room<{ state: FightState }> {
     this.clock.setInterval(() => this.#countPause(), 250);
   }
 
-  override onAuth(client: Client, options: { name?: unknown } | undefined): SeatAuth | true {
-    const auth = client.auth as SeatAuth | undefined;
-    if (auth && (auth.side === 0 || auth.side === 1) && auth.player) return true;
-    if (!this.#adhoc) throw new Error("this match is for its two players only");
-    // Ad hoc room: first free seat, a guest identity.
-    const side = this.#players[0] === null ? 0 : this.#players[1] === null ? 1 : null;
-    if (side === null) throw new Error("room is full");
-    const player: PlayerInfo = { id: `guest:${client.sessionId}`, address: null, name: cleanName(options?.name) ?? `P${side + 1}`, tier: "rust" };
-    this.#players[side] = player;
-    const seat = this.state.seats[side] as Seat;
-    seat.name = player.name;
-    return { side, player };
-  }
-
   override onJoin(client: Client): void {
+    const auth = client.auth as SeatAuth | GuestAuth;
+    if ("guest" in auth) {
+      // Ad hoc room: first free seat, a guest identity.
+      const side = this.#players[0] === null ? 0 : this.#players[1] === null ? 1 : null;
+      if (side === null) throw new Error("room is full");
+      const player: PlayerInfo = { id: `guest:${client.sessionId}`, address: null, name: auth.guest || `P${side + 1}`, tier: "rust" };
+      this.#players[side] = player;
+      (this.state.seats[side] as Seat).name = player.name;
+      client.auth = { side, player } satisfies SeatAuth;
+    }
     const { side } = client.auth as SeatAuth;
     this.#clients[side] = client;
     (this.state.seats[side] as Seat).connected = true;
@@ -149,10 +174,23 @@ export class FightRoom extends Room<{ state: FightState }> {
     (this.state.seats[side] as Seat).connected = false;
     this.#clients[side] = null;
     if (this.status === "over" || this.status === "cancelled") return;
-    this.#away.add(side);
+    // Between rounds after the deciding KO, the match is already won: finish it.
+    if (this.status === "live" && this.#sm.state.phase === Phase.roundEnd) {
+      this.#playOutRoundEnd();
+      if (this.#sm.over) return;
+    }
+    const now = Date.now();
+    const graceMs = this.status === "waiting" ? RECONNECT_GRACE_S * 1000 : Math.min(RECONNECT_GRACE_S * 1000, this.#budget[side]);
+    if (graceMs < 1000) {
+      this.#leftForGood(side);
+      return;
+    }
+    this.#away.set(side, now + graceMs);
+    this.#dropAt[side] = now;
     if (this.status === "live") this.#pause();
+    this.#countPause();
     try {
-      await this.allowReconnection(client, RECONNECT_GRACE_S);
+      await this.allowReconnection(client, Math.ceil(graceMs / 1000));
     } catch {
       this.#away.delete(side);
       this.#leftForGood(side);
@@ -162,11 +200,21 @@ export class FightRoom extends Room<{ state: FightState }> {
   override onReconnect(client: Client): void {
     const side = this.#sideOf(client);
     if (side === null) return;
+    if (this.#away.has(side) && this.status !== "waiting") this.#budget[side] = Math.max(0, this.#budget[side] - (Date.now() - this.#dropAt[side]));
     this.#clients[side] = client;
     this.#away.delete(side);
     (this.state.seats[side] as Seat).connected = true;
-    if (this.status === "paused" && this.#away.size === 0) this.#resume();
-    else if (this.status === "live") client.sendBytes(Msg.sync, this.#syncBytes());
+    const other: 0 | 1 = side === 0 ? 1 : 0;
+    if ((this.status === "live" || this.status === "paused") && this.#gone.has(other)) {
+      // The other player's grace ran out while this one was away: this one wins.
+      this.#forfeitTo(side);
+    } else if (this.status === "paused" && this.#away.size === 0) {
+      this.#resume();
+    } else if (this.status === "live" || this.status === "paused") {
+      client.sendBytes(Msg.sync, this.#syncBytes());
+    } else if (this.status === "waiting") {
+      this.#maybeStart();
+    }
   }
 
   override onLeave(client: Client): void {
@@ -181,32 +229,28 @@ export class FightRoom extends Room<{ state: FightState }> {
   }
 
   override onBeforeShutdown(): void {
-    // Let a live match finish (fly.toml's kill_timeout is 300 s); close everything else now.
-    if (this.status === "live" || this.status === "paused") {
-      this.clock.setInterval(() => {
-        if (this.status !== "live" && this.status !== "paused") void this.disconnect();
-      }, 1000);
+    // Let a live match finish and its result be stored (fly.toml's kill_timeout
+    // is 300 s); close everything else now.
+    const settled = () => this.status === "cancelled" || (this.status === "over" && this.state.recorded) || this.status === "waiting";
+    if (settled()) {
+      if (this.status === "waiting") this.#cancel("server restarting");
+      void this.disconnect();
       return;
     }
-    void this.disconnect();
+    this.clock.setInterval(() => {
+      if (settled()) void this.disconnect();
+    }, 500);
+  }
+
+  /** Colyseus waits for this before it lets the process exit: the result gets stored first. */
+  override async onDispose(): Promise<void> {
+    await this.#finishing?.catch(() => {});
   }
 
   /** Advance one tick (only while live). */
   protected tick(): void {
     if (this.status !== "live") return;
-    const prev = this.#sm.state;
-    const out = this.#sm.step();
-    const next = this.#sm.state;
-    const round = roundEnded(prev, next);
-    if (round) this.#rounds.push(round);
-    this.#mirror(next);
-    for (const side of [0, 1] as const) {
-      const c = this.#clients[side];
-      const margin = this.#sm.takeMargin(side);
-      c?.sendBytes(Msg.frames, encodeFrames({ first: out.tick, b1: [out.b1], b2: [out.b2], margin }));
-    }
-    if (out.tick % SYNC_EVERY === 0) this.#broadcastSync();
-    if (this.#sm.over) void this.#finish();
+    this.#advance();
   }
 
   /**
@@ -226,6 +270,29 @@ export class FightRoom extends Room<{ state: FightState }> {
     }
   }
 
+  /** One sim step: record a finished round, tell both clients, sync, finish at the end. */
+  #advance(): void {
+    const prev = this.#sm.state;
+    const out = this.#sm.step();
+    const next = this.#sm.state;
+    const round = roundEnded(prev, next);
+    if (round) this.#rounds.push(round);
+    this.#mirror(next);
+    for (const side of [0, 1] as const) {
+      const c = this.#clients[side];
+      const margin = this.#sm.takeMargin(side);
+      c?.sendBytes(Msg.frames, encodeFrames({ first: out.tick, b1: [out.b1], b2: [out.b2], margin }));
+    }
+    if (out.tick % SYNC_EVERY === 0) this.#broadcastSync();
+    if (this.#sm.over) void this.#finish();
+  }
+
+  /** Step through the pause after a round (inputs don't matter there) to see whether the match is decided. */
+  #playOutRoundEnd(): void {
+    let guard = 1000;
+    while (this.#sm.state.phase === Phase.roundEnd && !this.#sm.over && guard-- > 0) this.#advance();
+  }
+
   #sideOf(client: Client): 0 | 1 | null {
     const a = client.auth as SeatAuth | undefined;
     return a && (a.side === 0 || a.side === 1) ? a.side : null;
@@ -241,7 +308,6 @@ export class FightRoom extends Room<{ state: FightState }> {
 
   #pause(): void {
     this.state.status = "paused";
-    this.#pauseEndsAt = Date.now() + RECONNECT_GRACE_S * 1000;
     this.#countPause();
   }
 
@@ -253,35 +319,65 @@ export class FightRoom extends Room<{ state: FightState }> {
 
   #countPause(): void {
     if (this.status !== "paused") return;
-    this.state.pauseLeft = Math.max(0, Math.ceil((this.#pauseEndsAt - Date.now()) / 1000));
+    let end = 0;
+    for (const t of this.#away.values()) end = Math.max(end, t);
+    this.state.pauseLeft = Math.max(0, Math.ceil((end - Date.now()) / 1000));
   }
 
-  /** A player is gone for good: the other wins by forfeit (if the match was on), or the match is off. */
+  /** A player is gone for good: the other wins by forfeit, unless they're away too (then wait) or gone (then it's off). */
   #leftForGood(side: 0 | 1): void {
     if (this.#gone.has(side)) return;
     this.#gone.add(side);
+    this.#away.delete(side);
     const other: 0 | 1 = side === 0 ? 1 : 0;
     if (this.status === "waiting") {
       this.#cancel("opponent left");
-    } else if (this.status === "live" || this.status === "paused") {
-      if (this.#gone.has(other)) this.#cancel("both players left");
-      else void this.#finish(other);
+      return;
     }
+    if (this.status !== "live" && this.status !== "paused") return;
+    if (this.#gone.has(other)) {
+      this.#cancel("both players left");
+      return;
+    }
+    if (this.#away.has(other)) {
+      // Both are away: whoever comes back wins (onReconnect); if neither does, it's off.
+      this.#countPause();
+      return;
+    }
+    this.#forfeitTo(other);
+  }
+
+  /** `winner` wins by forfeit, unless the match is already decided (the pause after a deciding KO). */
+  #forfeitTo(winner: 0 | 1): void {
+    if (this.#sm.state.phase === Phase.roundEnd) {
+      this.#playOutRoundEnd();
+      if (this.#sm.over) return;
+    }
+    void this.#finish(winner);
   }
 
   #cancel(reason: string): void {
     if (this.status === "over" || this.status === "cancelled") return;
     this.state.status = "cancelled";
     this.state.reason = reason;
+    this.state.pauseLeft = 0;
     this.clock.setTimeout(() => void this.disconnect(), 5000);
   }
 
-  async #finish(forfeitWinner?: 0 | 1): Promise<void> {
-    if (this.#finishing) return;
-    this.#finishing = true;
+  #finish(forfeitWinner?: 0 | 1): Promise<void> {
+    if (!this.#finishing) this.#finishing = this.#record(forfeitWinner);
+    return this.#finishing;
+  }
+
+  async #record(forfeitWinner?: 0 | 1): Promise<void> {
     const s = this.#sm.state;
     const rounds = [...this.#rounds];
-    if (forfeitWinner !== undefined) rounds.push(forfeitRound(s, forfeitWinner));
+    // A forfeit records the round it happened in (never a round already recorded).
+    if (forfeitWinner !== undefined) {
+      const r = forfeitRound(s, forfeitWinner);
+      if (rounds.some((x) => x.n === r.n)) r.n = Math.min(5, r.n + 1);
+      if (rounds.length < 5) rounds.push(r);
+    }
     const res = outcome(s, rounds, forfeitWinner);
     this.state.status = "over";
     this.state.pauseLeft = 0;

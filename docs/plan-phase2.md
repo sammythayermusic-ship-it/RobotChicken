@@ -17,9 +17,9 @@ match exactly.
   so friends can play online before $COCK exists. Open-mode matches never
   touch the database (no ELO, no leaderboard rows). Production defaults to
   `GATE_MODE=required`.
-- **One region (US-East) to start.** Multi-region stays a config change: the
-  client RTT-probes every URL in `NEXT_PUBLIC_GAME_WS_URL` (comma-separated)
-  and queues on the fastest.
+- **One region (US-East) to start.** A second region (or machine) needs Redis
+  and per-machine WebSocket routing first; the client already takes the server
+  from `NEXT_PUBLIC_GAME_WS_URL`.
 - **Usernames (message signing) move to Phase 3**, with profiles. Phase 2 shows
   `anon-XXXX`.
 - Accounts to deploy: Fly.io, Supabase, Helius + Turnstile. Nothing is needed

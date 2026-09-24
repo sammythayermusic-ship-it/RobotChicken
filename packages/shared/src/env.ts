@@ -60,8 +60,12 @@ export const gameEnv = z.object({
    * price API quotes a devnet test mint. Ignored on mainnet.
    */
   GATE_FIXED_PRICE_USD: z.coerce.number().positive().optional(),
-  // Cloudflare's documented always-pass test secret; production must override it.
-  TURNSTILE_SECRET_KEY: z.string().default("1x0000000000000000000000000000000AA"),
+  /**
+   * Turnstile secret. Outside production it defaults to Cloudflare's
+   * always-pass test secret; in production an unset secret closes the gate
+   * (POST /gate answers 503) rather than silently skipping the bot check.
+   */
+  TURNSTILE_SECRET_KEY: z.string().optional(),
 });
 /** Parsed game env; GATE_MODE is resolved from NODE_ENV when unset. */
 export type GameEnv = Omit<z.infer<typeof gameEnv>, "GATE_MODE"> & { GATE_MODE: "open" | "required" };

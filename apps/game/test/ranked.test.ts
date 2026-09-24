@@ -5,7 +5,7 @@
  */
 import { matchMaker } from "@colyseus/core";
 import { ColyseusTestServer } from "@colyseus/testing";
-import { B, Phase } from "@cockfight/sim";
+import { B, Phase, RULES } from "@cockfight/sim";
 import { loadGameEnv } from "@cockfight/shared/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FightRoom } from "../src/rooms/FightRoom";
@@ -108,9 +108,12 @@ describe("POST /gate", () => {
   });
 
   it("the open-mode name path and ad hoc fight rooms are closed", async () => {
-    await expect(colyseus.sdk.joinOrCreate("queue", { name: "Freeloader" })).rejects.toThrow(/token/);
-    await expect(colyseus.sdk.joinOrCreate("queue", { token: "e30.e30.bad" })).rejects.toThrow(/token/);
+    await expect(colyseus.sdk.join("queue", { name: "Freeloader", rules: RULES.hash })).rejects.toThrow(/token/);
+    await expect(colyseus.sdk.join("queue", { token: "e30.e30.bad", rules: RULES.hash })).rejects.toThrow(/token/);
     await expect(colyseus.sdk.create("fight", { name: "Sneaky" })).rejects.toThrow();
+    // The HTTP matchmaking step itself refuses (no seat is reserved for a tokenless request).
+    const res = await fetch(`${base}/matchmake/join/queue`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rules: RULES.hash }) });
+    expect(res.status).not.toBe(200);
   });
 });
 

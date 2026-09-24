@@ -9,7 +9,7 @@
  * process runs one server in production. The rooms' services (gate, result
  * stores) follow the same rule (context.ts).
  */
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createEndpoint, createRouter, defineRoom, defineServer, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { loadGameEnv, type GameEnv } from "@cockfight/shared/env";
@@ -17,7 +17,8 @@ import { buildContext, setContext, type ContextOverrides, type GameContext } fro
 import { clientIp } from "./gate";
 import { originPolicy } from "./origins";
 import { FightRoom } from "./rooms/FightRoom";
-import { QueueRoom } from "./rooms/QueueRoom";
+import { QUEUE_ROOM, QueueRoom } from "./rooms/QueueRoom";
+import { ROOM_KEY } from "./seats";
 
 export interface MakeServerOptions {
   /** Parsed environment. Defaults to `loadGameEnv(process.env)`. */
@@ -91,9 +92,11 @@ export function makeServer(opts: MakeServerOptions = {}) {
     // Explicit transport over our own http.Server: without one, core falls back
     // to a dynamic import("@colyseus/ws-transport"), which a single-file bundle
     // with no node_modules cannot resolve.
-    transport: new WebSocketTransport({ server: createServer(), beforeUpgrade: origins.beforeUpgrade }),
+    // Pings every 1.5 s with 2 retries: a dead connection is noticed (and the
+    // match paused) in about 3-4.5 s instead of the default 6-9 s.
+    transport: new WebSocketTransport({ server: createServer(), beforeUpgrade: origins.beforeUpgrade, pingInterval: 1500, pingMaxRetries: 2 }),
     rooms: {
-      queue: defineRoom(QueueRoom),
+      [QUEUE_ROOM]: defineRoom(QueueRoom),
       fight: defineRoom(FightRoom),
     },
     // Colyseus' own router (no Express app is mounted); the matchmaking routes are added at listen().
@@ -122,4 +125,33 @@ export async function listen(server: GameServer, port: number, hostname: string)
   } finally {
     if (onError) http.off("error", onError);
   }
+  limitBodies(http);
+  // The one queue room (clients can't create queue rooms).
+  await matchMaker.createRoom(QUEUE_ROOM, { key: ROOM_KEY });
+}
+
+/** Largest request body accepted (the gate's JSON and matchmaking options are tiny). */
+export const MAX_BODY_BYTES = 16 * 1024;
+
+/**
+ * Colyseus reads every request body into memory with no cap: refuse big or
+ * unsized (chunked) bodies before any of its handlers run.
+ */
+function limitBodies(http: HttpServer): void {
+  const handlers = http.listeners("request") as ((req: IncomingMessage, res: ServerResponse) => void)[];
+  http.removeAllListeners("request");
+  http.on("request", (req: IncomingMessage, res: ServerResponse) => {
+    const method = req.method ?? "GET";
+    if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      const len = req.headers["content-length"];
+      const n = len === undefined ? NaN : Number(len);
+      if (req.headers["transfer-encoding"] !== undefined || !Number.isFinite(n) || n > MAX_BODY_BYTES) {
+        res.writeHead(len === undefined ? 411 : 413, { "content-type": "text/plain", connection: "close" });
+        res.end(len === undefined ? "length required" : "body too large");
+        req.destroy();
+        return;
+      }
+    }
+    for (const h of handlers) h.call(http, req, res);
+  });
 }

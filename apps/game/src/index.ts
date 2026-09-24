@@ -17,6 +17,15 @@ if (env.GATE_MODE === "required" && (!env.NEXT_PUBLIC_COCK_MINT || !(env.HELIUS_
 if (env.GATE_MODE === "required" && !env.QUEUE_JWT_SECRET) {
   console.warn("[game] QUEUE_JWT_SECRET is unset: queue tokens use a per-process secret (fine for one machine; set it before running two).");
 }
+if (env.GATE_MODE === "required" && env.NODE_ENV === "production" && !env.TURNSTILE_SECRET_KEY) {
+  console.warn("[game] TURNSTILE_SECRET_KEY is unset: POST /gate answers 503 (the bot check can't be skipped in production).");
+}
+if (env.GATE_FIXED_PRICE_USD && env.SOLANA_CLUSTER !== "mainnet-beta") {
+  console.warn(`[game] the gate prices $COCK at a FIXED $${env.GATE_FIXED_PRICE_USD} per token (GATE_FIXED_PRICE_USD, cluster ${env.SOLANA_CLUSTER}). Test setups only.`);
+}
+if (env.SOLANA_CLUSTER === "mainnet-beta" && !env.JUPITER_API_KEY) {
+  console.warn("[game] JUPITER_API_KEY is unset: Jupiter Price v3 may refuse requests without a key.");
+}
 if (env.GATE_MODE === "required" && !(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY)) {
   console.warn("[game] Supabase is not configured: ranked results are kept in memory only.");
 }

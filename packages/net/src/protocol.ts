@@ -29,9 +29,11 @@ export { INPUT_DELAY } from "@cockfight/shared";
  * Inputs for a tick more than this far ahead of the server are rejected. The
  * spec's "+3" cannot hold a predicting client: at 80 ms RTT its inputs arrive
  * about 2 + INPUT_DELAY ticks early, and jitter spikes need room above that.
- * 20 ticks (333 ms) still stops a sped-up client from running far ahead.
+ * It also caps how far a client predicts (MAX_PREDICT), which has to cover a
+ * whole round trip: 40 ticks (667 ms) keeps players up to ~500 ms RTT
+ * playable while still stopping a sped-up client from running far ahead.
  */
-export const MAX_LEAD = 20;
+export const MAX_LEAD = 40;
 /** Most ticks one input message may carry (a client catching up after a stall). */
 export const MAX_INPUT_BATCH = 32;
 /** The server sends a full-state sync every this many ticks (twice a second). */

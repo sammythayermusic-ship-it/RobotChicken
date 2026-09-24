@@ -10,6 +10,7 @@
  *   those at /api/matches/:id and /api/leaderboard, so replays and the
  *   leaderboard work with zero env vars.
  */
+import { createHash } from "node:crypto";
 import { ELO_START, eloUpdate, type MatchReason, type RoundRecord } from "@cockfight/net";
 import type { Tier } from "@cockfight/shared";
 import type { PlayerInfo } from "./seats";
@@ -89,6 +90,7 @@ interface MemPlayer {
 export class MemoryStore implements RatingStore {
   private readonly players = new Map<string, MemPlayer>();
   private readonly matches = new Map<string, PublicMatch>();
+  private readonly recorded = new Set<string>();
   private readonly now: () => number;
 
   constructor(now: () => number = Date.now) {
@@ -123,8 +125,6 @@ export class MemoryStore implements RatingStore {
     return [[before[0], after[0]], [before[1], after[1]]];
   }
 
-  private readonly recorded = new Set<string>();
-
   /** Keep the match for the replay page (also used for ranked matches stored in Supabase). */
   remember(rec: MatchRecord): void {
     if (this.matches.has(rec.id)) return;
@@ -155,8 +155,12 @@ export class MemoryStore implements RatingStore {
     return this.matches.get(id) ?? null;
   }
 
+  private board: { at: number; rows: LeaderRow[] } | null = null;
+
+  /** Standings (cached for 5 s: the page polls it). Guest ids are never exposed, only a hash. */
   leaderboard(limit = 100): LeaderRow[] {
     const now = this.now();
+    if (this.board && now - this.board.at < 5000) return this.board.rows.slice(0, limit);
     const dayStart = Math.floor(now / DAY_MS) * DAY_MS;
     const weekStart = now - 7 * DAY_MS;
     const rows: LeaderRow[] = [];
@@ -172,15 +176,17 @@ export class MemoryStore implements RatingStore {
           if (r.won) wt++;
         }
       }
-      rows.push({ id, display_name: p.name, tier: p.tier, elo: p.elo, wins_today: wt, matches_today: mt, wins_7d: w7, matches_7d: m7, wins_all: p.winsAll, matches_all: p.matchesAll });
+      rows.push({ id: publicId(id), display_name: p.name, tier: p.tier, elo: p.elo, wins_today: wt, matches_today: mt, wins_7d: w7, matches_7d: m7, wins_all: p.winsAll, matches_all: p.matchesAll });
     }
     rows.sort((a, b) => b.wins_today - a.wins_today || b.elo - a.elo || b.wins_all - a.wins_all);
+    this.board = { at: now, rows: rows.slice(0, 1000) };
     return rows.slice(0, limit);
   }
 
   private player(pl: PlayerInfo): MemPlayer {
     let p = this.players.get(pl.id);
     if (!p) {
+      if (this.players.size >= 20_000) this.prunePlayers();
       p = { name: pl.name, tier: pl.tier, elo: ELO_START, results: [], winsAll: 0, matchesAll: 0 };
       this.players.set(pl.id, p);
     }
@@ -188,6 +194,17 @@ export class MemoryStore implements RatingStore {
     p.tier = pl.tier;
     return p;
   }
+
+  /** Drop players with no match in the last 7 days (the table only lives until a restart anyway). */
+  private prunePlayers(): void {
+    const cutoff = this.now() - 7 * DAY_MS;
+    for (const [id, p] of this.players) if (p.results.length === 0 || (p.results[p.results.length - 1] as { at: number }).at < cutoff) this.players.delete(id);
+  }
+}
+
+/** Wallet addresses are public; a guest's id (which could impersonate them in the queue) is not. */
+function publicId(id: string): string {
+  return id.startsWith("guest:") ? `g-${createHash("sha256").update(id).digest("hex").slice(0, 12)}` : id;
 }
 
 export interface SupabaseConfig {
@@ -251,7 +268,10 @@ export class SupabaseStore implements RatingStore {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
-    if (!res.ok) throw new Error(`supabase record_match: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
+    if (!res.ok) {
+      const msg = `supabase record_match: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`;
+      throw res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429 ? new PermanentError(msg) : new Error(msg);
+    }
     const rows = (await res.json()) as { address: string; elo_before: number; elo_after: number }[];
     const pick = (addr: string): [number, number] => {
       const r = rows.find((x) => x.address === addr);
@@ -281,6 +301,9 @@ export class SupabaseStore implements RatingStore {
   }
 }
 
+/** An error retrying can't fix (a 4xx from the database: the row itself is bad). */
+export class PermanentError extends Error {}
+
 /** Retry a store call a few times (transient network / 5xx), then give up. */
 export async function withRetry<T>(fn: () => Promise<T>, tries = 3, delayMs = 500): Promise<T> {
   let last: unknown;
@@ -289,6 +312,7 @@ export async function withRetry<T>(fn: () => Promise<T>, tries = 3, delayMs = 50
       return await fn();
     } catch (e) {
       last = e;
+      if (e instanceof PermanentError) break;
       if (i < tries - 1) await new Promise((r) => setTimeout(r, delayMs * 2 ** i));
     }
   }

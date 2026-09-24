@@ -46,6 +46,19 @@ const SLACK = 3;
  */
 export const MAX_PREDICT = MAX_LEAD - INPUT_DELAY;
 
+/**
+ * Events worth showing even when the prediction learns of them late (a
+ * rollback reveals a hit that already happened): sparks, sounds and banners
+ * that matter. Walking, jumping and attack starts from the past are skipped.
+ */
+const LATE_KINDS = new Set<SimEvent["kind"]>(["hit", "ko", "ringOut", "roundEnd", "matchEnd", "suddenDeath", "heatFull"]);
+/** Events on ticks this far behind the shown tick only show if they are LATE_KINDS. */
+const STALE_EVENT_TICKS = 6;
+
+function eventKey(tick: number, e: SimEvent): string {
+  return `${tick}:${e.kind}:${"side" in e ? e.side : ""}`;
+}
+
 export interface Correction {
   tick: number;
   /** Largest per-fighter position error fixed (mu). */
@@ -105,6 +118,10 @@ export class ClientPredictor {
   private blendLeft = 0;
   readonly stats: ClientStats = { rollbacks: 0, resimTicks: 0, maxDepth: 0, corrections: [], desyncs: 0, adopted: 0, speedUps: 0, slowDowns: 0, maxBlendStep: 0 };
   private readonly scratch = new Int32Array(STATE_INTS);
+  /** Events already shown, by tick-kind-side key (value: the tick, for pruning). */
+  private readonly emitted = new Map<string, number>();
+  /** Late-revealed events from newly confirmed ticks, waiting for the next shown tick. */
+  private late: SimEvent[] = [];
 
   /** Ticks between sampling a button and the tick it applies to. */
   readonly delay: number;
@@ -173,7 +190,9 @@ export class ClientPredictor {
       if (t !== s.tick + 1) break;
       const b1 = f.b1[i] as number;
       const b2 = f.b2[i] as number;
+      const prev = s;
       s = step(s, b1, b2, this.R);
+      this.collect(prev, s, true);
       this.lastOwnConfirmed = this.side === 0 ? b1 : b2;
       this.lastOppConfirmed = this.side === 0 ? b2 : b1;
       this.dirty = true;
@@ -273,12 +292,20 @@ export class ClientPredictor {
     const c = this.confirmed as MatchState;
     const P = Math.max(this.present, c.tick);
     const before = this.predicted;
+    const out: SimEvent[] = this.late;
+    this.late = [];
     let next: MatchState;
     if (this.dirty || before.tick > P || P - before.tick > 2) {
-      // Rollback: re-simulate from the truth.
+      // Rollback: re-simulate from the truth. Events come tick by tick over
+      // the whole window, so a hit the old prediction missed still shows
+      // (late) and one it already showed doesn't show twice.
       let s = c;
       const depth = P - c.tick;
-      for (let t = c.tick + 1; t <= P; t++) s = this.stepGuess(s, t);
+      for (let t = c.tick + 1; t <= P; t++) {
+        const prev = s;
+        s = this.stepGuess(s, t);
+        this.collect(prev, s, false, out);
+      }
       next = s;
       if (this.dirty) {
         this.stats.rollbacks++;
@@ -289,20 +316,51 @@ export class ClientPredictor {
       this.dirty = false;
     } else {
       let s = before;
-      for (let t = before.tick + 1; t <= P; t++) s = this.stepGuess(s, t);
+      for (let t = before.tick + 1; t <= P; t++) {
+        const prev = s;
+        s = this.stepGuess(s, t);
+        this.collect(prev, s, false, out);
+      }
       next = s;
     }
     this.predicted = next;
+    this.pruneEmitted(c.tick);
 
     if (ran === 0 && next === before) {
       this.prev = this.cur;
-      this.events = [];
+      this.events = out;
       return;
     }
-    this.events = next.tick > this.shownRaw.tick || next.round !== this.shownRaw.round ? deriveEvents(this.shownRaw, next, this.R.heat.max) : [];
+    this.events = out;
     this.shownRaw = next;
     this.prev = this.cur;
     this.cur = this.present_(next);
+  }
+
+  /**
+   * The events between two consecutive states, minus any already shown.
+   * Events on ticks already on screen (or long past) only count when they
+   * are LATE_KINDS. `confirmedOnly` queues them for the next shown tick.
+   */
+  private collect(a: MatchState, b: MatchState, confirmedOnly: boolean, out: SimEvent[] = this.late): void {
+    const evs = deriveEvents(a, b, this.R.heat.max);
+    if (evs.length === 0) return;
+    const shown = this.shownRaw.tick;
+    const past = b.tick <= shown || b.tick < this.present - STALE_EVENT_TICKS || confirmedOnly;
+    for (const e of evs) {
+      if (past && !LATE_KINDS.has(e.kind)) continue;
+      const k = eventKey(b.tick, e);
+      if (this.emitted.has(k)) continue;
+      // A confirmed tick still ahead of the screen is shown when the prediction gets there.
+      if (confirmedOnly && b.tick > shown) continue;
+      this.emitted.set(k, b.tick);
+      out.push(e);
+    }
+  }
+
+  private pruneEmitted(confirmedTick: number): void {
+    if (this.emitted.size < 512) return;
+    for (const [k, t] of this.emitted) if (t < confirmedTick - 120) this.emitted.delete(k);
   }
 
   private stepGuess(s: MatchState, t: number): MatchState {

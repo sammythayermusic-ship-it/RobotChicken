@@ -80,9 +80,11 @@ declare
   v_d integer;
   v_new uuid;
 begin
-  -- Players normally exist from the gate; create them if not (tier kept if set).
+  -- Players normally exist from the gate; create them if not (tier kept if
+  -- set). Rows are written in address order, like the lock below, so two
+  -- matches finishing at once for the same pair can't deadlock.
   insert into public.players as pl (address, tier)
-  values (p_p1, p_tier1), (p_p2, p_tier2)
+  select v.address, v.tier from (values (p_p1, p_tier1), (p_p2, p_tier2)) as v(address, tier) order by v.address
   on conflict (address) do update set last_seen = now(), tier = coalesce(pl.tier, excluded.tier);
 
   perform 1 from public.players pl where pl.address in (p_p1, p_p2) order by pl.address for update;

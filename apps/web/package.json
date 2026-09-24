@@ -28,6 +28,7 @@
     "zustand": "catalog:"
   },
   "devDependencies": {
+    "@next/env": "catalog:",
     "@playwright/test": "catalog:",
     "@tailwindcss/postcss": "catalog:",
     "@types/node": "catalog:",

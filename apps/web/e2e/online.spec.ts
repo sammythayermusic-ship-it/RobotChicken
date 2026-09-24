@@ -8,6 +8,7 @@
  *   - the replay page reproduces the match exactly (spec acceptance).
  */
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import { watchProblems, type Problems } from "./support/console";
 
 interface NetView {
   side: 0 | 1;
@@ -27,16 +28,17 @@ type W = Window & {
 
 const QUERY = "mode=online&debug=1&arena=0&quality=low";
 
-async function player(browser: Browser, name: string): Promise<{ page: Page; close: () => Promise<void> }> {
+async function player(browser: Browser, name: string): Promise<{ page: Page; problems: Problems; close: () => Promise<void> }> {
   const ctx = await browser.newContext({ viewport: { width: 960, height: 600 } });
   const page = await ctx.newPage();
+  const problems = await watchProblems(page);
   await page.goto(`/play?${QUERY}`);
   await expect(page.getByTestId("online-lobby")).toBeVisible();
   // Open mode: a name is all it takes.
   await expect(page.getByTestId("open-form")).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("Your fighter's name").fill(name);
   await page.getByTestId("find-match").click();
-  return { page, close: () => ctx.close() };
+  return { page, problems, close: () => ctx.close() };
 }
 
 const net = (page: Page) => page.evaluate(() => (window as W).__cockfight?.fight?.net() ?? null);
@@ -92,6 +94,9 @@ test.describe("online", () => {
     const { ticks, finalHash } = await viewer.evaluate(() => (window as W).__cockfight!.replay!);
     await viewer.evaluate((n) => (window as W).__cockfight!.fight!.stepTicks!(n), ticks + 30);
     expect(await viewer.evaluate(() => (window as W).__cockfight!.fight!.hash())).toBe(finalHash);
+    // Online play, the result and the replay page all run clean under the CSP, with no uncaught errors.
+    expect(await alice.problems.cspViolations()).toEqual([]);
+    expect(alice.problems.errors.filter((e) => /Content Security Policy|pageerror/.test(e))).toEqual([]);
     await alice.close();
   });
 

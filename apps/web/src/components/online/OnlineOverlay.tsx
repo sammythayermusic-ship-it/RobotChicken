@@ -31,12 +31,15 @@ export function OnlineOverlay({ session, loading, onRequeue }: { session: NetSes
     </div>
   );
 
-  if (s.status === "over" || s.status === "cancelled") {
-    const cancelled = s.status === "cancelled";
+  if (s.status === "over" || s.status === "cancelled" || s.lost) {
+    const lost = s.lost && s.status !== "over" && s.status !== "cancelled";
+    const cancelled = s.status === "cancelled" || lost;
     const won = s.winner === me;
     const draw = s.winner === 2;
-    const title = cancelled ? "MATCH OFF" : draw ? "DRAW" : won ? "YOU WIN" : "YOU LOSE";
-    const how = cancelled
+    const title = lost ? "CONNECTION LOST" : cancelled ? "MATCH OFF" : draw ? "DRAW" : won ? "YOU WIN" : "YOU LOSE";
+    const how = lost
+      ? "You were disconnected from the match."
+      : cancelled
       ? s.reason
       : s.reason === "forfeit"
         ? won

@@ -3,7 +3,14 @@
  *
  * - Ranked (GATE_MODE=required): a client joins with the queue token from
  *   POST /gate. Open playtests: with a name and a per-browser guest id.
- * - One ticket per player: joining again replaces the older ticket.
+ * - One queue room per process, created at boot (listen()); clients can't
+ *   create more. Tokens and names are checked at the HTTP matchmaking step
+ *   (static onAuth), so nobody gets a seat without them.
+ * - One ticket per player: a second join for someone already queued is
+ *   refused (evicting the first would let anyone who pastes your address
+ *   knock you out of the queue).
+ * - Clients must run the same sim rules as the server (rulesHash), or every
+ *   match would desync: an old cached page is told to reload.
  * - Every half second the oldest ticket is paired with the first compatible
  *   one. Spec: both within 120 ms RTT, widening to 200 ms once either has
  *   waited 20 s; after 60 s any RTT (nobody waits forever in a thin queue).
@@ -17,7 +24,8 @@
  * fingerprint, the rematch cooldown) plug into canPair().
  */
 import { randomUUID } from "node:crypto";
-import { Room, logger, matchMaker, type Client } from "@colyseus/core";
+import { Room, logger, matchMaker, type AuthContext, type Client } from "@colyseus/core";
+import { RULES } from "@cockfight/sim";
 import { schema, t, type SchemaType } from "@colyseus/schema";
 import { anonName } from "@cockfight/solana";
 import { getContext } from "../context";
@@ -28,6 +36,8 @@ export const RTT_TIGHT = 120;
 export const RTT_WIDE = 200;
 export const WIDEN_AFTER_MS = 20_000;
 export const ANY_RTT_AFTER_MS = 60_000;
+
+export const QUEUE_ROOM = "queue";
 
 export const QueueState = schema({ size: t.uint16().default(0), mode: t.string().default("open") }, "QueueState");
 export type QueueState = SchemaType<typeof QueueState>;
@@ -49,7 +59,7 @@ export interface MatchedMsg {
   opponent: { name: string; tier: string };
 }
 export interface KickedMsg {
-  reason: "replaced" | "gate";
+  reason: "gate";
   message: string;
   usd?: number;
   shortUsd?: number;
@@ -66,22 +76,24 @@ export function rttAllows(a: Pick<Ticket, "rtt" | "joinedAt">, b: Pick<Ticket, "
 export class QueueRoom extends Room<{ state: QueueState }> {
   override maxClients = 2000;
   override state = new QueueState();
+  /** The queue lives as long as the process, even when nobody is in it. */
+  override autoDispose = false;
   /** Tickets by session id. */
   readonly tickets = new Map<string, Ticket>();
   #pairing = false;
 
-  override onCreate(): void {
+  /**
+   * Runs at the HTTP matchmaking step, before a seat is reserved: ranked
+   * players need a valid queue token, playtesters a name. The result becomes
+   * the client's auth.
+   */
+  static override async onAuth(
+    _token: string,
+    options: { token?: unknown; name?: unknown; guestId?: unknown; rules?: unknown } = {},
+    _ctx: AuthContext,
+  ): Promise<PlayerInfo> {
     const ctx = getContext();
-    this.state.mode = ctx.env.GATE_MODE;
-    this.onMessage("rtt", (client, ms: unknown) => {
-      const t = this.tickets.get(client.sessionId);
-      if (t && typeof ms === "number" && Number.isFinite(ms)) t.rtt = clampRtt(ms);
-    });
-    this.clock.setInterval(() => void this.pair(), PAIR_EVERY_MS);
-  }
-
-  override onAuth(_client: Client, options: { token?: unknown; name?: unknown; guestId?: unknown; rtt?: unknown } = {}): PlayerInfo {
-    const ctx = getContext();
+    if (options.rules !== RULES.hash) throw new Error("Your game is out of date: reload the page.");
     if (ctx.env.GATE_MODE === "required") {
       const c = ctx.gate.tokens.verify(options.token);
       if (!c) throw new Error("queue token missing or expired: pass the gate again");
@@ -93,14 +105,21 @@ export class QueueRoom extends Room<{ state: QueueState }> {
     return { id: `guest:${guest}`, address: null, name, tier: "rust" };
   }
 
+  override onCreate(options: { key?: string } = {}): void {
+    const ctx = getContext();
+    if (options.key !== ROOM_KEY) throw new Error("the queue is created by the server");
+    this.state.mode = ctx.env.GATE_MODE;
+    this.onMessage("rtt", (client, ms: unknown) => {
+      const t = this.tickets.get(client.sessionId);
+      if (t && typeof ms === "number" && Number.isFinite(ms)) t.rtt = clampRtt(ms);
+    });
+    this.clock.setInterval(() => void this.pair(), PAIR_EVERY_MS);
+  }
+
   override onJoin(client: Client, options: { rtt?: unknown } = {}): void {
     const player = client.auth as PlayerInfo;
-    for (const [sid, t] of this.tickets) {
-      if (t.player.id === player.id) {
-        this.tickets.delete(sid);
-        t.client.send("kicked", { reason: "replaced", message: "You queued again somewhere else." } satisfies KickedMsg);
-        t.client.leave();
-      }
+    for (const t of this.tickets.values()) {
+      if (t.player.id === player.id) throw new Error("You're already in the queue (another tab or device).");
     }
     this.tickets.set(client.sessionId, { client, player, rtt: clampRtt(options.rtt), joinedAt: Date.now(), busy: false });
     this.state.size = this.tickets.size;
@@ -132,7 +151,9 @@ export class QueueRoom extends Room<{ state: QueueState }> {
         a.busy = b.busy = true;
         pairs.push([a, b]);
       }
-      await Promise.all(pairs.map((p) => this.#start(p)));
+      // Not awaited: one slow balance re-check must not hold up everyone else's
+      // pairing (the busy flags keep a ticket from being paired twice).
+      for (const p of pairs) void this.#start(p).catch((e) => logger.error("[queue] pairing failed:", e));
     } finally {
       this.#pairing = false;
     }

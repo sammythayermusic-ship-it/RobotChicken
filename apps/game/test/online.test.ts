@@ -7,7 +7,7 @@
 import { matchMaker } from "@colyseus/core";
 import { ColyseusTestServer } from "@colyseus/testing";
 import { decodeReplayLog, resultHash } from "@cockfight/net";
-import { B, Phase, runReplay, serialize, stateHash } from "@cockfight/sim";
+import { B, Phase, RULES, Reason, runReplay, serialize, stateHash } from "@cockfight/sim";
 import { loadGameEnv } from "@cockfight/shared/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getContext } from "../src/context";
@@ -161,7 +161,7 @@ describe("online match (open mode)", () => {
     await p1.room.leave();
   }, 20_000);
 
-  it("a seated match refuses anyone else, and a second ticket for the same player replaces the first", async () => {
+  it("a seated match refuses anyone else, and a second ticket for the same player is refused", async () => {
     const [p1, p2, room] = await matchTwo(["Alpha", "Beta"]);
     await expect(colyseus.sdk.joinById(room.roomId, { name: "Intruder" })).rejects.toThrow();
     p1.stop();
@@ -169,15 +169,47 @@ describe("online match (open mode)", () => {
     await p1.room.leave();
     await p2.room.leave();
 
+    // The first ticket stays; the second is refused (evicting would let anyone kick you out of the queue).
     const first = await queueUp(colyseus.sdk, { name: "Twin", guestId: "same-guest-id-123" });
-    const kicked = first.matched.catch((e: { kicked?: { reason: string } }) => e.kicked);
-    const second = await queueUp(colyseus.sdk, { name: "Twin", guestId: "same-guest-id-123" });
-    expect(await kicked).toMatchObject({ reason: "replaced" });
-    await second.queue.leave();
+    await expect(queueUp(colyseus.sdk, { name: "Twin", guestId: "same-guest-id-123" })).rejects.toThrow(/already in the queue/);
+    await first.queue.leave();
   }, 20_000);
 
-  it("rejects bad names in the open queue", async () => {
-    await expect(colyseus.sdk.joinOrCreate("queue", { name: "<script>" })).rejects.toThrow(/name/);
-    await expect(colyseus.sdk.joinOrCreate("queue", {})).rejects.toThrow(/name/);
+  it("rejects bad names, out-of-date clients and client-made queues", async () => {
+    await expect(colyseus.sdk.join("queue", { name: "<script>", rules: RULES.hash })).rejects.toThrow(/name/);
+    await expect(colyseus.sdk.join("queue", { rules: RULES.hash })).rejects.toThrow(/name/);
+    await expect(colyseus.sdk.join("queue", { name: "Oldie", rules: "0000000000000000" })).rejects.toThrow(/reload/);
+    await expect(colyseus.sdk.create("queue", { name: "Maker", rules: RULES.hash })).rejects.toThrow();
   });
+
+  it("a player who leaves during the pause after the deciding KO still wins", async () => {
+    const [p1, p2, room] = await matchTwo(["Champ", "Chump"]);
+    p1.ready();
+    p2.ready();
+    await until(() => room.status === "live", 5000, "live");
+    // Jump the sim to the pause after P1's second round win (the sim counts wins at the KO).
+    const s = room.match.state;
+    Object.assign(s, { phase: Phase.roundEnd, phaseT: 100, round: 2, w1: 2, w2: 0, roundWinner: 0, reason: Reason.ko });
+    p1.stop();
+    await p1.room.leave(); // the winner walks away before the match-end screen
+    await until(() => room.status === "over", 5000, "over");
+    expect(room.state.winner).toBe(0);
+    expect(room.state.reason).not.toBe("forfeit");
+    p2.stop();
+    await p2.room.leave();
+  }, 20_000);
+
+  it("both players vanishing calls the match off", async () => {
+    const [p1, p2, room] = await matchTwo(["Ghost", "Phantom"]);
+    p1.ready();
+    p2.ready();
+    await until(() => room.status === "live", 5000, "live");
+    for (const b of [p1, p2]) {
+      b.stop();
+      b.room.reconnection.enabled = false;
+      b.room.connection.close(4010);
+    }
+    await until(() => room.status === "cancelled", 15_000, "cancelled");
+    expect(room.state.reason).toBe("both players left");
+  }, 25_000);
 });

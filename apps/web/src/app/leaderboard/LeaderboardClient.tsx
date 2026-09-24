@@ -23,13 +23,18 @@ function untilMidnightUtc(now: number): string {
 export default function LeaderboardClient() {
   const [board, setBoard] = useState<Board>("today");
   const [data, setData] = useState<{ board: Board; rows: LeaderRow[]; source: string } | { board: Board; error: string } | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  // Null while prerendered (the build's clock would never match the browser's): set after mount.
+  const [now, setNow] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = () =>
       fetchLeaderboard(board)
-        .then((d) => alive && setData({ board, ...d }))
+        .then((d) => {
+          if (!alive) return;
+          setData({ board, ...d });
+          setNow(Date.now());
+        })
         .catch(() => alive && setData({ board, error: "Couldn't load the leaderboard." }));
     void load();
     const id = setInterval(() => {
@@ -70,7 +75,7 @@ export default function LeaderboardClient() {
         </div>
         {board === "today" ? (
           <p className="text-sm text-zinc-400">
-            Ranked by wins today (UTC), ties by ELO. Resets in {untilMidnightUtc(now)}. The daily prize pool for the top 10 starts with payouts.
+            Ranked by wins today (UTC), ties by ELO.{now !== null ? ` Resets in ${untilMidnightUtc(now)}.` : ""} The daily prize pool for the top 10 starts with payouts.
           </p>
         ) : null}
         {!current ? <p className="text-zinc-400">Loading…</p> : null}

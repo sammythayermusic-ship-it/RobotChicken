@@ -10,7 +10,7 @@
  */
 import { Client, type Room } from "@colyseus/sdk";
 import { ClientPredictor, Msg, decodeFrames, decodeSync } from "@cockfight/net";
-import type { MatchState } from "@cockfight/sim";
+import { RULES, type MatchState } from "@cockfight/sim";
 import type { Tier } from "@cockfight/shared";
 import { publicEnv } from "@/env.public";
 
@@ -36,6 +36,8 @@ export interface NetSnapshot {
   pauseLeft: number;
   /** This client lost its connection and the SDK is trying to get back in. */
   reconnecting: boolean;
+  /** The connection is gone for good while the match wasn't over (the server has forfeited it by now). */
+  lost: boolean;
   rtt: number;
 }
 
@@ -90,37 +92,43 @@ export function gameClient(url: string = publicEnv.NEXT_PUBLIC_GAME_WS_URL): Cli
  * wallet's anon name and gate tier), for the seating handed to the fight.
  */
 export async function joinQueue(opts: QueueOptions, me: { name: string; tier: Tier }, client: Client = gameClient()): Promise<QueueHandle> {
-  const queue = await client.joinOrCreate("queue", opts);
+  // rules: the server refuses a client whose sim differs from its own (a stale cached page).
+  const queue = await client.join("queue", { ...opts, rules: RULES.hash });
   const sizeCbs: ((n: number) => void)[] = [];
   queue.onStateChange((s: { size?: number }) => {
     if (typeof s.size === "number") for (const cb of sizeCbs) cb(s.size);
   });
   let left = false;
+  const offs: (() => void)[] = [];
   const matched = new Promise<NetSession>((resolve, reject) => {
-    queue.onMessage("matched", (m: MatchedMsg) => {
-      left = true;
-      void queue.leave();
-      client
-        .consumeSeatReservation(m.reservation as never)
-        .then((room) => {
-          const seating: Seating =
-            m.side === 0
-              ? { names: [me.name, m.opponent.name], tiers: [me.tier, m.opponent.tier] }
-              : { names: [m.opponent.name, me.name], tiers: [m.opponent.tier, me.tier] };
-          resolve(new NetSession(room, m.side, m.matchId, seating));
-        })
-        .catch(reject);
-    });
-    queue.onMessage("kicked", (m: { reason: string; message: string; usd?: number; shortUsd?: number }) => {
-      left = true;
-      reject(new QueueKick(m));
-    });
+    offs.push(
+      queue.onMessage("matched", (m: MatchedMsg) => {
+        left = true;
+        void queue.leave().catch(() => {});
+        client
+          .consumeSeatReservation(m.reservation as never)
+          .then((room) => {
+            const seating: Seating =
+              m.side === 0
+                ? { names: [me.name, m.opponent.name], tiers: [me.tier, m.opponent.tier] }
+                : { names: [m.opponent.name, me.name], tiers: [m.opponent.tier, me.tier] };
+            resolve(new NetSession(room, m.side, m.matchId, seating));
+          })
+          .catch(reject);
+      }),
+      queue.onMessage("kicked", (m: { reason: string; message: string; usd?: number; shortUsd?: number }) => {
+        left = true;
+        reject(new QueueKick(m));
+      }),
+    );
     queue.onLeave((code: number) => {
       if (!left) reject(new QueueKick({ reason: "connection", message: `Lost the connection to the game server (${code}).` }));
     });
   });
   // Keep the server's RTT for this ticket current (it pairs by RTT).
-  const ping = setInterval(() => queue.ping((ms) => queue.send("rtt", ms)), 3000);
+  const ping = setInterval(() => {
+    if (queue.connection.isOpen) queue.ping((ms) => queue.send("rtt", ms));
+  }, 3000);
   void matched.finally(() => clearInterval(ping)).catch(() => {});
   return {
     onSize: (cb) => sizeCbs.push(cb),
@@ -128,7 +136,15 @@ export async function joinQueue(opts: QueueOptions, me: { name: string; tier: Ti
     leave: async () => {
       left = true;
       clearInterval(ping);
-      if (queue.connection.isOpen) await queue.leave();
+      // A "matched" already in flight must not start a match nobody is waiting for.
+      for (const off of offs) off();
+      queue.reconnection.enabled = false;
+      try {
+        if (queue.connection.isOpen) await queue.leave();
+        else queue.connection.close();
+      } catch {
+        // already gone
+      }
     },
   };
 }
@@ -161,6 +177,7 @@ export class NetSession {
       ranked: false,
       pauseLeft: 0,
       reconnecting: false,
+      lost: false,
       rtt: 100,
     };
     // Reconnect even in a fight's first seconds (the SDK's default waits 5 s of uptime).
@@ -179,8 +196,10 @@ export class NetSession {
     room.onDrop(() => this.patch({ reconnecting: true }));
     room.onReconnect(() => this.patch({ reconnecting: false }));
     room.onLeave(() => {
+      const wasOn = !this.closed && this.snap.status !== "over" && this.snap.status !== "cancelled";
       this.closed = true;
-      this.patch({ reconnecting: false });
+      clearInterval(this.pinger);
+      this.patch({ reconnecting: false, lost: wasOn });
     });
     const ping = () => {
       if (!this.room.connection.isOpen) return;
@@ -219,12 +238,14 @@ export class NetSession {
     return ran;
   }
 
-  /** Leave the room (forfeits a match still on). */
+  /** Leave the room (forfeits a match still on). Stops any reconnect in progress too. */
   async leave(): Promise<void> {
     clearInterval(this.pinger);
     this.closed = true;
+    this.room.reconnection.enabled = false;
     try {
       if (this.room.connection.isOpen) await this.room.leave();
+      else this.room.connection.close();
     } catch {
       // already gone
     }

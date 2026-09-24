@@ -2,9 +2,11 @@
  * Public data for the replay page and the leaderboard.
  *
  * Ranked matches live in Supabase: the browser reads the public views
- * (match_replay_v, leaderboard_v) with the publishable key. Open playtest
- * matches, and everything when Supabase isn't configured, come from the game
- * server's in-memory store (/api/matches/:id, /api/leaderboard).
+ * (match_replay_v, leaderboard_v) with the publishable key. Replays not found
+ * there (open playtest matches), and everything when Supabase isn't
+ * configured, come from the game server's in-memory store
+ * (/api/matches/:id, /api/leaderboard). The leaderboard shows Supabase's
+ * ranked standings when it is configured, else the playtest standings.
  */
 import { byteaHexToString, decodeReplayLog, type MatchReason, type RoundRecord } from "@cockfight/net";
 import type { Replay } from "@cockfight/sim";
@@ -142,7 +144,7 @@ export type Board = "today" | "7d" | "all";
 export async function fetchLeaderboard(board: Board): Promise<{ rows: LeaderRow[]; source: "supabase" | "server" }> {
   const sb = supabase();
   if (sb) {
-    const order = board === "today" ? "wins_today.desc,elo.desc" : board === "7d" ? "wins_7d.desc,elo.desc" : "wins_all.desc,elo.desc";
+    const order = board === "today" ? "wins_today.desc,elo.desc.nullslast" : board === "7d" ? "wins_7d.desc,elo.desc.nullslast" : "wins_all.desc,elo.desc.nullslast";
     const filter = board === "today" ? "&matches_today=gt.0" : board === "7d" ? "&matches_7d=gt.0" : "";
     const res = await fetch(`${sb.url}/rest/v1/leaderboard_v?select=*&order=${order}&limit=100${filter}`, { headers: sbHeaders(sb.key) });
     if (!res.ok) throw new Error(`leaderboard: HTTP ${res.status}`);

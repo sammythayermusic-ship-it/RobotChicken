@@ -6,7 +6,7 @@
  * NODE_ENV=production and GATE_MODE=open (the playtest setup) and checks,
  * over real sockets:
  *   1. GET /health and GET /config
- *   2. POST /matchmake/joinOrCreate/queue returns a seat reservation (+ CORS echo)
+ *   2. POST /matchmake/join/queue returns a seat reservation (+ CORS echo)
  *   3. that reservation can be consumed over WebSocket
  *   4. a second player queues, both are matched, join the fight room, send
  *      ready, and receive confirmed frames with a rising tick (sim, schema,
@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, type Room, type SeatReservation } from "@colyseus/sdk";
 import { Msg, decodeFrames } from "@cockfight/net";
+import { RULES } from "@cockfight/sim";
 
 const ORIGIN = "https://smoke.cockfight.test";
 const dist = join(import.meta.dirname, "..", "dist");
@@ -91,7 +92,8 @@ async function main(): Promise<void> {
 
   try {
     const health = await waitForHealth(base, child);
-    if (JSON.stringify(health) !== JSON.stringify({ ok: true, region: "local", rooms: 0 })) {
+    // One room: the queue, created at boot.
+    if (JSON.stringify(health) !== JSON.stringify({ ok: true, region: "local", rooms: 1 })) {
       fail(`unexpected /health body: ${JSON.stringify(health)}`);
     }
     console.log(`ok   GET /health -> ${JSON.stringify(health)}`);
@@ -100,10 +102,10 @@ async function main(): Promise<void> {
     if (config.gate !== "open") fail(`unexpected /config: ${JSON.stringify(config)}`);
     console.log(`ok   GET /config -> ${JSON.stringify(config)}`);
 
-    const res = await fetch(`${base}/matchmake/joinOrCreate/queue`, {
+    const res = await fetch(`${base}/matchmake/join/queue`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: ORIGIN },
-      body: JSON.stringify({ name: "Smoke A", guestId: "smoke-guest-a", rtt: 10 }),
+      body: JSON.stringify({ name: "Smoke A", guestId: "smoke-guest-a", rtt: 10, rules: RULES.hash }),
     });
     if (res.status !== 200) fail(`matchmake returned ${res.status}: ${await res.text()}`);
     if (res.headers.get("access-control-allow-origin") !== ORIGIN) {
@@ -111,7 +113,7 @@ async function main(): Promise<void> {
     }
     const seat = (await res.json()) as SeatReservation;
     if (seat.name !== "queue" || !seat.roomId || !seat.sessionId) fail(`bad seat reservation: ${JSON.stringify(seat)}`);
-    console.log(`ok   POST /matchmake/joinOrCreate/queue -> room ${seat.roomId}, session ${seat.sessionId}`);
+    console.log(`ok   POST /matchmake/join/queue -> room ${seat.roomId}, session ${seat.sessionId}`);
 
     const client = new Client(base);
     const qa = await within(5000, "consume queue seat", client.consumeSeatReservation(seat));
@@ -121,7 +123,7 @@ async function main(): Promise<void> {
     type Matched = { reservation: SeatReservation; side: number; matchId: string };
     const matchedOf = (q: Room) => new Promise<Matched>((resolve) => q.onMessage("matched", (m: Matched) => resolve(m)));
     const ma = matchedOf(qa);
-    const qb = await within(5000, "second player queues", client.joinOrCreate("queue", { name: "Smoke B", guestId: "smoke-guest-b", rtt: 10 }));
+    const qb = await within(5000, "second player queues", client.join("queue", { name: "Smoke B", guestId: "smoke-guest-b", rtt: 10, rules: RULES.hash }));
     const mb = matchedOf(qb);
     const [a, b] = await within(5000, "both matched", Promise.all([ma, mb]));
     if (a.matchId !== b.matchId) fail("the two players were matched into different rooms");

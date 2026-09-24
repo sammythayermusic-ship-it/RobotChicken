@@ -143,9 +143,14 @@ export interface GateOptions {
   now?: () => number;
 }
 
+/** How long a price is reused. Balances are always read fresh (or from the 60 s pass cache). */
+export const PRICE_CACHE_MS = 20_000;
+
 export class BalanceGate {
   private readonly o: Required<Omit<GateOptions, "now">> & { now: () => number };
   private readonly cache = new Map<string, GateCheck>();
+  /** The last price, reused for PRICE_CACHE_MS (every check and re-check would otherwise hit the price API). */
+  private price: { quote: PriceQuote; at: number } | null = null;
 
   constructor(o: GateOptions) {
     if (o.prices.length === 0) throw new Error("BalanceGate: at least one price source");
@@ -185,6 +190,14 @@ export class BalanceGate {
   }
 
   private async lowestPrice(): Promise<PriceQuote> {
+    const now = this.o.now();
+    if (this.price && now - this.price.at < PRICE_CACHE_MS) return this.price.quote;
+    const quote = await this.fetchLowestPrice();
+    this.price = { quote, at: now };
+    return quote;
+  }
+
+  private async fetchLowestPrice(): Promise<PriceQuote> {
     const got = await Promise.all(
       this.o.prices.map(async (p) => {
         try {

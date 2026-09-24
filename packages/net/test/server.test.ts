@@ -60,3 +60,17 @@ describe("ServerMatch", () => {
     expect(m.quality(0)).toBe(1);
   });
 });
+
+describe("ServerMatch stale inputs", () => {
+  it("repeats a missing player's buttons for a moment, then goes neutral", async () => {
+    const { STALE_AFTER } = await import("../src/server");
+    const m = new ServerMatch("srv-stale");
+    m.receive(0, { first: 1, masks: [18] });
+    expect(m.step().b1).toBe(18);
+    for (let i = 0; i < STALE_AFTER; i++) expect(m.step().b1).toBe(18);
+    expect(m.step().b1).toBe(0);
+    // Back again: its own buttons.
+    m.receive(0, { first: m.tick + 1, masks: [4] });
+    expect(m.step().b1).toBe(4);
+  });
+});

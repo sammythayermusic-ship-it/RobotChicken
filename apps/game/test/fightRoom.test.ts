@@ -2,7 +2,7 @@ import { request } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { matchMaker } from "@colyseus/core";
 import { ColyseusTestServer } from "@colyseus/testing";
-import { createMatch, step, type MatchState } from "@cockfight/sim";
+import { RULES, createMatch, step, type MatchState } from "@cockfight/sim";
 import { loadGameEnv } from "@cockfight/shared/env";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Msg } from "@cockfight/net";
@@ -155,7 +155,7 @@ describe("HTTP", () => {
     const ok = await fetch(`${base}/matchmake/joinOrCreate/queue`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: ALLOWED },
-      body: JSON.stringify({ name: "Probe" }),
+      body: JSON.stringify({ name: "Probe", rules: RULES.hash }),
     });
     expect(ok.status).toBe(200);
     expect(ok.headers.get("access-control-allow-origin")).toBe(ALLOWED);
@@ -189,6 +189,22 @@ describe("HTTP", () => {
     const res = await fetch(`${base}/gate`, { method: "POST", headers: { "content-type": "text/plain", origin: ALLOWED }, body: "{}" });
     expect(res.status).toBe(409);
     expect(res.headers.get("access-control-allow-origin")).toBe(ALLOWED);
+  });
+
+  it("refuses big or unsized request bodies before Colyseus reads them", async () => {
+    const big = await fetch(`${base}/gate`, { method: "POST", headers: { "content-type": "text/plain" }, body: "x".repeat(20_000) });
+    expect(big.status).toBe(413);
+    const chunked = await new Promise<number>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port, path: "/gate", method: "POST", headers: { "transfer-encoding": "chunked" } }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on("error", reject);
+      req.write("{}");
+      req.end();
+    });
+    expect(chunked).toBe(411);
+    expect((await fetch(`${base}/health`)).status).toBe(200);
   });
 
   it("refuses WebSocket upgrades from other browser origins", async () => {
