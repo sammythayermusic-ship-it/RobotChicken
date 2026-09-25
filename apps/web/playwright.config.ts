@@ -12,6 +12,12 @@ import { defineConfig, devices } from "@playwright/test";
  */
 const PORT = Number(process.env.E2E_PORT ?? 3130);
 const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? `http://localhost:${PORT}`;
+/**
+ * The game server the online specs play against: the production bundle, in
+ * open (playtest) mode, allowing this web origin. The web build points at it
+ * through NEXT_PUBLIC_GAME_WS_URL. E2E_GAME_PORT overrides.
+ */
+const GAME_PORT = Number(process.env.E2E_GAME_PORT ?? 2667);
 
 /**
  * GPU-less CI runners need SwiftShader or WebGL context creation fails. On an
@@ -70,14 +76,29 @@ export default defineConfig({
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
-    : {
-        // `pnpm run build` also copies the decoders (scripts/copy-decoders.mjs).
-        // The server runs as a plain node child, not through `pnpm exec`: pnpm
-        // puts it in its own process group, so Playwright's group kill misses
-        // it and the orphan holds the run open after the last test.
-        command: `pnpm run build && node node_modules/next/dist/bin/next start -p ${PORT}`,
-        url: baseURL,
-        reuseExistingServer: !process.env.CI,
-        timeout: 240_000,
-      },
+    : [
+        {
+          command: "node ../game/build.mjs && node ../game/dist/server.mjs",
+          url: `http://localhost:${GAME_PORT}/health`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+          env: {
+            NODE_ENV: "production",
+            GATE_MODE: "open",
+            PORT: String(GAME_PORT),
+            ALLOWED_ORIGINS: `http://localhost:${PORT},http://127.0.0.1:${PORT}`,
+          },
+        },
+        {
+          // `pnpm run build` also copies the decoders (scripts/copy-decoders.mjs).
+          // The server runs as a plain node child, not through `pnpm exec`: pnpm
+          // puts it in its own process group, so Playwright's group kill misses
+          // it and the orphan holds the run open after the last test.
+          command: `pnpm run build && node node_modules/next/dist/bin/next start -p ${PORT}`,
+          url: baseURL,
+          reuseExistingServer: !process.env.CI,
+          timeout: 240_000,
+          env: { NEXT_PUBLIC_GAME_WS_URL: `ws://localhost:${GAME_PORT}` },
+        },
+      ],
 });

@@ -13,7 +13,8 @@ export function parsePlayParams(get: (key: string) => string | null | undefined)
   const mode = get("mode");
   const bench = get("bench") === "1";
   return {
-    mode: mode === "cpu" || mode === "2p" || mode === "demo" ? mode : bench ? "demo" : null,
+    mode: mode === "cpu" || mode === "2p" || mode === "demo" || mode === "online" ? mode : bench ? "demo" : null,
+    wallet: get("wallet")?.trim() || null,
     difficulty: pick<CpuLevel>(get("difficulty"), ["easy", "normal", "hard"], "normal"),
     tier: pick<Tier>(get("tier"), ["rust", "chrome", "gold", "diamond"], "rust"),
     seed: get("seed") || (bench ? "bench" : null),

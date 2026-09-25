@@ -72,7 +72,7 @@ export function TouchControls({
   const ctxLabel = ctxFrozen ?? (air ? "DIVE" : dirs & B.D ? "SLAM" : "JUMP");
   // In the air but past the dive (spent, too low, knocked up): the button can't dive now.
   const ctxOff = ctxLabel === "DIVE" && ctxFrozen === null && !cold.dive;
-  const peckLabel = cold.heatFull[0] && (dirs & MOVE_DIRS) === 0 && !air ? "SUPER" : "PECK";
+  const peckLabel = cold.heatFull[cold.you ?? 0] && (dirs & MOVE_DIRS) === 0 && !air ? "SUPER" : "PECK";
 
   useEffect(() => {
     const el = root.current;

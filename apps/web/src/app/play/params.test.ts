@@ -31,8 +31,14 @@ describe("parsePlayParams", () => {
   it("bench implies a seeded CPU demo with the FPS meter", () => {
     expect(from("bench=1")).toMatchObject({ mode: "demo", seed: "bench", fps: true, bench: true });
   });
+  it("online opens the lobby, with a wallet from the landing page", () => {
+    expect(from("mode=online&wallet=%209WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM")).toMatchObject({
+      mode: "online",
+      wallet: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    });
+  });
   it("ignores unknown values", () => {
-    expect(from("mode=online&difficulty=insane&tier=platinum&quality=ultra")).toMatchObject({
+    expect(from("mode=arcade&difficulty=insane&tier=platinum&quality=ultra")).toMatchObject({
       mode: null,
       difficulty: "normal",
       tier: "rust",

@@ -40,9 +40,15 @@ describe("buildCsp", () => {
 
   it("production: WebAssembly allowed, no eval, no wildcard sockets", () => {
     const d = parse(buildCsp({ dev: false, gameWsUrl }));
-    expect(d.get("script-src")).toEqual(["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", "blob:"]);
+    expect(d.get("script-src")).toEqual(["'self'", "'unsafe-inline'", "'wasm-unsafe-eval'", "blob:", "https://challenges.cloudflare.com"]);
+    expect(d.get("frame-src")).toEqual(["https://challenges.cloudflare.com"]);
     expect(d.get("connect-src")).toEqual(["'self'", "blob:", "wss://cockfight-game.fly.dev", "https://cockfight-game.fly.dev"]);
     expect(d.get("worker-src")).toEqual(["'self'", "blob:"]);
+  });
+
+  it("lets the browser read Supabase's public views when it is configured", () => {
+    const d = parse(buildCsp({ dev: false, gameWsUrl, supabaseUrl: "https://abc.supabase.co/" }));
+    expect(d.get("connect-src")).toEqual(["'self'", "blob:", "wss://cockfight-game.fly.dev", "https://cockfight-game.fly.dev", "https://abc.supabase.co"]);
   });
 
   it("dev: adds eval for HMR and any websocket", () => {

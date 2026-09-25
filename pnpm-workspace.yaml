@@ -16,6 +16,7 @@ verifyDepsBeforeRun: false
 # (pnpm 11's default minimumReleaseAge holds back anything newer). Do not set minimumReleaseAge.
 catalog:
   next: 16.3.6
+  "@next/env": 16.3.6
   eslint-config-next: 16.3.6
   react: 19.2.8
   react-dom: 19.2.8
@@ -53,3 +54,4 @@ catalog:
   "@electric-sql/pglite": ^0.5.8
   smol-toml: ^1.9.0
   bs58: ^6.0.0
+  "@noble/curves": ^2.4.0

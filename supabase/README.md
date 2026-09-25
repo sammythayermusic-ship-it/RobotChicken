@@ -167,6 +167,19 @@ The spec's indexes are all present: `matches (winner, ended_at desc)`,
 `payouts (status, created_at)` for the worker's poll. Every foreign key also
 has an index.
 
+## Functions (Phase 2)
+
+The game server writes through two functions (`20260924000000_phase2_results.sql`), one
+round trip and one transaction each. Both are `security invoker` with an empty
+`search_path`, executable by `service_role` only.
+
+| Function | Called | Does |
+|---|---|---|
+| `record_gate(address, usd, tokens, decimals, source, tier)` | every uncached `POST /gate` check and every match-start re-check | Inserts the `balance_checks` row; when the address passed (`tier` not null) upserts its `players` row with that tier. Returns the rating (null below the gate). `source` gained `fixed` (the devnet test price). |
+| `record_match(id, region, started_at, ended_at, p1, p2, tier1, tier2, winner, reason, rounds, input_log, result_hash, net_quality_p1, net_quality_p2)` | once per finished ranked match | Upserts both players (address order), locks them in address order, inserts the match (`input_log` is the replay JSON, stored as UTF-8 bytea), and moves both ratings: ELO with K = 32, a draw scores ½, rounded half up (`packages/net` `eloUpdate` is the same formula; a test compares them). Idempotent on the id: a retry changes nothing and returns before = after. Returns `(address, elo_before, elo_after)` per player. |
+
+Open playtest matches (`GATE_MODE=open`) never reach the database.
+
 ## Public views
 
 **`leaderboard_v`** (materialized, refreshed every minute by pg_cron). One row

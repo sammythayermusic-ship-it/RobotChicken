@@ -2,21 +2,27 @@
 # Dockerfile's build context):
 #   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile --ha=false
 #
-# --ha=false keeps Phase 0/1 to ONE machine: rooms live in memory, and with two
-# machines behind one hostname the matchmaking request and the WebSocket join
-# can land on different machines.
+# --ha=false keeps it to ONE machine: the queue, the rooms, the gate's cache
+# and the playtest results live in memory, and with two machines behind one
+# hostname the matchmaking request and the WebSocket join can land on
+# different machines (and two queues would never pair their players).
 #
-# Regions: fly.toml only names the primary region. Frankfurt (and any second
-# machine, including Fly's HA default or autoscaling) must wait for Phase 2 to
-# pin each WebSocket to the machine that holds its room: fly-replay keyed on
-# the processId in the WebSocket path, or a per-machine public address. Then:
-#   fly scale count 1 --region fra --config apps/game/fly.toml
+# Regions: Sammy chose one region (iad) to start, so every player shares one
+# queue. A second region or machine needs Redis (Colyseus presence + driver)
+# and each WebSocket pinned to the machine that holds its room (fly-replay
+# keyed on the processId, or a per-machine public address); see
+# docs/decisions.md. The client already takes the server URL from
+# NEXT_PUBLIC_GAME_WS_URL.
+#
+# Gate: set GATE_MODE=open for a playtest; ranked needs the secrets listed in
+# the README (mint, Helius, Turnstile, queue JWT, Supabase).
 
 app = "cockfight-game"
 primary_region = "iad"
 kill_signal = "SIGTERM"
-# Fly's maximum. Phase 0 drains in milliseconds; Phase 2's onBeforeShutdown
-# uses the window to let a live match finish before the machine stops.
+# Fly's maximum. On SIGTERM the fight rooms let a live match finish and its
+# result be stored before the machine stops (a 5-round match can run ~8 min,
+# longer than this: deploy between busy periods).
 kill_timeout = 300
 
 [env]

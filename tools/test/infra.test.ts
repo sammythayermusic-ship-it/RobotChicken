@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "smol-toml";
 import { repoPath } from "../src/root";
@@ -27,6 +27,24 @@ describe("deploy configs", () => {
     const alive = (t.checks as Toml).alive as Toml;
     expect(alive.port).toBe(8080);
     expect(alive.path).toBe("/health");
+  });
+  it("both Dockerfiles copy every workspace manifest before the filtered install", () => {
+    // A package missing here gets no node_modules in the image, and the bundle can't resolve its imports.
+    const manifests = ["apps", "packages"].flatMap((dir) =>
+      readdirSync(repoPath(dir), { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => `${dir}/${d.name}/package.json`),
+    );
+    manifests.push("tools/package.json");
+    for (const file of ["apps/game/Dockerfile", "apps/worker/Dockerfile"]) {
+      const src = readFileSync(repoPath(file), "utf8");
+      const install = src.indexOf("pnpm install");
+      for (const m of manifests) {
+        const at = src.indexOf(`COPY ${m} `);
+        expect(at, `${file} copies ${m}`).toBeGreaterThan(-1);
+        expect(at, `${file} copies ${m} before installing`).toBeLessThan(install);
+      }
+    }
   });
   it("vercel.json installs only the web app and deploys to iad1", () => {
     const v = JSON.parse(readFileSync(repoPath("apps/web/vercel.json"), "utf8")) as Toml;

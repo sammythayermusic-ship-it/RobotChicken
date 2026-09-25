@@ -1,6 +1,7 @@
 import {
   RULES, clone, compressInputs, createMatch, deriveEvents, step, type MatchState, type Replay, type Rules, type SimEvent,
 } from "@cockfight/sim";
+import type { MatchDriver } from "./driver";
 import type { InputSource } from "./input/source";
 
 /**
@@ -8,7 +9,7 @@ import type { InputSource } from "./input/source";
  * keyboard). Owns the sim state, feeds it inputs one tick at a time, records
  * the input log (for replays) and derives presentation events.
  */
-export class LocalMatch {
+export class LocalMatch implements MatchDriver {
   prev: MatchState;
   cur: MatchState;
   /** Events produced by the most recent tick. */

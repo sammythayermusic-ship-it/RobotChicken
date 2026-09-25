@@ -2,12 +2,12 @@ import Link from "next/link";
 import { RULES } from "@cockfight/sim";
 import { ShowcaseSlot } from "@/components/site/ShowcaseSlot";
 
-// Phase 0 placeholder hero. Copy describes the planned game; the wallet box is
-// disabled and says so, because nothing here checks a wallet yet.
+// Landing page. The wallet box opens the online lobby with the address filled
+// in (/play?mode=online&wallet=…); the game server's gate does the checking.
 const STEPS = [
   { n: "01", title: "Hold", body: "Hold $COCK in the wallet you paste. It is read, never spent. Holding more unlocks chrome, gold and diamond paint jobs." },
   { n: "02", title: "Fight", body: "1v1 robot-chicken duels, best of three. Peck, shove, slam, dive-kick, and a super when your Heat is full." },
-  { n: "03", title: "Earn", body: "Winners get paid in SOL out of the coin's trading fees, once payouts go live after online play." },
+  { n: "03", title: "Earn", body: "Winners get paid in SOL out of the coin's trading fees once payouts go live. The leaderboard is already counting." },
 ] as const;
 
 export default function Home() {
@@ -15,9 +15,14 @@ export default function Home() {
     <div className="flex min-h-dvh flex-col">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-5 sm:px-6">
         <span className="font-display text-sm tracking-wider text-chrome">COCKFIGHT</span>
-        <span className="rounded-full border border-neon-cyan/40 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-neon-cyan">
-          Preview build
-        </span>
+        <nav className="flex items-center gap-3">
+          <Link href="/leaderboard" className="text-sm font-semibold uppercase tracking-widest text-ash hover:text-chrome">
+            Leaderboard
+          </Link>
+          <span className="rounded-full border border-neon-cyan/40 px-3 py-1 text-xs font-semibold uppercase tracking-widest text-neon-cyan">
+            Preview build
+          </span>
+        </nav>
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 sm:px-6">
@@ -37,7 +42,8 @@ export default function Home() {
           <div className="rust-plate flex flex-col justify-between gap-6 rounded-2xl border border-rust/40 p-5 sm:p-6 lg:col-span-4">
             <div>
               <h2 className="font-display text-xl text-amber">Enter the pit</h2>
-              <form className="mt-4 flex flex-col gap-3">
+              <form className="mt-4 flex flex-col gap-3" action="/play" method="get" data-testid="landing-wallet">
+                <input type="hidden" name="mode" value="online" />
                 <label htmlFor="wallet" className="text-sm font-semibold uppercase tracking-wider text-ash">
                   Solana wallet address
                 </label>
@@ -45,16 +51,18 @@ export default function Home() {
                   id="wallet"
                   name="wallet"
                   type="text"
-                  disabled
                   placeholder="Paste your wallet address"
                   autoComplete="off"
                   aria-describedby="wallet-note"
                   spellCheck={false}
-                  className="w-full cursor-not-allowed rounded-lg border border-steel bg-pit/70 px-3 py-3 font-mono text-sm text-ash placeholder:text-ash/60"
+                  className="w-full rounded-lg border border-steel bg-pit/70 px-3 py-3 font-mono text-sm text-chrome placeholder:text-ash/60 focus:border-neon-cyan focus:outline-none"
                 />
+                <button type="submit" className="rounded-lg border border-neon-cyan/60 py-2 font-display text-neon-cyan hover:bg-neon-cyan/10">
+                  FIGHT ONLINE
+                </button>
               </form>
               <p id="wallet-note" className="mt-2 text-sm text-ash">
-                The wallet check opens with online play. Until then nothing here reads a wallet.
+                Hold $30 of $COCK to play online. The address is only read, never charged, and nothing is wagered.
               </p>
             </div>
             <Link

@@ -214,7 +214,11 @@ describe("PGlite capability probe", () => {
 
 describe("migration files and the harness", () => {
   it("are named the way the Supabase CLI expects, in version order", () => {
-    expect(listMigrations().map((m) => m.name)).toEqual(["20260923000000_init.sql", "20260923000100_cron.sql"]);
+    expect(listMigrations().map((m) => m.name)).toEqual([
+      "20260923000000_init.sql",
+      "20260923000100_cron.sql",
+      "20260924000000_phase2_results.sql",
+    ]);
   });
 
   it("listMigrations() rejects a file the CLI would silently skip", () => {

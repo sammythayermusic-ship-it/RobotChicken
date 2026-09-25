@@ -12,11 +12,11 @@ runs in phases, each one branch and one PR, stopping for review:
 |---|---|---|
 | 0 · Scaffold | Monorepo, deterministic sim skeleton, Supabase migrations, Fly/Vercel configs, CI, placeholder chicken | PR #1 |
 | 1 · The fighter | Full move set, rounds, Heat/super, ring-outs, arena, HUD, juice, sound, local 2P + CPU, Blender import pipeline | PR #2 |
-| 2 · Online | Colyseus matchmaking, prediction/reconciliation, wallet gate, replays, leaderboard | — |
+| 2 · Online | Colyseus matchmaking, prediction/reconciliation, wallet gate, replays, leaderboard | PR #3 |
 | 3 · Money | Fee claims, payouts, anti-abuse, /admin | — |
 | 4 · Launch | Mainnet, load test, runbook | — |
 
-`docs/HANDOFF.md` is the place to start, `docs/plan.md` is the build plan for Phases 0–1, `docs/decisions.md` records every
+`docs/HANDOFF.md` is the place to start, `docs/plan.md` is the build plan for Phases 0–1 (`docs/plan-phase2.md` for Phase 2), `docs/decisions.md` records every
 non-obvious choice (★ marks the ones for Sammy to confirm), `docs/changelog.md` tracks
 progress.
 
@@ -41,6 +41,10 @@ WEB_PORT=3001 pnpm dev
 `/dev/net` (dev builds only) joins a live fight room and shows the tick climbing, proving
 web ↔ game end to end. Nothing needs env vars locally; see `.env.example` for the full list.
 
+Online play works locally too: the dev game server runs in open (playtest) mode, so open
+`/play` in two browser windows, pick **ONLINE** in both, type two names and you'll be
+matched against yourself.
+
 ## Play it
 
 Open `/play`, pick **VS CPU** (easy / normal / hard) or **2 PLAYERS · 1 KEYBOARD**, press FIGHT.
@@ -53,7 +57,15 @@ it mid-fight is fine. D-pad = arrows (hold ▼ to block, double-tap to dash), PE
 the context button reads JUMP, SLAM (with ▼ held) or DIVE (in the air). Tap the timer to
 pause. `?touch=1` shows the buttons on a desktop too.
 
-Useful links: `/play?mode=cpu&difficulty=hard` skips the picker; `/play?bench=1` runs a
+**Online:** pick **ONLINE**. On a playtest server (`GATE_MODE=open`) you type a name; on the
+real site you paste the wallet holding your $COCK (≥ $30, checked on the game server, never
+charged), pass the bot check, and queue. Both fighters are predicted and corrected as the
+server's inputs arrive; a player who drops pauses the match and has 10 s to come back before
+forfeiting. The result card links to the match's replay (`/m/<match id>`, re-simulated from its
+input log and marked ✓ verified when it reproduces the server's final state) and
+`/leaderboard` has today / 7 days / all time.
+
+Useful links: `/play?mode=cpu&difficulty=hard` skips the picker; `/play?mode=online` opens the online lobby; `/play?bench=1` runs a
 fixed-seed CPU match and prints copyable frame-time numbers (open it on a phone over your LAN
 with `WEB_PORT=3001 pnpm dev` and the machine's IP, or on a Vercel preview); `&fps=1` shows an
 FPS meter; `&tier=gold` previews a tier.
@@ -63,20 +75,29 @@ FPS meter; `&tier=gold` previews a tier.
 Local play needs no server, so a static export can go on any static host for friends to try:
 
 ```bash
-pnpm --filter @cockfight/web export        # builds apps/web/out (with Netlify _headers, noindex)
+pnpm --filter @cockfight/web export        # builds apps/web/out (with Netlify _headers + _redirects, noindex)
 npx netlify-cli deploy --dir apps/web/out --prod --no-build --site cockfight-playtest
 ```
 
 Live at https://cockfight-playtest.netlify.app (Sammy's Netlify account). This is a playtest
 mirror only; production stays on Vercel per the spec.
 
+**Online playtest:** the static site talks to a game server. Deploy one on Fly in open mode
+(no wallet, no database; see Deploying), then build the export pointing at it:
+
+```bash
+NEXT_PUBLIC_GAME_WS_URL=wss://cockfight-game.fly.dev pnpm --filter @cockfight/web export
+```
+
+and add the Netlify origin to the game server's `ALLOWED_ORIGINS`.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `pnpm verify` | lint + typecheck + unit tests + asset validation + hitbox bake check + builds |
-| `pnpm test` | every unit test (vitest projects: sim, shared, solana, web, game, worker, tools) |
-| `pnpm test:e2e` | Playwright against a production build (port 3130, `E2E_PORT` to change): the functional suite in Chromium, the touch controls on a Pixel 7 (`chromium-touch`, real multi-finger touches), golden replays in Chromium, Firefox and WebKit. An iPhone smoke test runs locally with `--project=webkit-touch`. CI runs `test:e2e:desktop` and `test:e2e:touch` as two parallel jobs |
+| `pnpm test` | every unit test (vitest projects: sim, net, shared, solana, web, game, worker, tools). `net` includes a simulated-network harness: whole matches between CPU bots at 40–300 ms RTT with jitter and stalls, checking convergence, desyncs and correction sizes |
+| `pnpm test:e2e` | Playwright against a production build (port 3130, `E2E_PORT` to change) and the production game server bundle in open mode (port 2667, `E2E_GAME_PORT`): the functional suite in Chromium (including two browsers playing online, a forfeit after the 10 s grace, and the replay reproducing the match), the touch controls on a Pixel 7 (`chromium-touch`, real multi-finger touches), golden replays in Chromium, Firefox and WebKit. An iPhone smoke test runs locally with `--project=webkit-touch`. CI runs `test:e2e:desktop` and `test:e2e:touch` as two parallel jobs |
 | `pnpm test:perf` | local frame-timing check (desktop + Pixel 7 proxy), writes `docs/captures/phase-1/perf.json` |
 | `pnpm assets:import --blend <file>` | exports a hero chicken from Blender, validates it and bakes its hitboxes (`docs/art-pipeline.md`) |
 | `pnpm textures` | converts tier textures to KTX2 (needs KTX-Software 4.4) |
@@ -94,8 +115,9 @@ apps/web        Next.js 16 site + plain three.js game engine (src/game)
 apps/game       Colyseus 0.18 authoritative game server (Fly.io)
 apps/worker     fee claims + payouts (Phase 3; a health stub now)
 packages/sim    deterministic fighter simulation shared by server and client
+packages/net    online protocol, the server's authoritative match, the client's prediction/rollback, results + ELO
 packages/shared constants, tiers, zod env schemas
-packages/solana chain interfaces (Phase 2/3)
+packages/solana the wallet gate (balance + price) and chain interfaces (Phase 3)
 supabase        SQL migrations (tested on PGlite)
 tools           asset validation / hitbox bake, Blender runner, DB test harness
 art/blender     scripted Blender pipeline (placeholder chicken, export settings)
@@ -115,12 +137,26 @@ None of these have been run yet: there is no Fly or Vercel CLI or linked account
 build machine, so every command below is **unverified**. CI builds both Docker images and
 checks `/health`.
 
-**Game server (Fly.io, iad; add fra in Phase 2):**
+**Game server (Fly.io, iad; one machine):**
 
 ```bash
 fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile --ha=false
 fly secrets set ALLOWED_ORIGINS=https://cockfight.fun --config apps/game/fly.toml
 ```
+
+It runs the queue, the matches and the wallet gate (`POST /gate`). Two setups:
+
+- **Open playtest** (before $COCK exists): `fly secrets set GATE_MODE=open` (plus
+  `ALLOWED_ORIGINS` with the playtest site's origin). Anyone queues with a name; nothing
+  touches the database.
+- **Ranked:** leave `GATE_MODE` unset (production defaults to `required`) and set
+  `NEXT_PUBLIC_COCK_MINT`, `HELIUS_API_KEY`, `TURNSTILE_SECRET_KEY`, `QUEUE_JWT_SECRET`,
+  `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (and `JUPITER_API_KEY` on mainnet). On
+  devnet with a test token, `GATE_FIXED_PRICE_USD` prices it. Until the mint and RPC are
+  set, `/gate` answers 503. The server logs a warning at boot for anything missing.
+
+The web app's `NEXT_PUBLIC_GAME_WS_URL` points at it (`wss://<app>.fly.dev`). More regions
+or machines need Redis and per-machine routing first (`docs/decisions.md`).
 
 **Worker (Fly.io, exactly one machine):**
 

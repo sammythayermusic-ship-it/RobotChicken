@@ -24,6 +24,7 @@
     "three": "catalog:"
   },
   "devDependencies": {
+    "@cockfight/net": "workspace:*",
     "@types/node": "catalog:",
     "@types/three": "catalog:",
     "tsx": "catalog:",

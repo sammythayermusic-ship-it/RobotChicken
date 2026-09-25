@@ -9,6 +9,21 @@ export interface CspOptions {
   dev: boolean;
   /** NEXT_PUBLIC_GAME_WS_URL, the Colyseus endpoint (ws:// or wss://). */
   gameWsUrl: string;
+  /** NEXT_PUBLIC_SUPABASE_URL: the replay page and leaderboard read its public views. */
+  supabaseUrl?: string;
+}
+
+/** Cloudflare Turnstile (the bot check before the queue): its script and its widget iframe. */
+export const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+function origin(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" || u.protocol === "http:" ? [u.origin] : [];
+  } catch {
+    return [];
+  }
 }
 
 const SOCKET_FOR: Record<string, string> = { "ws:": "ws:", "wss:": "wss:", "http:": "ws:", "https:": "wss:" };
@@ -34,8 +49,8 @@ export function gameOrigins(raw: string): string[] {
   return [`${ws}//${url.host}`, `${http}//${url.host}`];
 }
 
-export function buildCsp({ dev, gameWsUrl }: CspOptions): string {
-  const connect = ["'self'", "blob:", ...gameOrigins(gameWsUrl), ...(dev ? ["ws:", "wss:"] : [])];
+export function buildCsp({ dev, gameWsUrl, supabaseUrl }: CspOptions): string {
+  const connect = ["'self'", "blob:", ...gameOrigins(gameWsUrl), ...origin(supabaseUrl), ...(dev ? ["ws:", "wss:"] : [])];
   return [
     "default-src 'self'",
     // 'unsafe-inline': the App Router streams its flight payload through inline
@@ -43,7 +58,9 @@ export function buildCsp({ dev, gameWsUrl }: CspOptions): string {
     // 'wasm-unsafe-eval': the Draco and Basis decoders compile WebAssembly
     // (WebAssembly only, not JS eval). blob: covers the decoders' worker bootstrap.
     // 'unsafe-eval' is dev-only, for Turbopack HMR and React refresh.
-    `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:${dev ? " 'unsafe-eval'" : ""}`,
+    `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: ${TURNSTILE_ORIGIN}${dev ? " 'unsafe-eval'" : ""}`,
+    // Turnstile renders its challenge in an iframe.
+    `frame-src ${TURNSTILE_ORIGIN}`,
     // Tailwind injects a <style> in dev; production inlines critical CSS.
     "style-src 'self' 'unsafe-inline'",
     // GLTFLoader turns embedded glb images into blob: URLs.

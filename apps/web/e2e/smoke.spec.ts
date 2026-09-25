@@ -105,7 +105,9 @@ test.describe("landing", () => {
     await expect(page).toHaveTitle("COCKFIGHT");
     await expect(page.getByRole("heading", { level: 1, name: "COCKFIGHT" })).toBeVisible();
     await expect(page.getByText("Hold to play. Win to earn.")).toBeVisible();
-    await expect(page.getByLabel("Solana wallet address")).toBeDisabled();
+    // The wallet box opens the online lobby with the address filled in.
+    await expect(page.getByLabel("Solana wallet address")).toBeEditable();
+    await expect(page.getByTestId("landing-wallet")).toHaveAttribute("action", "/play");
     await expect(page.getByTestId("rules-hash")).toHaveText(/^[0-9a-f]{16}$/);
 
     const canvas = page.locator("canvas");
