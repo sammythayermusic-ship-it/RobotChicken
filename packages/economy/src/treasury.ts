@@ -51,6 +51,8 @@ export interface TreasuryOptions {
   minSweepUsd?: number;
   /** Alert when the hot wallet's SOL for fees drops under this (lamports). */
   lowSolLamports?: bigint;
+  /** False in observer mode (no seed key): midnight books the daily rewards but no seed draw. */
+  drawSeed?: boolean;
 }
 
 export interface PayPassResult {
@@ -73,6 +75,7 @@ export class Treasury {
   readonly maxAttempts: number;
   readonly minSweepUsd: number;
   readonly lowSolLamports: bigint;
+  readonly drawSeed: boolean;
   /** The price fetched at the last claim tick (or boot); pool maths use it until the next one. */
   price: Price | null = null;
   /** The last computed pool state (what the site and the game server see). */
@@ -94,6 +97,13 @@ export class Treasury {
     this.maxAttempts = o.maxAttempts ?? 5;
     this.minSweepUsd = o.minSweepUsd ?? 50;
     this.lowSolLamports = o.lowSolLamports ?? 50_000_000n;
+    this.drawSeed = o.drawSeed ?? true;
+  }
+
+  /** Replace the knobs at runtime (/admin settings); an invalid set is rejected and the old one kept. */
+  updateParams(p: EconomyParams): void {
+    validateParams(p);
+    (this as { params: EconomyParams }).params = p;
   }
 
   /** Fetch the price (kept until the next claim tick). Throws when no source answers. */
@@ -247,11 +257,12 @@ export class Treasury {
   async #confirmSent(now: number, r: PayPassResult): Promise<void> {
     for (const row of await this.ledger.sentPayouts()) {
       if (!row.sig) continue;
-      const st = await this.chain.status(row.sig);
+      const sentAt = row.sentAt ?? row.createdAt;
+      const st = await this.chain.status(row.sig, sentAt);
       if (st === "confirmed") {
         await this.ledger.markPaid(row.id, now);
         r.confirmed++;
-      } else if (st === "failed" || (st === "expired" && row.attempts + 1 >= this.maxAttempts) || (st === "unknown" && now - row.createdAt > this.expireMs * this.maxAttempts * 4)) {
+      } else if (st === "failed" || (st === "expired" && row.attempts + 1 >= this.maxAttempts) || (st === "unknown" && now - sentAt > this.expireMs * this.maxAttempts * 4)) {
         await this.ledger.markFailed(row.id, `transaction ${st}: ${row.sig}`);
         r.failed++;
         await this.alerts.alert("info", `payout ${row.idemKey} failed (${st}); it needs a look in /admin`);
@@ -276,11 +287,11 @@ export class Treasury {
       const pool = (grossDay * BigInt(this.params.dailyPoolBps)) / 10_000n + seedDaily;
       const ranking = await this.ledger.dailyRanking(yesterday);
       const rewards = dailyRewards(pool, ranking, this.params);
-      await this.ledger.bookDaily(yesterday, pool, rewards);
+      await this.ledger.bookDaily(yesterday, { grossDay, seedDaily, pool }, rewards);
       daily = rewards.length;
     }
     let seed: SeedDraw | null = null;
-    if (!(await this.ledger.hasSeedDraw(today))) {
+    if (this.drawSeed && !(await this.ledger.hasSeedDraw(today))) {
       const price = this.price ?? (await this.refreshPrice());
       const w = await this.ledger.window(now);
       const { grossDay } = await this.ledger.dailyPoolInputs(yesterday);
@@ -292,8 +303,10 @@ export class Treasury {
         try {
           sig = await this.chain.seedTransfer(seed.total);
         } catch (e) {
-          await this.alerts.alert("info", `seed draw failed, nothing drawn today: ${msg(e)}`);
-          seed = { win: 0n, daily: 0n, total: 0n, shortfall: seed.shortfall };
+          // Not booked: the next call (every minute) tries again, so a
+          // transient RPC error at midnight doesn't cost the day its seed.
+          await this.alerts.alert("info", `seed draw failed, will retry: ${msg(e)}`);
+          return { daily, seed: null };
         }
       }
       await this.ledger.bookSeedDraw(today, seed, sig);

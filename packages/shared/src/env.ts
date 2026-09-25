@@ -70,13 +70,59 @@ export const gameEnv = z.object({
 /** Parsed game env; GATE_MODE is resolved from NODE_ENV when unset. */
 export type GameEnv = Omit<z.infer<typeof gameEnv>, "GATE_MODE"> & { GATE_MODE: "open" | "required" };
 
-/** Phase 0 worker: a health stub. Money settings arrive with Phase 3. */
+/**
+ * The worker: fee claims, the pool, payouts. Everything is optional so the
+ * process boots with nothing (health only); with Supabase it computes the
+ * pool ("observer"); with the hot wallet key and PAYOUTS_ENABLED it pays.
+ */
+const usd = (d: number) => z.coerce.number().nonnegative().default(d);
 export const workerEnv = z.object({
   ...common,
   PORT: port(8080),
   FLY_REGION: z.string().default("local"),
   // Global kill switch for payouts. z.stringbool: "false" parses as false (z.coerce.boolean would say true).
   PAYOUTS_ENABLED: z.stringbool().default(false),
+  HELIUS_API_KEY: z.string().optional(),
+  SOLANA_RPC_URL: z.url().optional(),
+  JUPITER_PRICE_URL: z.url().default("https://api.jup.ag/price/v3"),
+  JUPITER_API_KEY: z.string().optional(),
+  /** Public addresses (documentation and sanity checks; the keys below must match). */
+  LAUNCH_WALLET: base58.optional(),
+  HOT_WALLET: base58.optional(),
+  SEED_WALLET: base58.optional(),
+  COLD_WALLET: base58.optional(),
+  /** Secret keys (Fly secrets only): base58 or a JSON byte array, 64 or 32 bytes. */
+  HOT_WALLET_KEYPAIR: z.string().optional(),
+  SEED_WALLET_KEYPAIR: z.string().optional(),
+  /** The coin whose creator fees are claimed, and the token they arrive in and are paid in (PUMP). */
+  COCK_MINT: base58.optional(),
+  PAYOUT_MINT: base58.optional(),
+  MAX_PAYOUT_USD: usd(500),
+  MAX_DAILY_REWARD_USD: usd(5000),
+  MAX_HOURLY_USD: usd(3000),
+  MAX_DAILY_USD: usd(20000),
+  PAYOUT_P_MIN_USD: usd(0.75),
+  PAYOUT_P_MAX_USD: usd(75),
+  PAYOUT_W_FLOOR: z.coerce.number().positive().default(200),
+  PLAYER_SHARE_BPS: z.coerce.number().int().min(1).max(10000).default(7000),
+  DAILY_POOL_BPS: z.coerce.number().int().min(0).max(10000).default(2000),
+  /** Rust, Chrome, Gold multipliers. */
+  TIER_WEIGHTS: z
+    .string()
+    .default("1,2.5,6")
+    .transform((s, ctx) => {
+      const w = s.split(",").map((x) => Number(x.trim()));
+      if (w.length !== 3 || w.some((x) => !Number.isFinite(x) || x <= 0)) {
+        ctx.addIssue({ code: "custom", message: "TIER_WEIGHTS must be three positive numbers: rust,chrome,gold" });
+        return z.NEVER;
+      }
+      return w as [number, number, number];
+    }),
+  SEED_DAILY_DRAW_DIVISOR: z.coerce.number().min(1).default(14),
+  GUARANTEED_WIN_BUDGET_USD: usd(0),
+  GUARANTEED_DAILY_POOL_USD: usd(0),
+  /** Priority fee per compute unit (micro-lamports). */
+  PRIORITY_FEE_MICROLAMPORTS: z.coerce.number().int().nonnegative().default(10000),
 });
 export type WorkerEnv = z.infer<typeof workerEnv>;
 

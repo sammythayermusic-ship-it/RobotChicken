@@ -10,7 +10,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cockfight/economy": "workspace:*",
     "@cockfight/shared": "workspace:*",
+    "@cockfight/solana": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {
@@ -18,6 +20,7 @@
     "esbuild": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "bs58": "catalog:"
   }
 }

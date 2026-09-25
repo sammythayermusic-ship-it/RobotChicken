@@ -22,6 +22,8 @@ export interface PayoutRow {
   sig: string | null;
   attempts: number;
   createdAt: number;
+  /** When the signed transaction was recorded (status sent / paid). */
+  sentAt: number | null;
 }
 
 export interface ClaimRecord {
@@ -50,6 +52,13 @@ export interface LedgerWindow {
   /** Booked but not yet sent (pending + deferred): the hot wallet must keep covering these. */
   outstanding: bigint;
   seedToday: SeedDraw;
+}
+
+export interface DailyPoolBooking {
+  grossDay: bigint;
+  seedDaily: bigint;
+  /** dailyPoolBps × grossDay + seedDaily. */
+  pool: bigint;
 }
 
 export interface SeedBalance {
@@ -93,7 +102,7 @@ export interface Ledger {
   dailyRanking(day: string): Promise<RankedPlayer[]>;
   /** Gross claimed on that UTC day and the seed's daily part booked for it. */
   dailyPoolInputs(day: string): Promise<{ grossDay: bigint; seedDaily: bigint }>;
-  bookDaily(day: string, pool: bigint, rewards: DailyReward[]): Promise<void>;
+  bookDaily(day: string, pool: DailyPoolBooking, rewards: DailyReward[]): Promise<void>;
   seed(): Promise<SeedBalance>;
   hasSeedDraw(day: string): Promise<boolean>;
   bookSeedDraw(day: string, draw: SeedDraw, sig: string | null): Promise<void>;
@@ -126,7 +135,13 @@ export interface Chain {
   /** Native balance for fees and rent (lamports). */
   hotSol(): Promise<bigint>;
   prepareTransfer(to: string, amount: bigint, memo: string): Promise<PreparedTransfer>;
-  status(sig: string): Promise<TxStatus>;
+  /**
+   * Where a sent transaction stands. `sentAt` lets a chain that no longer
+   * knows the transaction's blockhash (after a restart) call an old, unseen
+   * signature expired: a blockhash lives about a minute, so a transaction
+   * unseen many minutes after signing can never land.
+   */
+  status(sig: string, sentAt: number): Promise<TxStatus>;
   /** Claim creator fees into the hot wallet; null when nothing is claimable. */
   claim(): Promise<ClaimResult | null>;
   /** Seed wallet → hot wallet. */

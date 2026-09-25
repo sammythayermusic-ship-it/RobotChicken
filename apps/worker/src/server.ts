@@ -1,20 +1,32 @@
 /**
- * The worker's HTTP surface: a health endpoint for Fly's machine check and
- * nothing else. The worker has no public service; Phase 3 adds the fee
- * claims and payouts it exists for.
+ * The worker's HTTP surface: /health for Fly's machine check and for a quick
+ * look at what the treasury is doing. No public service; no secrets in the
+ * body (amounts and modes only).
  */
 import { createServer, type Server } from "node:http";
 
-export interface WorkerHealth {
-  ok: true;
-  /** Always false in this build: there is no payout code to enable yet. */
-  payoutsEnabled: false;
+export interface WorkerStatus {
+  ok: boolean;
+  mode: "health" | "observer" | "live";
+  payoutsEnabled: boolean;
+  startedAt: string;
+  error?: string;
+  lastError?: string;
+  errors?: number;
+  lastClaimAt?: string;
+  lastMidnight?: { at: string; daily: number; seed: string | null };
+  pay?: { at: string; sent: number; deferred: number; confirmed: number; retried: number; failed: number };
+  pool?: {
+    computedAt: string;
+    priceUsd: number;
+    perWin: { rust: string; chrome: string; gold: string };
+    dailyPool: string;
+    perWinBudget: string;
+    weightedMilli: string;
+  };
 }
 
-export function createWorkerServer(): Server {
-  const health: WorkerHealth = { ok: true, payoutsEnabled: false };
-  const body = JSON.stringify(health);
-
+export function createWorkerServer(status: () => WorkerStatus): Server {
   return createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0];
     if (path !== "/health") {
@@ -25,7 +37,9 @@ export function createWorkerServer(): Server {
       res.writeHead(405, { allow: "GET, HEAD", "content-type": "application/json" }).end('{"error":"method not allowed"}');
       return;
     }
-    res.writeHead(200, {
+    const s = status();
+    const body = JSON.stringify(s);
+    res.writeHead(s.ok ? 200 : 503, {
       "content-type": "application/json",
       "cache-control": "no-store",
       "content-length": Buffer.byteLength(body),

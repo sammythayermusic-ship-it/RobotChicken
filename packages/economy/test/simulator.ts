@@ -6,7 +6,7 @@
  */
 import {
   DAY_MS, HOUR_MS, bps, dayStart, matchWeightMilli, utcDay, winAmount,
-  type Alerts, type Chain, type ClaimRecord, type ClaimResult, type DailyReward, type EconomyParams, type Ledger,
+  type Alerts, type Chain, type ClaimRecord, type ClaimResult, type DailyPoolBooking, type DailyReward, type EconomyParams, type Ledger,
   type LedgerWindow, type PauseState, type PayoutRow, type PoolState, type PreparedTransfer, type Price, type RankedPlayer,
   type SeedBalance, type SeedDraw, type TxStatus, type WinBooking,
 } from "../src";
@@ -21,7 +21,6 @@ export interface SimPayout extends PayoutRow {
   matchId: string | null;
   day: string | null;
   rank: number | null;
-  sentAt: number | null;
   paidAt: number | null;
   lastError: string | null;
   nextAttemptAt: number | null;
@@ -220,8 +219,9 @@ export class MemoryLedger implements Ledger {
     return { grossDay, seedDaily: this.seedDraws.get(day)?.draw.daily ?? 0n };
   }
 
-  async bookDaily(day: string, pool: bigint, rewards: DailyReward[]): Promise<void> {
+  async bookDaily(day: string, booking: DailyPoolBooking, rewards: DailyReward[]): Promise<void> {
     if (this.dailies.has(day)) return;
+    const pool = booking.pool;
     const seen = new Set<string>();
     for (const r of rewards) {
       if (seen.has(r.address)) throw new Error("one address under two ranks");
@@ -358,7 +358,7 @@ export class MemoryChain implements Chain {
     };
   }
 
-  async status(sig: string): Promise<TxStatus> {
+  async status(sig: string, _sentAt: number): Promise<TxStatus> {
     if (this.landed.has(sig)) return "confirmed";
     if (this.unsent.has(sig)) return "expired";
     return "unknown";

@@ -18,6 +18,8 @@
   "devDependencies": {
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "@types/node": "catalog:"
+    "@types/node": "catalog:",
+    "@solana/web3.js": "catalog:",
+    "@solana/spl-token": "catalog:"
   }
 }
