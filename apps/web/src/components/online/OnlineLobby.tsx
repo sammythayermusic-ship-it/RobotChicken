@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Tier } from "@cockfight/shared";
 import { anonName, isWalletAddress } from "@cockfight/solana";
@@ -95,7 +96,8 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
         const ms = await probeRtt();
         if (!live()) return;
         setRtt(ms);
-        q = await joinQueue({ ...opts, guestId: opts.name ? guestId() : undefined, rtt: ms }, who);
+        // The per-browser id: the open queue's one ticket per browser, and ranked mode's fingerprint.
+        q = await joinQueue({ ...opts, guestId: opts.name ? guestId() : undefined, fp: opts.token ? guestId() : undefined, rtt: ms }, who);
         if (!live()) {
           await q.leave();
           return;
@@ -152,7 +154,7 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
             const t = savedToken();
             if (t) {
               setMe({ tier: t.tier as Tier, usd: t.usd });
-              void enterQueue({ token: t.token }, { name: anonName(t.address), tier: t.tier as Tier });
+              void enterQueue({ token: t.token }, { name: t.name ?? anonName(t.address), tier: t.tier as Tier });
             }
           }
         })
@@ -211,8 +213,8 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
       setPhase({ kind: "error", message: "Can't reach the game server right now.", retry: true });
     } else if (ans.ok) {
       setMe({ tier: ans.tier, usd: ans.usd });
-      saveToken({ token: ans.token, address: w, tier: ans.tier, usd: ans.usd });
-      void enterQueue({ token: ans.token }, { name: anonName(w), tier: ans.tier });
+      saveToken({ token: ans.token, address: w, tier: ans.tier, usd: ans.usd, name: ans.name ?? null });
+      void enterQueue({ token: ans.token }, { name: ans.name ?? anonName(w), tier: ans.tier });
     } else if ("shortUsd" in ans) {
       setPhase({ kind: "short", usd: ans.usd, shortUsd: ans.shortUsd, gateUsd: ans.gateUsd });
     } else {
@@ -288,6 +290,14 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
           />
           <p className="text-xs text-zinc-400">
             Hold at least ${config.gateUsd} of $COCK to play. The address is only read, never charged, and nothing you hold is wagered.
+            {isWalletAddress(wallet.trim()) ? (
+              <>
+                {" "}
+                <Link href={`/p/${wallet.trim()}`} className="text-cyan-300">
+                  Your profile & name →
+                </Link>
+              </>
+            ) : null}
           </p>
           <Turnstile key={tsKey} siteKey={publicEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY} onToken={setTurnstile} onError={() => setTsFailed(true)} />
           {tsFailed ? (

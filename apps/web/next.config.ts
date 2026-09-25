@@ -22,12 +22,15 @@ const nextConfig: NextConfig = {
 };
 
 /**
- * /m/<match id> is served by the static /m page, which reads the id from the
- * address bar. A static export has no rewrites; scripts/export-static.mjs
+ * /m/<match id> and /p/<address> are served by the static /m and /p pages,
+ * which read the id from the address bar. A static export has no rewrites; scripts/export-static.mjs
  * writes the same rule into out/_redirects for Netlify.
  */
 async function prettyRoutes() {
-  return [{ source: "/m/:id", destination: "/m" }];
+  return [
+    { source: "/m/:id", destination: "/m" },
+    { source: "/p/:address", destination: "/p" },
+  ];
 }
 
 /** Security headers (src/lib/csp.ts) and cache rules, sent by `next start` and Vercel. */

@@ -15,7 +15,7 @@ export interface ServerConfig {
 }
 
 export type GateAnswer =
-  | { ok: true; usd: number; tier: Tier; token: string; elo: number | null }
+  | { ok: true; usd: number; tier: Tier; token: string; elo: number | null; name?: string | null }
   | { ok: false; usd: number; shortUsd: number; gateUsd: number }
   | { ok: false; error: string; message: string };
 
@@ -65,3 +65,35 @@ export async function probeRtt(base = httpBase(), tries = 3): Promise<number> {
   }
   return Number.isFinite(best) ? Math.round(best) : 999;
 }
+
+export type UsernameAnswer = { ok: true; name: string } | { ok: false; error: string; message: string };
+
+/** POST /username/nonce → the nonce the wallet signs (inside `cockfight:claim:<nonce>:<name>`). */
+export async function postUsernameNonce(address: string, base = httpBase()): Promise<{ nonce: string } | { error: string; message: string }> {
+  const res = await fetch(`${base}/username/nonce`, {
+    method: "POST",
+    headers: { "content-type": "text/plain;charset=UTF-8" },
+    body: JSON.stringify({ address }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = (await res.json().catch(() => ({ error: "server", message: `The game server answered ${res.status}.` }))) as { nonce?: string; error?: string; message?: string };
+  return body.nonce ? { nonce: body.nonce } : { error: body.error ?? "server", message: body.message ?? "Couldn't get a nonce." };
+}
+
+/** POST /username with the wallet's signature over the claim message. */
+export async function postUsername(o: { address: string; name: string; nonce: string; signature: string }, base = httpBase()): Promise<UsernameAnswer> {
+  const res = await fetch(`${base}/username`, {
+    method: "POST",
+    headers: { "content-type": "text/plain;charset=UTF-8" },
+    body: JSON.stringify(o),
+    signal: AbortSignal.timeout(10_000),
+  });
+  try {
+    return (await res.json()) as UsernameAnswer;
+  } catch {
+    return { ok: false, error: "server", message: `The game server answered ${res.status}.` };
+  }
+}
+
+/** The claim message, exactly as the server checks it. */
+export const claimMessage = (nonce: string, name: string): string => `cockfight:claim:${nonce}:${name}`;

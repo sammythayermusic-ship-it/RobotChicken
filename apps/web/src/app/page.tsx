@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { RULES } from "@cockfight/sim";
+import { PoolPanel } from "@/components/site/PoolPanel";
 import { ShowcaseSlot } from "@/components/site/ShowcaseSlot";
 
 // Landing page. The wallet box opens the online lobby with the address filled
@@ -7,7 +8,7 @@ import { ShowcaseSlot } from "@/components/site/ShowcaseSlot";
 const STEPS = [
   { n: "01", title: "Hold", body: "Hold $COCK in the wallet you paste. It is read, never spent. Holding more unlocks chrome, gold and diamond paint jobs." },
   { n: "02", title: "Fight", body: "1v1 robot-chicken duels, best of three. Peck, shove, slam, dive-kick, and a super when your Heat is full." },
-  { n: "03", title: "Earn", body: "Winners get paid in SOL out of the coin's trading fees once payouts go live. The leaderboard is already counting." },
+  { n: "03", title: "Earn", body: "Every win pays in PUMP out of the coin's trading fees, within seconds of the knockout. The top 10 of each day split a second pool at midnight UTC." },
 ] as const;
 
 export default function Home() {
@@ -16,6 +17,9 @@ export default function Home() {
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 pt-5 sm:px-6">
         <span className="font-display text-sm tracking-wider text-chrome">COCKFIGHT</span>
         <nav className="flex items-center gap-3">
+          <Link href="/how-it-works" className="text-sm font-semibold uppercase tracking-widest text-ash hover:text-chrome">
+            How it works
+          </Link>
           <Link href="/leaderboard" className="text-sm font-semibold uppercase tracking-widest text-ash hover:text-chrome">
             Leaderboard
           </Link>
@@ -72,6 +76,13 @@ export default function Home() {
               FIGHT
             </Link>
           </div>
+        </section>
+
+        <section aria-labelledby="pool" className="mt-8">
+          <h2 id="pool" className="sr-only">
+            Prize pool
+          </h2>
+          <PoolPanel />
         </section>
 
         <section aria-labelledby="how" className="mt-14 mb-16">
