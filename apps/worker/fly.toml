@@ -14,6 +14,16 @@ kill_timeout = 60
 [env]
   NODE_ENV = "production"
   PORT = "8080"
+  SOLANA_CLUSTER = "mainnet-beta"
+  # PUMP: fees arrive in it and players are paid in it.
+  PAYOUT_MINT = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
+  LAUNCH_WALLET = "Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF"
+  HOT_WALLET = "HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1"
+  SEED_WALLET = "BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX"
+  CLAIM_EVERY_MIN = "10"
+  # Per-launch values and keys live in Fly secrets: COCK_MINT, PAYOUTS_ENABLED,
+  # HOT_WALLET_KEYPAIR, SEED_WALLET_KEYPAIR, COLD_WALLET, the guarantees, SUPABASE_*,
+  # HELIUS_API_KEY, TELEGRAM_*.
 
 [checks.alive]
   type = "http"

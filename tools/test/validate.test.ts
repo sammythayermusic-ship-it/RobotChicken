@@ -248,7 +248,8 @@ describe("command-line paths", () => {
     const env = { ...process.env, GITHUB_ACTIONS: "", CI: "" };
     const run = spawnSync("pnpm", ["-s", "assets:validate", `../${PLACEHOLDER_GLB}`, "--json"], { cwd: repoPath("docs"), encoding: "utf8", env });
     expect(run.status, run.stderr).toBe(0);
-    const json = run.stdout.slice(run.stdout.indexOf("{"), run.stdout.lastIndexOf("}") + 1);
+    // pnpm's engine warnings (e.g. Node 24 on a Mac) print `wanted: {"node":"22.x"}` first, so start at a line that opens with "{".
+    const json = run.stdout.slice(run.stdout.search(/^\{/m), run.stdout.lastIndexOf("}") + 1);
     expect(JSON.parse(json)).toMatchObject({ file: PLACEHOLDER_GLB, ok: true });
   });
 });
