@@ -28,6 +28,7 @@ import {
   Msg, SYNC_EVERY, ServerMatch, decodeInputs, encodeFrames, encodeReplayLog, encodeSync, forfeitRound, outcome, resultHash, roundEnded,
   type RoundRecord,
 } from "@cockfight/net";
+import { lowerTier, qualityBps } from "@cockfight/economy";
 import { RECONNECT_GRACE_S, SNAPSHOT_HZ, TICK_RATE } from "@cockfight/shared";
 import { Phase, serialize, type MatchState } from "@cockfight/sim";
 import { getContext } from "../context";
@@ -41,6 +42,9 @@ export const READY_TIMEOUT_S = 30;
 export const LINGER_S = 60;
 /** Total pause time each player may cause in one match. */
 export const PAUSE_BUDGET_S = 20;
+/** How long the result screen follows the payout to its transaction, and how often it looks. */
+export const PAYOUT_FOLLOW_S = 55;
+export const PAYOUT_POLL_MS = 3000;
 
 type Status = "waiting" | "live" | "paused" | "over" | "cancelled";
 
@@ -157,7 +161,7 @@ export class FightRoom extends Room<{ state: FightState }> {
       // Ad hoc room: first free seat, a guest identity.
       const side = this.#players[0] === null ? 0 : this.#players[1] === null ? 1 : null;
       if (side === null) throw new Error("room is full");
-      const player: PlayerInfo = { id: `guest:${client.sessionId}`, address: null, name: auth.guest || `P${side + 1}`, tier: "rust" };
+      const player: PlayerInfo = { id: `guest:${client.sessionId}`, address: null, name: auth.guest || `P${side + 1}`, tier: "rust", ipHash: null, fp: null };
       this.#players[side] = player;
       (this.state.seats[side] as Seat).name = player.name;
       client.auth = { side, player } satisfies SeatAuth;
@@ -391,12 +395,25 @@ export class FightRoom extends Room<{ state: FightState }> {
     const inputLog = encodeReplayLog(this.#sm.toReplay());
     // Guests (open mode) have no address: their hash covers the match id and the log.
     const winnerAddress = res.winner === null ? null : players[res.winner].address;
+    const endedAt = new Date();
+    // Ranked: the win pays the lower tier of the pair, times the spec's quality
+    // multiplier (dropped inputs, a forfeit inside 30 s).
+    const ranked = this.state.ranked && res.winner !== null;
+    const tierPaid = ranked ? lowerTier(players[0].tier, players[1].tier) : null;
+    const q = ranked
+      ? qualityBps({
+          dropRate: 1 - this.#sm.quality(res.winner as 0 | 1),
+          reason: res.reason,
+          durationS: (endedAt.getTime() - this.#startedAt.getTime()) / 1000,
+        })
+      : null;
+    if (tierPaid) this.state.payoutTier = tierPaid;
     const rec: MatchRecord = {
       id: this.#sm.matchId,
       ranked: this.state.ranked,
       region: ctx.region,
       startedAt: this.#startedAt,
-      endedAt: new Date(),
+      endedAt,
       players,
       winner: res.winner,
       reason: res.reason,
@@ -404,20 +421,49 @@ export class FightRoom extends Room<{ state: FightState }> {
       inputLog,
       resultHash: await resultHash(this.#sm.matchId, winnerAddress, inputLog),
       netQuality: [round3(this.#sm.quality(0)), round3(this.#sm.quality(1))],
+      tierPaid,
+      qualityBps: q,
     };
     ctx.memory.remember(rec);
     const store = rec.ranked ? ctx.ranked : ctx.memory;
     try {
-      const elo = await withRetry(() => store.record(rec));
+      const { elo, payout } = await withRetry(() => store.record(rec));
       elo.forEach(([before, after], i) => {
         const seat = this.state.seats[i] as Seat;
         seat.elo = before;
         seat.eloDelta = after - before;
       });
+      if (payout) {
+        this.state.payout = payout.amount.toString();
+        this.state.payoutReason = payout.reason;
+        if (payout.amount > 0n) this.#followPayout();
+      }
     } catch (e) {
       logger.error(`[fight ${this.roomId}] could not record the result:`, e);
     }
     this.state.recorded = true;
+  }
+
+  /** Poll the payout row until the worker has sent it (or the room closes), so the result screen can link the transaction. */
+  #followPayout(): void {
+    const ctx = getContext();
+    const db = ctx.supabase;
+    if (!db) return;
+    const deadline = Date.now() + PAYOUT_FOLLOW_S * 1000;
+    const timer = this.clock.setInterval(() => {
+      void db
+        .payoutStatus(this.#sm.matchId)
+        .then((p) => {
+          if (!p) return;
+          this.state.payoutUsd = p.usd;
+          if (p.sig) {
+            this.state.payoutSig = p.sig;
+            timer.clear();
+          }
+        })
+        .catch(() => {});
+      if (Date.now() > deadline) timer.clear();
+    }, PAYOUT_POLL_MS);
   }
 
   async #loadRatings(): Promise<void> {

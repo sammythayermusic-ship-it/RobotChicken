@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { MemoryStore, MEMORY_MATCHES, supabaseHeaders, type MatchRecord } from "../src/results";
 import type { PlayerInfo } from "../src/seats";
 
-const A: PlayerInfo = { id: "guest:a", address: null, name: "Ace", tier: "rust" };
-const B: PlayerInfo = { id: "guest:b", address: null, name: "Bee", tier: "gold" };
+const A: PlayerInfo = { id: "guest:a", address: null, name: "Ace", tier: "rust", ipHash: null, fp: null };
+const B: PlayerInfo = { id: "guest:b", address: null, name: "Bee", tier: "gold", ipHash: null, fp: null };
 
 function rec(id: string, winner: 0 | 1 | null, endedAt: number, players: [PlayerInfo, PlayerInfo] = [A, B]): MatchRecord {
   return {
@@ -19,6 +19,8 @@ function rec(id: string, winner: 0 | 1 | null, endedAt: number, players: [Player
     inputLog: "{}",
     resultHash: "0".repeat(64),
     netQuality: [1, 1],
+    tierPaid: null,
+    qualityBps: null,
   };
 }
 
@@ -26,8 +28,8 @@ describe("MemoryStore", () => {
   it("rates matches with ELO, counts draws as a match for both, and is idempotent on the id", async () => {
     const now = Date.UTC(2026, 8, 24, 12);
     const m = new MemoryStore(() => now);
-    expect(await m.record(rec("m1", 0, now))).toEqual([[1000, 1016], [1000, 984]]);
-    expect(await m.record(rec("m1", 0, now))).toEqual([[1016, 1016], [984, 984]]);
+    expect(await m.record(rec("m1", 0, now))).toEqual({ elo: [[1000, 1016], [1000, 984]], payout: null });
+    expect(await m.record(rec("m1", 0, now))).toEqual({ elo: [[1016, 1016], [984, 984]], payout: null });
     await m.record(rec("m2", null, now));
     const lb = m.leaderboard();
     expect(lb[0]).toMatchObject({ display_name: "Ace", wins_today: 1, matches_today: 2, wins_all: 1, matches_all: 2 });

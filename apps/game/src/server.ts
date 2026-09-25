@@ -19,6 +19,7 @@ import { originPolicy } from "./origins";
 import { FightRoom } from "./rooms/FightRoom";
 import { QUEUE_ROOM, QueueRoom } from "./rooms/QueueRoom";
 import { ROOM_KEY } from "./seats";
+import { UsernameService } from "./usernames";
 
 export interface MakeServerOptions {
   /** Parsed environment. Defaults to `loadGameEnv(process.env)`. */
@@ -34,6 +35,16 @@ export interface MakeServerOptions {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NO_STORE = { "cache-control": "no-store" };
+
+/** A JSON body posted as text/plain (a CORS "simple" request); null when it isn't JSON. */
+function parseBody(body: unknown): unknown {
+  if (typeof body !== "string") return body;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
 
 export function makeServer(opts: MakeServerOptions = {}) {
   const env = opts.env ?? loadGameEnv(process.env);
@@ -63,15 +74,18 @@ export function makeServer(opts: MakeServerOptions = {}) {
    */
   const gate = createEndpoint("/gate", { method: "POST" }, async (c) => {
     const req = c.request;
-    let body: unknown = c.body;
-    if (typeof body === "string") {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        body = null;
-      }
-    }
-    const res = await ctx.gate.enter(body, req ? clientIp(req.headers) : null);
+    const res = await ctx.gate.enter(parseBody(c.body), req ? clientIp(req.headers) : null);
+    return Response.json(res.body, { status: res.status, headers: NO_STORE });
+  });
+
+  /** Usernames by signed message: a nonce, then the claim. Both posted as text/plain like /gate. */
+  const usernames = new UsernameService(env.QUEUE_JWT_SECRET, ctx.supabase);
+  const usernameNonce = createEndpoint("/username/nonce", { method: "POST" }, async (c) => {
+    const res = usernames.nonce(parseBody(c.body));
+    return Response.json(res.body, { status: res.status, headers: NO_STORE });
+  });
+  const usernameClaim = createEndpoint("/username", { method: "POST" }, async (c) => {
+    const res = await usernames.claim(parseBody(c.body), c.request ? clientIp(c.request.headers) : null);
     return Response.json(res.body, { status: res.status, headers: NO_STORE });
   });
 
@@ -100,7 +114,7 @@ export function makeServer(opts: MakeServerOptions = {}) {
       fight: defineRoom(FightRoom),
     },
     // Colyseus' own router (no Express app is mounted); the matchmaking routes are added at listen().
-    routes: createRouter({ health, config, gate, match, leaderboard }),
+    routes: createRouter({ health, config, gate, usernameNonce, usernameClaim, match, leaderboard }),
   });
 }
 

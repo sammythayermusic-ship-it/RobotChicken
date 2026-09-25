@@ -12,6 +12,9 @@ export interface PlayerInfo {
   address: string | null;
   name: string;
   tier: Tier;
+  /** Salted hashes of the IP's /24 and the browser fingerprint (ranked; null when unknown). Never public. */
+  ipHash: string | null;
+  fp: string | null;
 }
 
 export interface FightOptions {

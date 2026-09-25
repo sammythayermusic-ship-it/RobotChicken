@@ -15,6 +15,8 @@ export interface QueueClaims {
   usd: number;
   /** Rating at gate time (display only). */
   elo: number | null;
+  /** Claimed username (Phase 3), shown instead of anon-XXXX. */
+  name?: string | null;
   iat: number;
   exp: number;
 }

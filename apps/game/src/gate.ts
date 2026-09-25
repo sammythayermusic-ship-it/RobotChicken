@@ -25,7 +25,7 @@ export interface GateConfig {
 }
 
 export type GateResponse =
-  | { status: 200; body: { ok: true; usd: number; tier: Tier; token: string; elo: number | null } }
+  | { status: 200; body: { ok: true; usd: number; tier: Tier; token: string; elo: number | null; name: string | null } }
   | { status: 200; body: { ok: false; usd: number; shortUsd: number; gateUsd: number } }
   | { status: 400 | 403 | 409 | 429 | 502 | 503; body: { ok: false; error: string; message: string } };
 
@@ -88,8 +88,12 @@ export class GateService {
     if (!check.ok || !check.tier) {
       return { status: 200, body: { ok: false, usd: round2(check.usd), shortUsd: round2(check.shortUsd), gateUsd: this.env.GATE_USD_MIN } };
     }
-    const token = this.tokens.sign({ sub: address, tier: check.tier, usd: round2(check.usd), elo });
-    return { status: 200, body: { ok: true, usd: round2(check.usd), tier: check.tier, token, elo } };
+    const player = await this.player(address);
+    if (player?.bannedUntil && player.bannedUntil > Date.now()) {
+      return fail(403, "banned", `This wallet is suspended until ${new Date(player.bannedUntil).toUTCString()}.`);
+    }
+    const token = this.tokens.sign({ sub: address, tier: check.tier, usd: round2(check.usd), elo, name: player?.username ?? null });
+    return { status: 200, body: { ok: true, usd: round2(check.usd), tier: check.tier, token, elo, name: player?.username ?? null } };
   }
 
   /** The match-start re-check (cache bypass). Null when the gate can't answer (the match then goes ahead on the queue token). */
@@ -101,6 +105,17 @@ export class GateService {
       return c;
     } catch (e) {
       console.warn("[gate] re-check failed:", e instanceof Error ? e.message : e);
+      return null;
+    }
+  }
+
+  /** The player's row (username, ban): best effort, null without Supabase. */
+  private async player(address: string): Promise<{ username: string | null; bannedUntil: number | null } | null> {
+    if (!this.supabase) return null;
+    try {
+      return await this.supabase.player(address);
+    } catch (e) {
+      console.warn("[gate] could not read the player:", e instanceof Error ? e.message : e);
       return null;
     }
   }

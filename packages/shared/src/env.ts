@@ -49,6 +49,12 @@ export const gameEnv = z.object({
   GATE_MODE: z.enum(["open", "required"]).optional(),
   /** Signs queue tokens (HS256). Unset: a random per-process secret (one machine only). */
   QUEUE_JWT_SECRET: z.string().min(32).optional(),
+  /** Salts the IP / fingerprint hashes the caps count by (defaults to QUEUE_JWT_SECRET). */
+  ANTI_ABUSE_SALT: z.string().min(16).optional(),
+  /** Ranked pairing waits for this many tickets (spec: 4, so two colluding wallets can't be sure to meet). */
+  QUEUE_MIN_PLAYERS: z.coerce.number().int().min(2).default(2),
+  /** Two wallets are not paired again within this long (spec: 2 minutes). */
+  REMATCH_COOLDOWN_S: z.coerce.number().int().nonnegative().default(120),
   REDIS_URL: z.url().optional(),
   HELIUS_API_KEY: z.string().optional(),
   /** Overrides the Helius RPC URL built from HELIUS_API_KEY (e.g. a local validator). */

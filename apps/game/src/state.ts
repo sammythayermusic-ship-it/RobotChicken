@@ -41,6 +41,14 @@ export const FightState = schema(
     reason: t.string().default(""),
     /** True once the result is stored (the replay page can load it). */
     recorded: t.boolean().default(false),
+    /** Ranked: what the win booked (raw units of the payout token, as a string), its dollar value, and why it is what it is. */
+    payout: t.string().default("0"),
+    payoutUsd: t.float32().default(0),
+    payoutReason: t.string().default(""),
+    /** The tier the win was paid at (the lower of the two). */
+    payoutTier: t.string().default(""),
+    /** The payout's transaction signature once the worker has sent it. */
+    payoutSig: t.string().default(""),
     /** Sim tick (60 Hz), mirrored for /dev/net and the room list. */
     tick: t.uint32().default(0),
     /** Sim `Phase`: 0 countdown, 1 fighting, 2 roundEnd, 3 matchEnd. */
