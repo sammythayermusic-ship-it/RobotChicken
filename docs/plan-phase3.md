@@ -190,11 +190,10 @@ gains the pool figures), `payouts_v` (Solscan links per match).
 
 ## Launch kit (alongside, not blocking the code)
 
-- **Domain**: the spec names `cockfight.fun`. Sammy registers it (Namecheap or
-  Cloudflare Registrar); DNS on Cloudflare so Turnstile, the site and the game
-  server share one dashboard. Alternates if taken: `cockfight.gg`, `cockfight.lol`.
-- **X account**: Sammy creates `@cockfightfun` (or the domain's handle) and keeps
-  the credentials. Bio, banner and pinned post come from the launch kit.
+- **Domain**: **cockfightsol.fun**, registered on Cloudflare Registrar 2026-09-24 (DNS on
+  Cloudflare, so Turnstile, the site and the game server share one dashboard).
+- **X account**: **@CockFightSol** (x.com/CockFightSol), created 2026-09-24. Bio, banner and
+  pinned post come from the launch kit.
 - **Hype video (60–90 s)**: real gameplay captured at 60 fps on Sammy's Mac (OBS or
   QuickTime from the local build with `?quality=high`), cut to the beat, with
   cinematic inserts of the chickens rendered from the Blender files. Sammy mixes

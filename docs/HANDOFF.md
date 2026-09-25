@@ -11,6 +11,7 @@ then `CLAUDE.md`.
 | Phase 1: the local fighter (+ phone controls) | Done. [PR #2](https://github.com/sammythayermusic-ship-it/cockfight/pull/2), branch `phase-1-fighter` (stacked on PR #1), CI green |
 | Phase 2: online | Built, waiting for review. Branch `phase-2-online` (stacked on PR #2), PR #3. Plan: `docs/plan-phase2.md` |
 | Phase 3: money | Planned. Branch `phase-3-money` (off `phase-2-online`). Plan: `docs/plan-phase3.md` (economy agreed with Sammy 2026-09-24; launch on pump.fun paired to PUMP) |
+| Domain / X | cockfightsol.fun (Cloudflare) · @CockFightSol |
 | Playtest | https://cockfight-playtest.netlify.app (static build on Sammy's Netlify account; keyboard and phones; online needs a deployed game server, see below) |
 
 - **Merging:** only Sammy merges. Merge PR #1 first with a merge commit (not a squash), then PR #2 the same way, then PR #3: each is stacked on the one before.
