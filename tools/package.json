@@ -9,6 +9,7 @@
     "assets:validate": "tsx src/cli/validate.ts",
     "assets:bake": "tsx src/cli/bake.ts",
     "assets:inspect": "tsx src/cli/inspect.ts",
+    "assets:import": "tsx src/cli/import.ts",
     "blender": "tsx src/cli/blender.ts"
   },
   "dependencies": {

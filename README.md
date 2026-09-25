@@ -10,13 +10,13 @@ runs in phases, each one branch and one PR, stopping for review:
 
 | Phase | Scope | Status |
 |---|---|---|
-| 0 · Scaffold | Monorepo, deterministic sim skeleton, Supabase migrations, Fly/Vercel configs, CI, placeholder chicken | this PR |
-| 1 · The fighter | Full move set, rounds, Heat/super, ring-outs, arena, HUD, juice, sound, local 2P + CPU, Blender import pipeline | next PR |
+| 0 · Scaffold | Monorepo, deterministic sim skeleton, Supabase migrations, Fly/Vercel configs, CI, placeholder chicken | PR #1 |
+| 1 · The fighter | Full move set, rounds, Heat/super, ring-outs, arena, HUD, juice, sound, local 2P + CPU, Blender import pipeline | PR #2 |
 | 2 · Online | Colyseus matchmaking, prediction/reconciliation, wallet gate, replays, leaderboard | — |
 | 3 · Money | Fee claims, payouts, anti-abuse, /admin | — |
 | 4 · Launch | Mainnet, load test, runbook | — |
 
-`docs/plan.md` is the build plan for Phases 0–1, `docs/decisions.md` records every
+`docs/HANDOFF.md` is the place to start, `docs/plan.md` is the build plan for Phases 0–1, `docs/decisions.md` records every
 non-obvious choice (★ marks the ones for Sammy to confirm), `docs/changelog.md` tracks
 progress.
 
@@ -41,13 +41,45 @@ WEB_PORT=3001 pnpm dev
 `/dev/net` (dev builds only) joins a live fight room and shows the tick climbing, proving
 web ↔ game end to end. Nothing needs env vars locally; see `.env.example` for the full list.
 
+## Play it
+
+Open `/play`, pick **VS CPU** (easy / normal / hard) or **2 PLAYERS · 1 KEYBOARD**, press FIGHT.
+Controls and frame data are in `docs/controls.md` (the Controls panel has a key tester for
+keyboard ghosting). Esc or P pauses (quality, screen shake, sound), and so does clicking the timer.
+
+**On a phone** (VS CPU): on-screen buttons appear by themselves. Hold it upright for a
+controller panel under the fight, or sideways for see-through buttons in the corners; turning
+it mid-fight is fine. D-pad = arrows (hold ▼ to block, double-tap to dash), PECK = Space, and
+the context button reads JUMP, SLAM (with ▼ held) or DIVE (in the air). Tap the timer to
+pause. `?touch=1` shows the buttons on a desktop too.
+
+Useful links: `/play?mode=cpu&difficulty=hard` skips the picker; `/play?bench=1` runs a
+fixed-seed CPU match and prints copyable frame-time numbers (open it on a phone over your LAN
+with `WEB_PORT=3001 pnpm dev` and the machine's IP, or on a Vercel preview); `&fps=1` shows an
+FPS meter; `&tier=gold` previews a tier.
+
+## Playtest build (static)
+
+Local play needs no server, so a static export can go on any static host for friends to try:
+
+```bash
+pnpm --filter @cockfight/web export        # builds apps/web/out (with Netlify _headers, noindex)
+npx netlify-cli deploy --dir apps/web/out --prod --no-build --site cockfight-playtest
+```
+
+Live at https://cockfight-playtest.netlify.app (Sammy's Netlify account). This is a playtest
+mirror only; production stays on Vercel per the spec.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `pnpm verify` | lint + typecheck + unit tests + asset validation + hitbox bake check + builds |
 | `pnpm test` | every unit test (vitest projects: sim, shared, solana, web, game, worker, tools) |
-| `pnpm test:e2e` | Playwright against a production build (port 3130, `E2E_PORT` to change) |
+| `pnpm test:e2e` | Playwright against a production build (port 3130, `E2E_PORT` to change): the functional suite in Chromium, the touch controls on a Pixel 7 (`chromium-touch`, real multi-finger touches), golden replays in Chromium, Firefox and WebKit. An iPhone smoke test runs locally with `--project=webkit-touch`. CI runs `test:e2e:desktop` and `test:e2e:touch` as two parallel jobs |
+| `pnpm test:perf` | local frame-timing check (desktop + Pixel 7 proxy), writes `docs/captures/phase-1/perf.json` |
+| `pnpm assets:import --blend <file>` | exports a hero chicken from Blender, validates it and bakes its hitboxes (`docs/art-pipeline.md`) |
+| `pnpm textures` | converts tier textures to KTX2 (needs KTX-Software 4.4) |
 | `pnpm replay:golden` | replays the golden input logs and prints their final state hashes |
 | `pnpm replay:golden --bless` | re-records them after an intentional rules change (say why in the commit) |
 | `pnpm assets:placeholder` | rebuilds the placeholder chicken with headless Blender, validates, re-bakes hitboxes |

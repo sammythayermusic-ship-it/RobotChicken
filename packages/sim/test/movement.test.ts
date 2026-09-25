@@ -42,6 +42,41 @@ describe("inputs", () => {
     }
     expect(dashes).toBe(1);
   });
+  it("dash taps read the real keys: holding one direction and double-tapping the other dashes the tapped way", () => {
+    // P1 faces right. [held, tapped, expected dash state]
+    for (const [hold, tap, want] of [
+      [B.L, B.R, St.dashF],
+      [B.R, B.L, St.dashB],
+    ] as const) {
+      let s = fightingMatch();
+      s = run(s, 20, hold, 0);
+      const seq = [hold | tap, hold | tap, hold, hold, hold | tap, hold | tap, hold, hold];
+      const seen: number[] = [];
+      for (const b of seq) {
+        s = step(s, b, 0);
+        seen.push(s.f[0].st);
+      }
+      expect(seen, `hold ${hold} tap ${tap}`).toContain(want);
+      expect(seen).not.toContain(want === St.dashF ? St.dashB : St.dashF);
+    }
+  });
+  it("releasing the opposite key is not a press: hold →, tap ← once, → again is no dash", () => {
+    let s = fightingMatch();
+    s = step(s, B.R, 0); // → pressed once
+    s = run(s, 2, B.R | B.L, 0); // ← joins (SOCD: neutral)
+    for (let t = 0; t < 4; t++) {
+      s = step(s, B.R, 0); // ← released: → was never released, so this is no second → press
+      expect([St.dashF, St.dashB]).not.toContain(s.f[0].st);
+    }
+    expect(s.f[0].st).toBe(St.walkF);
+  });
+  it("double taps completing in both directions on the same tick cancel out", () => {
+    let s = fightingMatch();
+    s = step(s, B.L | B.R, 0);
+    s = step(s, 0, 0);
+    s = step(s, B.L | B.R, 0);
+    expect(s.f[0].dashReq).toBe(0);
+  });
 });
 
 describe("walking", () => {

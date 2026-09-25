@@ -1,6 +1,13 @@
 /**
- * assets:validate v1: checks a chicken glb against chicken.contract.json so a
- * bad export fails here, with a readable hint, instead of in the game.
+ * assets:validate: checks a chicken glb against chicken.contract.json and
+ * moves.json so a bad export fails here, with a readable hint, instead of in
+ * the game.
+ *
+ * v1: extensions, names, rig, skin, budgets, helpers, clip names and timing,
+ * root motion, facing. v2 adds: every moves.json clip exists in the glb and in
+ * hitboxes.json; each attack's hit helper is in front of hurt_body's center
+ * and above the floor on every active sample; texture rules (textures.ts);
+ * per-clip animation bytes; and the first-load table (firstLoad.ts).
  *
  * Errors fail the run; warnings are printed and do not. The document rules
  * (`validateDocument`) work on an in-memory gltf-transform Document, so tests
@@ -8,11 +15,13 @@
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { Animation, Document, Node } from "@gltf-transform/core";
+import type { Accessor, Animation, Document, Node } from "@gltf-transform/core";
 import { getGLPrimitiveCount } from "@gltf-transform/functions";
 import validator from "gltf-validator";
-import { CONTRACT, fromRepo, readGlb, sha256, type Contract, type HitboxesFile } from "./gltf";
-import { KEY_EPS, axisScale, buildRig, clipDuration, frameTime, poseWorld, tracksOf, transformPoint, type Rig, type Track } from "./sample";
+import { firstLoad, formatFirstLoad, mb, type FirstLoad } from "./firstLoad";
+import { CONTRACT, MOVES, PUBLIC_DIR, fromRepo, readGlb, readGlbJson, sha256, type Contract, type HitboxesFile, type MovesFile } from "./gltf";
+import { KEY_EPS, axisScale, buildRig, clipDuration, frameTime, nodeIndex, poseWorld, tracksOf, transformPoint, type Rig, type Track } from "./sample";
+import { checkDocumentTextures, checkTierTextures } from "./textures";
 
 export type Severity = "error" | "warning";
 
@@ -32,6 +41,14 @@ export interface ValidateStats {
   primitives: number;
   materials: string[];
   validator: { version: string; errors: number; warnings: number };
+  /** Embedded textures (0 for the flat-material placeholder). */
+  textures: number;
+  /** Animation data in the glb; accessors shared between clips count once. */
+  animationBytes: number;
+  /** The GLB's JSON chunk: mostly one accessor/sampler/channel entry per animated channel. */
+  jsonBytes: number;
+  /** Per clip; a time accessor shared with other clips counts in each. */
+  clipBytes: Record<string, number>;
 }
 
 export interface ValidateReport {
@@ -41,6 +58,8 @@ export interface ValidateReport {
   warnings: number;
   issues: Issue[];
   stats: Partial<ValidateStats>;
+  /** Everything fetched before the first fight (absent when file checks are off). */
+  firstLoad?: FirstLoad;
 }
 
 /** What the web runtime can load (three r186 GLTFLoader + our decoders). */
@@ -151,7 +170,34 @@ function quatAngleDeg(a: number[], b: number[]): number {
   return (2 * Math.acos(dot) * 180) / Math.PI;
 }
 
-export function validateDocument(doc: Document, contract: Contract = CONTRACT): { issues: Issue[]; stats: Partial<ValidateStats> } {
+/** The contract's sphere helper that a move hits with when moves.json names no hitNode. */
+function defaultHitNode(contract: Contract): string | undefined {
+  return Object.keys(contract.helpers).find((k) => contract.helpers[k]?.shape === "sphere");
+}
+
+/** Bytes of animation data: all clips (accessors counted once) and per clip. */
+function animationBytes(anims: Animation[]): { total: number; perClip: Record<string, number> } {
+  const all = new Set<Accessor>();
+  const perClip: Record<string, number> = {};
+  for (const a of anims) {
+    const mine = new Set<Accessor>();
+    for (const s of a.listSamplers()) {
+      for (const acc of [s.getInput(), s.getOutput()]) {
+        if (!acc) continue;
+        mine.add(acc);
+        all.add(acc);
+      }
+    }
+    perClip[a.getName()] = [...mine].reduce((sum, acc) => sum + acc.getByteLength(), 0);
+  }
+  return { total: [...all].reduce((sum, acc) => sum + acc.getByteLength(), 0), perClip };
+}
+
+export function validateDocument(
+  doc: Document,
+  contract: Contract = CONTRACT,
+  moves: MovesFile = MOVES,
+): { issues: Issue[]; stats: Partial<ValidateStats> } {
   const issues: Issue[] = [];
   const err = (code: string, message: string) => issues.push({ severity: "error", code, message });
   const warn = (code: string, message: string) => issues.push({ severity: "warning", code, message });
@@ -301,11 +347,38 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
     if (names.includes(w)) continue;
     const found = clipNameHint(w, extra);
     if (found) hinted.add(found);
-    err("clips", `missing clip "${w}"${found ? ` (${hintFor(found, w)})` : ""}`);
+    const attack = w in moves.moves ? `; moves.json move "${w}" plays it` : "";
+    err("clips", `missing clip "${w}"${found ? ` (${hintFor(found, w)})` : ""}${attack}`);
   }
   for (const e of extra) {
     if (!hinted.has(e)) err("clips", `unexpected clip "${e}" (a stray action? delete it or rename it to one of the ${want.length} contract clips)`);
   }
+
+  // moves.json: every move plays the clip of its own name (packages/sim/src/rules.ts moveClip) and hits
+  // with a sphere helper. Missing glb clips are reported above; this catches the data drifting apart.
+  const fallbackHit = defaultHitNode(contract);
+  for (const [move, spec] of Object.entries(moves.moves)) {
+    const clip = contract.clips.find((c) => c.name === move);
+    if (!clip) {
+      err("moves", `moves.json move "${move}" has no clip "${move}" in chicken.contract.json (a move plays the clip of its own name)`);
+      continue;
+    }
+    if (!clip.phases) err("moves", `moves.json makes "${move}" an attack, but its contract clip has no phases`);
+    const hitNode = spec.hitNode ?? fallbackHit;
+    if (hitNode && !(hitNode in contract.helpers)) {
+      const found = byName(hitNode);
+      if (found.length !== 1 || found[0]!.getExtras()["cf_shape"] !== "sphere") {
+        err("moves", `moves.json ${move}.hitNode "${hitNode}" is not a sphere helper in the glb (an empty with cf_shape = "sphere")`);
+      }
+    }
+  }
+
+  const tex = checkDocumentTextures(doc, { maxSize: contract.budgets.textureSize });
+  issues.push(...tex.issues);
+  stats.textures = tex.count;
+  const bytes = animationBytes(anims);
+  stats.animationBytes = bytes.total;
+  stats.clipBytes = bytes.perClip;
 
   const jointSet = new Set(joints);
   const helperNodes = new Set(Object.values(helperIdx).map((i) => rig.nodes[i]!));
@@ -313,7 +386,7 @@ export function validateDocument(doc: Document, contract: Contract = CONTRACT): 
   for (const clip of contract.clips) {
     const anim = byClip.get(clip.name);
     if (!anim) continue;
-    checkClip(anim, clip, rig, { contract, rigNode, rootJoint, jointSet, helperNodes, helperIdx }, err, warn);
+    checkClip(anim, clip, rig, { contract, rigNode, rootJoint, jointSet, helperNodes, helperIdx, moves }, err, warn);
   }
 
   // Centering and facing at idle sample 0: the body sits over the origin (where
@@ -347,6 +420,7 @@ interface ClipCtx {
   jointSet: Set<Node>;
   helperNodes: Set<Node>;
   helperIdx: Record<string, number>;
+  moves: MovesFile;
 }
 
 function checkClip(
@@ -415,25 +489,52 @@ function checkClip(
     else if (JSON.stringify(phases) !== JSON.stringify(clip.phases)) {
       err("phases", `clip "${name}" cf_phases ${JSON.stringify(phases)} != contract [${clip.phases.join(",")}]`);
     }
-    // Attacks must actually reach forward while active.
-    const hurt = Object.keys(contract.helpers).find((k) => contract.helpers[k]?.shape === "capsule");
-    const [s, a] = clip.phases as [number, number];
-    const hurtIdx = hurt ? ctx.helperIdx[hurt] : undefined;
-    if (hurtIdx !== undefined && Math.round(exact) === clip.frames) {
-      for (const [h, spec] of Object.entries(contract.helpers)) {
-        const hi = ctx.helperIdx[h];
-        if (spec.shape !== "sphere" || hi === undefined) continue;
-        for (let f = s + 1; f <= s + a; f++) {
-          const w = poseWorld(rig, tracks, frameTime(f, contract.fps));
-          const hz = transformPoint(w[hi]!, [0, 0, 0])[2];
-          const bz = transformPoint(w[hurtIdx]!, [0, 0, 0])[2];
-          if (!(hz > bz)) {
-            err("active", `clip "${name}" active sample ${f}: "${h}" (z=${hz.toFixed(3)}) is not in front of "${hurt}" (z=${bz.toFixed(3)})`);
-            break;
-          }
-        }
-      }
-    }
+    const move = ctx.moves.moves[name];
+    if (move && Math.round(exact) === clip.frames) checkActive(name, clip.phases, move.hitNode ?? defaultHitNode(contract), tracks, rig, ctx, err);
+  }
+}
+
+/**
+ * During every active sample of an attack (contract phases: samples s+1..s+a,
+ * which the sim maps the move's active ticks onto) the move's hit sphere must
+ * be in front of the hurt capsule's center (sim x = glTF +Z) and reach above
+ * the floor (its top above y = 0). Otherwise frame data can pass every sim
+ * test while the attack never connects.
+ */
+function checkActive(
+  name: string,
+  phases: number[],
+  hitName: string | undefined,
+  tracks: Track[],
+  rig: Rig,
+  ctx: ClipCtx,
+  err: (code: string, message: string) => void,
+): void {
+  const { contract } = ctx;
+  const hurt = Object.keys(contract.helpers).find((k) => contract.helpers[k]?.shape === "capsule");
+  const hurtIdx = hurt ? ctx.helperIdx[hurt] : undefined;
+  const hitIdx = hitName === undefined ? -1 : (ctx.helperIdx[hitName] ?? nodeIndex(rig, hitName));
+  if (hurtIdx === undefined || hitIdx < 0) return; // missing helpers are reported elsewhere
+  const radius = rig.nodes[hitIdx]!.getExtras()["cf_radius"];
+  const r = typeof radius === "number" ? radius : 0;
+  const [s, a] = phases as [number, number];
+  const behind: string[] = [];
+  const below: string[] = [];
+  for (let f = s + 1; f <= s + a; f++) {
+    const w = poseWorld(rig, tracks, frameTime(f, contract.fps));
+    const m = w[hitIdx]!;
+    const [, hy, hz] = transformPoint(m, [0, 0, 0]);
+    const bz = transformPoint(w[hurtIdx]!, [0, 0, 0])[2];
+    const top = hy + r * Math.max(axisScale(m, 0), axisScale(m, 1), axisScale(m, 2));
+    if (!(hz > bz)) behind.push(`${f} (x ${hz.toFixed(3)} vs ${bz.toFixed(3)})`);
+    if (!(top > 0)) below.push(`${f} (top y ${top.toFixed(3)})`);
+  }
+  const window = `active samples ${s + 1}-${s + a}`;
+  if (behind.length) {
+    err("active", `clip "${name}" ${window}: "${hitName}" is not in front of "${hurt}"'s center at sample ${behind.join(", ")}; the ${name} can't reach anyone`);
+  }
+  if (below.length) {
+    err("active", `clip "${name}" ${window}: "${hitName}" is entirely below the floor at sample ${below.join(", ")}; the ${name} can't hit a standing chicken`);
   }
 }
 
@@ -443,15 +544,43 @@ export interface ValidateOptions {
   /** Repo or absolute path shown in messages. */
   file: string;
   contract?: Contract;
-  /** When hitboxes.json's source is this file, its sha256 must match. Null skips the check. */
+  /**
+   * hitboxes.json: it must have every moves.json clip, and when its source is
+   * this file its sha256 must match. Null skips both (the file is about to be re-baked).
+   */
   hitboxes?: HitboxesFile | null;
+  moves?: MovesFile;
+  /**
+   * The web app's public dir, for the tier textures and the first-load table
+   * (default apps/web/public). Null skips both, e.g. for a glb outside the game.
+   */
+  publicDir?: string | null;
+}
+
+/** hitboxes.json must hold a hit table for every clip moves.json plays, or the sim falls back to a static box. */
+export function checkHitboxesForMoves(hb: HitboxesFile, contract: Contract = CONTRACT, moves: MovesFile = MOVES): Issue[] {
+  const issues: Issue[] = [];
+  const err = (message: string) => issues.push({ severity: "error", code: "hitboxes", message: `${message}: run pnpm assets:bake` });
+  for (const [move, spec] of Object.entries(moves.moves)) {
+    const hitNode = spec.hitNode ?? defaultHitNode(contract);
+    const frames = contract.clips.find((c) => c.name === move)?.frames;
+    const clip = hb.clips?.[move];
+    if (!clip) err(`packages/sim/data/hitboxes.json has no clip "${move}" (moves.json move "${move}")`);
+    else if (frames !== undefined && clip.n !== frames) err(`hitboxes.json clip "${move}" has ${clip.n} frames, the contract ${frames}`);
+    else if (!hitNode || clip.hit?.[hitNode]?.length !== (clip.n + 1) * 3) {
+      err(`hitboxes.json clip "${move}" has no "${hitNode}" table, so moves.json ${move} would fall back to a static box`);
+    }
+  }
+  return issues;
 }
 
 export async function validateGlb(bytes: Uint8Array, opts: ValidateOptions): Promise<ValidateReport> {
   const contract = opts.contract ?? CONTRACT;
+  const moves = opts.moves ?? MOVES;
   const issues: Issue[] = [];
   const digest = sha256(bytes);
   let stats: Partial<ValidateStats> = { bytes: bytes.length, sha256: digest };
+  if (bytes.length >= 20) stats.jsonBytes = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(12, true);
 
   const report = await validator.validateBytes(bytes, { maxIssues: 0 });
   stats.validator = { version: validator.version(), errors: report.issues.numErrors, warnings: report.issues.numWarnings };
@@ -466,12 +595,13 @@ export async function validateGlb(bytes: Uint8Array, opts: ValidateOptions): Pro
     issues.push({ severity: "error", code: "parse", message: `cannot read the glb: ${(e as Error).message}` });
   }
   if (doc) {
-    const r = validateDocument(doc, contract);
+    const r = validateDocument(doc, contract, moves);
     issues.push(...r.issues);
     stats = { ...stats, ...r.stats };
   }
 
   const hb = opts.hitboxes;
+  if (hb) issues.push(...checkHitboxesForMoves(hb, contract, moves));
   if (hb?.source?.file && resolve(fromRepo(hb.source.file)) === resolve(fromRepo(opts.file)) && hb.source.sha256 !== digest) {
     issues.push({
       severity: "error",
@@ -480,8 +610,29 @@ export async function validateGlb(bytes: Uint8Array, opts: ValidateOptions): Pro
     });
   }
 
+  let load: FirstLoad | undefined;
+  const publicDir = opts.publicDir === undefined ? fromRepo(PUBLIC_DIR) : opts.publicDir;
+  if (publicDir) {
+    const tiers = checkTierTextures(publicDir, contract.budgets.textureSize);
+    issues.push(...tiers.issues);
+    const used = readGlbJson(bytes)?.extensionsUsed ?? [];
+    load = firstLoad({
+      glb: { file: opts.file, bytes: bytes.length, draco: used.includes("KHR_draco_mesh_compression"), ktx2: used.includes("KHR_texture_basisu") },
+      publicDir,
+      tiers: tiers.tiers,
+      budget: contract.budgets.firstLoadBytes,
+    });
+    if (load.total > load.budget) {
+      issues.push({
+        severity: "error",
+        code: "first-load",
+        message: `the first load is ${mb(load.total)}, over the ${mb(load.budget)} budget (table below): shrink the biggest files (ETC1S instead of UASTC, a 1k normal map) or load them lazily`,
+      });
+    }
+  }
+
   const errors = issues.filter((i) => i.severity === "error").length;
-  return { file: opts.file, ok: errors === 0, errors, warnings: issues.length - errors, issues, stats };
+  return { file: opts.file, ok: errors === 0, errors, warnings: issues.length - errors, issues, stats, ...(load ? { firstLoad: load } : {}) };
 }
 
 export async function validateFile(path: string, opts: Omit<ValidateOptions, "file"> & { file?: string } = {}): Promise<ValidateReport> {
@@ -493,12 +644,28 @@ export function formatReport(r: ValidateReport): string {
   const s = r.stats;
   const lines = [`validate ${r.file}`];
   if (s.bytes !== undefined) {
-    lines.push(
-      `  ${(s.bytes / 1024).toFixed(0)} KB, ${s.triangles ?? "?"} tris, ${s.joints ?? "?"} joints, ${s.clips ?? "?"} clips, ` +
-        `${s.materials?.length ?? "?"} materials; gltf-validator ${s.validator?.errors ?? "?"} errors, ${s.validator?.warnings ?? "?"} warnings`,
-    );
+    const parts = [
+      `${(s.bytes / 1024).toFixed(0)} KB`,
+      s.triangles !== undefined ? `${s.triangles} tris` : "",
+      s.joints !== undefined ? `${s.joints} joints` : "",
+      s.clips !== undefined ? `${s.clips} clips` : "",
+      s.materials ? `${s.materials.length} materials` : "",
+    ].filter(Boolean);
+    lines.push(`  ${parts.join(", ")}; gltf-validator ${s.validator?.errors ?? "?"} errors, ${s.validator?.warnings ?? "?"} warnings`);
   }
+  if (s.textures !== undefined) lines.push(`  textures: ${s.textures ? `${s.textures} embedded` : "none embedded (texture rules skipped)"}`);
+  if (s.animationBytes !== undefined && s.clipBytes) {
+    const json = s.jsonBytes !== undefined ? `; the glb's JSON chunk, mostly per-channel animation entries, adds ${kb(s.jsonBytes)}` : "";
+    lines.push(`  animations: ${kb(s.animationBytes)} of keyframe data (time accessors shared between clips count once${json})`);
+    const clips = Object.entries(s.clipBytes).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    for (let i = 0; i < clips.length; i += 4) {
+      lines.push(`    ${clips.slice(i, i + 4).map(([n, b]) => `${n.padEnd(10)} ${kb(b).padStart(8)}`).join("   ")}`);
+    }
+  }
+  if (r.firstLoad) lines.push(...formatFirstLoad(r.firstLoad));
   for (const i of r.issues) lines.push(`  ${i.severity === "error" ? "error  " : "warning"} [${i.code}] ${i.message}`);
   lines.push(`${r.ok ? "OK" : "FAIL"}: ${r.errors} error${r.errors === 1 ? "" : "s"}, ${r.warnings} warning${r.warnings === 1 ? "" : "s"}`);
   return lines.join("\n");
 }
+
+const kb = (bytes: number) => `${(bytes / 1024).toFixed(1)} KB`;

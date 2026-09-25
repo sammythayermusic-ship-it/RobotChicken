@@ -1,0 +1,31 @@
+/* Fight HUD. Hot bars are scaled by the engine with compositor-only transforms. */
+.hud-bar { transform-origin: left center; will-change: transform; }
+.hud-bar-right { transform-origin: right center; }
+/* The damage trail holds for the whole combo (an interrupted transition restarts its delay) and drains after the last hit. */
+.hud-trail { transition: transform 350ms ease-in 500ms; }
+.hud-flash { animation: hud-flash 180ms ease-out; }
+@keyframes hud-flash { 0% { filter: brightness(3); } 100% { filter: brightness(1); } }
+.hud-heat-full { animation: hud-heat 0.6s ease-in-out infinite alternate; }
+@keyframes hud-heat { from { box-shadow: 0 0 6px 1px rgba(255, 120, 30, 0.6); } to { box-shadow: 0 0 18px 4px rgba(255, 200, 60, 0.95); } }
+.hud-banner { animation: hud-banner 900ms cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes hud-banner {
+  0% { opacity: 0; transform: scale(2.2); }
+  18% { opacity: 1; transform: scale(0.94); }
+  28% { transform: scale(1); }
+  82% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.04); }
+}
+.hud-banner-hold { animation: hud-banner-hold 2s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+@keyframes hud-banner-hold {
+  0% { opacity: 0; transform: scale(2.4) rotate(-4deg); }
+  12% { opacity: 1; transform: scale(0.95) rotate(-2deg); }
+  20% { transform: scale(1) rotate(-2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-2deg); }
+}
+.hud-timer-low { animation: hud-timer 0.5s ease-in-out infinite alternate; }
+@keyframes hud-timer { from { color: #fff; } to { color: #ff3b30; transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) {
+  .hud-banner, .hud-banner-hold, .hud-heat-full, .hud-timer-low { animation-duration: 1ms; animation-iteration-count: 1; }
+}
+/* The pause mark after "ROUND n": the timer doubles as the on-screen pause button. */
+.hud-pause-glyph { display: inline-block; width: 7px; height: 8px; border-left: 2px solid currentColor; border-right: 2px solid currentColor; opacity: 0.8; }

@@ -159,7 +159,7 @@ test.describe("landing", () => {
 
     await page.getByRole("link", { name: "FIGHT" }).click();
     await expect(page).toHaveURL(/\/play$/);
-    await expect(page.getByText(/local fighter lands in Phase 1/)).toBeVisible();
+    await expect(page.getByTestId("mode-picker")).toBeVisible();
     await expect(page.locator("canvas")).toHaveCount(0);
     expect(await showcase(page)).toBeNull();
 

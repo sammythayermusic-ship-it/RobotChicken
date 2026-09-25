@@ -25,7 +25,8 @@ const GPU_ARGS = SOFTWARE
 
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 90_000,
+  // Software GL (CI) renders about a frame a second: a test there gets more time.
+  timeout: SOFTWARE ? 150_000 : 90_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
   // One at a time: every spec drives a WebGL scene, and parallel workers
@@ -43,7 +44,27 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: /perf\.spec\.ts/,
+      testIgnore: /(perf|touch)\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, launchOptions: { args: GPU_ARGS } },
+    },
+    // A phone: the on-screen buttons, driven by real touches (CDP), upright and sideways.
+    {
+      name: "chromium-touch",
+      testMatch: /touch\.spec\.ts/,
+      grepInvert: /@webkit/,
+      use: { ...devices["Pixel 7"], launchOptions: { args: GPU_ARGS } },
+    },
+    // Local only: an iPhone in WebKit (not in test:e2e until WebGL in CI's WebKit is proven).
+    { name: "webkit-touch", testMatch: /touch\.spec\.ts/, grep: /@webkit/, use: { ...devices["iPhone 14"] } },
+    // The same sim in every JS engine: golden replays must hash identically.
+    { name: "firefox", testMatch: /replay-engines\.spec\.ts/, use: { ...devices["Desktop Firefox"] } },
+    { name: "webkit", testMatch: /replay-engines\.spec\.ts/, use: { ...devices["Desktop Safari"] } },
+    {
+      // Local only (pnpm test:perf): real-time frame timing needs a real GPU.
+      name: "perf",
+      testMatch: /perf\.spec\.ts/,
+      timeout: 240_000,
+      retries: 0,
       use: { ...devices["Desktop Chrome"], viewport: { width: 1280, height: 800 }, launchOptions: { args: GPU_ARGS } },
     },
   ],

@@ -19,6 +19,23 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+/*
+ * Fight HUD size tiers follow the fight area, not the window (the portrait
+ * touch layout gives the fight only the top of the screen). The numbers match
+ * game/view/camera/hudBand.ts: wide from 640 x 480, short when 640+ wide but
+ * under 480 tall (a phone held sideways).
+ */
+@custom-variant hud-wide {
+  @container fight (min-width: 640px) and (min-height: 480px) {
+    @slot;
+  }
+}
+@custom-variant hud-short {
+  @container fight (min-width: 640px) and (max-height: 479.98px) {
+    @slot;
+  }
+}
+
 @layer base {
   html {
     color-scheme: dark;

@@ -41,37 +41,64 @@ export function findBlender(env: NodeJS.ProcessEnv = process.env, macPath = MAC_
   );
 }
 
-export function blenderArgs(script: string, args: readonly string[] = []): string[] {
-  return ["-b", "--factory-startup", "--python-exit-code", "1", "--python", script, "--", ...args];
+/**
+ * Blender's command line. A .blend to open goes after `--factory-startup` (so
+ * the user's startup file and add-ons stay out of it) and before `--python`
+ * (Blender acts on its arguments in order, so the file is loaded first).
+ */
+export function blenderArgs(script: string, args: readonly string[] = [], blend?: string): string[] {
+  return ["-b", "--factory-startup", ...(blend ? [blend] : []), "--python-exit-code", "1", "--python", script, "--", ...args];
 }
 
 export interface BlenderRun {
   status: number;
   /** Captured stdout when `capture` is set (it is also echoed), else "". */
   stdout: string;
+  /** Captured stderr when `captureStderr` is set (it is also echoed), else "". */
+  stderr: string;
 }
 
-/**
- * Run `script` with `args` after `--`. Exit status 1 if Blender died from a
- * signal. `cwd` is where relative paths in `args` resolve.
- */
-export function runBlender(
-  script: string,
-  args: readonly string[] = [],
-  opts: { blender?: string; capture?: boolean; cwd?: string } = {},
-): BlenderRun {
+export interface BlenderOptions {
+  blender?: string;
+  /** Capture (and still echo) stdout. */
+  capture?: boolean;
+  /** Capture (and still echo) stderr, where the CF_ERROR lines go. */
+  captureStderr?: boolean;
+  /** Echo captured output (default true); tests turn it off. */
+  echo?: boolean;
+  /** Where relative paths in `args` resolve. */
+  cwd?: string;
+  /** A .blend to open before the script runs. */
+  blend?: string;
+}
+
+/** Run `script` with `args` after `--`. Exit status 1 if Blender died from a signal. */
+export function runBlender(script: string, args: readonly string[] = [], opts: BlenderOptions = {}): BlenderRun {
   const blender = opts.blender ?? findBlender();
-  const res = spawnSync(blender, blenderArgs(script, args), {
+  const res = spawnSync(blender, blenderArgs(script, args, opts.blend), {
     cwd: opts.cwd,
-    stdio: ["ignore", opts.capture ? "pipe" : "inherit", "inherit"],
+    stdio: ["ignore", opts.capture ? "pipe" : "inherit", opts.captureStderr ? "pipe" : "inherit"],
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
   if (res.error) throw new Error(`could not run ${blender}: ${res.error.message}`);
   const stdout = opts.capture ? (res.stdout ?? "") : "";
-  if (stdout) process.stdout.write(stdout);
+  const stderr = opts.captureStderr ? (res.stderr ?? "") : "";
+  if (opts.echo !== false) {
+    if (stdout) process.stdout.write(stdout);
+    if (stderr) process.stderr.write(stderr);
+  }
   if (res.signal) console.error(`blender was killed by ${res.signal}`);
-  return { status: res.status ?? 1, stdout };
+  return { status: res.status ?? 1, stdout, stderr };
+}
+
+/** The `CF_<tag>: message` lines a run printed (CF_ERROR, CF_FIX, CF_NOTE), in order. */
+export function cfLines(output: string, tag: "ERROR" | "FIX" | "NOTE" | "WARNING"): string[] {
+  const prefix = `CF_${tag}: `;
+  return output
+    .split("\n")
+    .filter((l) => l.startsWith(prefix))
+    .map((l) => l.slice(prefix.length));
 }
 
 /** The `CF_REPORT {json}` line cf_common.export_chicken() prints, if any. */

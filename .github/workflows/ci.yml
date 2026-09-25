@@ -38,6 +38,59 @@ jobs:
       - run: pnpm --filter @cockfight/game smoke
       - run: pnpm --filter @cockfight/worker build
 
+  # Playwright on the production build: the functional suite in Chromium
+  # (SwiftShader: no GPU on runners) and the golden replays in all three
+  # JS engines (V8, SpiderMonkey, JavaScriptCore).
+  e2e:
+    name: e2e (chromium, firefox, webkit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cockfight/web exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm --filter @cockfight/web run test:e2e:desktop
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+
+  # The on-screen buttons on a phone-sized, touch-enabled Chromium (a Pixel 7),
+  # driven by real multi-finger touches. Its own job: software rendering runs
+  # at about a frame a second, and the desktop suite already takes most of its
+  # time budget.
+  e2e-touch:
+    name: e2e (touch, Pixel 7)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cockfight/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @cockfight/web run test:e2e:touch
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report-touch
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          retention-days: 7
+
   # "Replay of a recorded input log yields an identical state hash on two
   # machines": the golden replays run on x64 Linux and arm64 macOS, and a
   # third job diffs the two outputs (final hash + whole-trajectory hash per

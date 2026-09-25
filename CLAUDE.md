@@ -10,7 +10,7 @@ every non-obvious choice is in `docs/decisions.md`. Phases stop for review; one 
 - `pnpm verify` = lint + typecheck + test + assets:validate + assets:bake --check + build.
 - `pnpm replay:golden [--bless]` — golden replay hashes (CI diffs them across x64 Linux and arm64 macOS).
 - `pnpm assets:placeholder` rebuilds the placeholder chicken with headless Blender, then validates and bakes hitboxes.
-- `pnpm test:e2e` — Playwright against a production build on :3130 (`E2E_PORT` to change; `PLAYWRIGHT_BASE_URL` targets an already-running server and skips the build).
+- `pnpm test:e2e` — Playwright against a production build on :3130 (`E2E_PORT` to change; `PLAYWRIGHT_BASE_URL` targets an already-running server and skips the build). Projects: `chromium` (desktop), `chromium-touch` (Pixel 7, touches via CDP), `firefox` / `webkit` (golden replays); `webkit-touch` (iPhone smoke) is local only. A server already on :3130 is reused, so stop it after rebuilding or the tests run the old build.
 
 ## Layout
 - `packages/sim` — THE game. Pure deterministic integer simulation shared by server (authoritative) and client (prediction). `step(prev, b1, b2, R)` is pure. Data in `data/{moves,hitboxes,chicken.contract}.json`.
@@ -35,3 +35,5 @@ every non-obvious choice is in `docs/decisions.md`. Phases stop for review; one 
 - Versions live in the `catalog:` of `pnpm-workspace.yaml`. Never set `minimumReleaseAge`.
 - Three.js: clone skinned models with `SkeletonUtils.clone`; drive the mixer from sim state (`action.time` + `mixer.update(0)`), never from wall-clock in gameplay.
 - Tests that drive keyboard input step ticks inside the page (`?manual=1`), never by wall-clock timing.
+- Touch input makes the keyboard's 5-bit mask (`game/match/input/touch.ts`); never add a separate sim path for it. The fight screen's layout is CSS only (`app/play/play.css`): keep one JSX tree, or rotating a phone remounts the canvas and restarts the fight.
+- CI renders e2e in software (~1 fps): step ticks inside one `page.evaluate` and render/screenshot sparingly.

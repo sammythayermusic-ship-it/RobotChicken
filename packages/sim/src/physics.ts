@@ -1,25 +1,53 @@
-import { clamp, sgn } from "./fixed";
+import { sgn } from "./fixed";
+import { onLanding, usesGravity } from "./fighter";
 import type { Rules } from "./rules";
 import { St, type FighterState, type MatchState } from "./types";
 
-/** Horizontal bound for self-propelled motion (ring-out needs a ring-out hit). */
-export function wallClamp(f: FighterState, R: Rules): void {
+/**
+ * The wall stops OUTWARD motion past |x| = wallEdge unless a ring-out capable
+ * hit set `roAble`. A fighter already beyond the wall (a ring-out hit that fell
+ * short) stays where it is and can walk back in: no teleporting.
+ */
+export function wallClamp(f: FighterState, oldX: number, R: Rules): void {
   if (f.roAble) return;
   const w = R.match.wallEdge;
-  f.x = clamp(f.x, -w, w);
+  const ax = Math.abs(f.x);
+  if (ax > w && ax > Math.abs(oldX)) f.x = sgn(f.x) * Math.max(w, Math.abs(oldX));
 }
 
-/** Advance one fighter's position by its velocity and knockback slide. */
+/** Advance one fighter by its velocity, knockback slide and gravity. */
 export function integrate(f: FighterState, R: Rules): void {
+  const oldX = f.x;
   let dx = f.vx;
+  let slideEnded = false;
   if (f.slideRem > 0) {
     const mag = Math.min(Math.abs(f.slideV), f.slideRem);
     dx += sgn(f.slideV) * mag;
     f.slideRem -= mag;
-    if (f.slideRem === 0) f.slideV = 0;
+    if (f.slideRem === 0) {
+      f.slideV = 0;
+      slideEnded = true;
+    }
   }
   f.x += dx;
-  wallClamp(f, R);
+  wallClamp(f, oldX, R);
+
+  // Past the ring edge there is no floor: whoever is out there falls.
+  const offStage = Math.abs(f.x) > R.match.ringEdge;
+  if (offStage) f.grounded = 0;
+  // A ring-out push stops being one only after its last step has moved (and
+  // possibly carried the fighter off the stage): the wall must not clamp it.
+  if (slideEnded && f.grounded && f.st !== St.ringOut) f.roAble = 0;
+  if (!f.grounded) {
+    f.y += f.vy;
+    if (usesGravity(f)) f.vy -= R.fighter.gravity;
+    if (offStage || f.st === St.ringOut) {
+      if (f.y < R.match.ringOutFloor) {
+        f.y = R.match.ringOutFloor;
+        f.vy = 0;
+      }
+    } else if (f.y <= 0) onLanding(f, R);
+  }
 }
 
 /**
@@ -44,17 +72,19 @@ export function resolvePush(s: MatchState, R: Rules): void {
   const bx0 = b.x;
   a.x -= dir * half;
   b.x += dir * half;
-  wallClamp(a, R);
-  wallClamp(b, R);
+  wallClamp(a, ax0, R);
+  wallClamp(b, bx0, R);
   const aShort = half - Math.abs(a.x - ax0);
   const bShort = half - Math.abs(b.x - bx0);
   if (aShort > 0) {
+    const bx1 = b.x;
     b.x += dir * aShort;
-    wallClamp(b, R);
+    wallClamp(b, bx1, R);
   }
   if (bShort > 0) {
+    const ax1 = a.x;
     a.x -= dir * bShort;
-    wallClamp(a, R);
+    wallClamp(a, ax1, R);
   }
 }
 

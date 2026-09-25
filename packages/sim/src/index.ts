@@ -11,3 +11,8 @@ export * from "./fighter";
 export * from "./round";
 export * from "./step";
 export * from "./replay";
+export * from "./anim";
+export * from "./collide";
+export * from "./combat";
+export * from "./events";
+export * from "./cpu";

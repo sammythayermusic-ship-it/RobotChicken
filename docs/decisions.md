@@ -27,7 +27,7 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | Hitbox helpers are baked offline | `tools` samples every clip at 60 Hz and writes integer tables to `packages/sim/data/hitboxes.json`. The sim and server never read a glb (determinism, no DOM). Helper sizes come from custom properties `cf_radius` / `cf_half_height`, because glTF does not export an empty's display size. |
 | Sim frame f = clip sample f | Clip frame counts in `chicken.contract.json` equal the move's startup+active+recovery. Clips authored with a different split carry `cf_phases` and are remapped piecewise. |
 | Tiers are runtime material swaps | Not `KHR_materials_variants`: GLTFLoader doesn't apply variants, and packing all tiers into one glb would defeat lazy loading. |
-| Textures via `ktx create` (KTX-Software 4.4) | `toktx` is deprecated and not installable via Homebrew. Phase 1 uses flat materials, so `tools/textures.sh` only explains how to install it. |
+| Textures via `ktx create` (KTX-Software 4.4) | `toktx` is deprecated. `pnpm textures` converts `art/textures/<tier>/*.png`: colour maps ETC1S (sRGB, BT.709), data maps UASTC + RDO + zstd (linear, never gamma-decoded), normals as plain RGB (not `--normal-mode`, which three.js can't read). `--dry-run` output is tested; validate rejects two-channel normals. |
 
 ## Gameplay defaults (data in `packages/sim/data/moves.json`)
 
@@ -53,6 +53,37 @@ reason. ★ = Sammy should confirm at the Phase 1 review.
 | `verifyDepsBeforeRun: false` | Filtered installs (CI replay job, Docker) must not trigger pnpm's automatic full reinstall on `pnpm run`. |
 | Env vars added (documented only) | `JUPITER_API_KEY` (Price v2 is deprecated; v3 needs a key), `REDIS_URL` (the Colyseus Redis driver needs a TCP `rediss://` URL, not Upstash REST), `ALLOWED_ORIGINS`, `PAYOUTS_ENABLED=false`. |
 
+## Phase 1: the local fighter
+
+| Decision | Why |
+|---|---|
+| `step()` is pure and clones internally | Rollback (Phase 2) keeps a history of states; storing references must be safe. Three shallow copies per tick cost ~1 µs. |
+| Both hit directions are detected, then applied | Trades are symmetric; a fast-check property proves swapping the players mirrors every state exactly. In a trade, getting hit beats a dive kick's bounce. |
+| Knockback slides accumulate, then assign once; `slideRem` carries remainders | Order-independent and exact even when a wall shortens a push. |
+| Pushbox split rounds up for both fighters | `(overlap+1)>>1` each: symmetric under mirroring (the overshoot is at most 1 mu). |
+| Hit-stop freezes the fighter completely | Stun, buffer, slide and Heat decay all pause, so a hit-stop can't eat a buffered press and the meter reads exactly +8 after a hit. |
+| Walls stop outward motion only | A fighter left beyond 9.5 u by a ring-out hit that fell short stays there (no teleport) and can walk back in. |
+| No floor past the ring edge | Anyone beyond ±10 u falls, so a KO'd chicken carried out of the pit drops out of sight. Mid-round, that can only be a ring-out. |
+| A round ended by KO starts its 120-tick clock on the next tick | Same timing as a timeout. |
+| CPU lives outside `step()` | It reads the state and returns buttons, seeded from the match id; a CPU match replays from its input log alone. Difficulty = reaction delay (22 / 14 / 8 ticks) and block / punish rates. |
+| Presentation events are derived, not stored | `deriveEvents(prev, next)` diffs two states; events never enter the hash, and replays produce the identical event stream. |
+| The animation mixer is posed from sim state | `action.time` from `(state, stTick)` + `mixer.update(0)`; blends and turns count sim ticks. Hit-stop freezes the pose exactly. |
+| Camera shake is seeded value noise on the tick counter | Replays shake identically at any frame rate. `prefers-reduced-motion` defaults it to 30%. |
+| KO chromatic aberration is a copy-the-framebuffer pass | Costs GPU only during the 0.6 s pulse; a composer would cost every frame on phones. Prewarmed at load. |
+| GPU particles: instanced quads, motion in the vertex shader | CPU work only when a burst is emitted; per frame only `uTime` changes. Low quality keeps just the hit flash. |
+| HUD: hot bars written straight to the DOM, cold values in a store | React never re-renders at 60 Hz. Meters keep a whole-percent `aria-valuenow`. |
+| Tier cosmetics | Chrome: dash light trail. Gold: double sparks on hits. Diamond: iridescent physical material. Mirror matches tint P2 (hue shift, or copper for grey tiers). Gold's KO sting and Diamond's name chant / entrance wait for Sammy's sound pack and hero model. |
+| Perf is measured from FIGHT | Loading and shader warm-up don't count. `/play?bench=1` runs a fixed-seed CPU match on any device and prints copyable percentiles. |
+| Determinism is checked in three JS engines | The golden replays run in Chromium, Firefox and WebKit (e2e) as well as Node on x64 and arm64 (CI). |
+| Audio renders on the FIGHT click; autostart links create it at mount | WebAudio needs a user gesture. From the picker, FIGHT creates and starts it (first-exchange sounds ready ~40–110 ms later, all 30 within ~370 ms). Autostart links (`/play?mode=…`) create it under LOADING and start it on the first key, tap or click. Bench and manual runs are silent. |
+| Every sound is loudness-levelled after rendering | Peak ≤ 0.89 or a fixed short-term loudness, whichever is quieter, so `SOUND_SPECS` gains compare like with like; the KO moment is deliberately the loudest. Heavy thumps start at 140–170 Hz so phone and laptop speakers reproduce them. |
+| Sound pack drop-in: `public/audio/manifest.json` | `{"hit_light": "hit_light.m4a"}`; listed files replace recipes, failures fall back to the recipe. No 404 probing. |
+| Arena shaders are custom (three's fog / tone-mapping chunks) | Static light is baked into vertex attributes, but the fire light is per-pixel from shared uniforms, so walls and floor flicker in sync with the fighters' point lights. 7 draw calls, ~17k triangles. |
+| The env-map scene is brighter behind the camera | Otherwise chrome / gold reflect the dark pit and read as black paint. |
+| Fog and the far plane follow the camera distance | Portrait views pull the camera ~75–95 u back to keep both fighters in frame; fixed fog would swallow them. |
+| Hero import resamples authored attack phases onto the contract | The sim reads frames and phases from the contract, so a hero clip with a different `cf_phases` split is retimed phase by phase at export. `--retime` stretches 24 fps clips within one authored frame of the contract length. |
+| Dive kick without `cf_phases` is checked against its 30-frame clip | Its active window has no fixed length in the sim (active until landing). |
+| First load = art assets that load before FIGHT (glb, decoders, audio overrides) | Must stay ≤ 12 MB. App JS/CSS/fonts are excluded, so leave headroom; non-Rust tiers and arena extras are lazy. |
 ## Phase 0 review outcomes
 
 An adversarial review (5 area reviewers, each finding independently re-verified) confirmed 32 low/medium issues; all were fixed before PR #1. The choices worth remembering:
@@ -75,3 +106,55 @@ An adversarial review (5 area reviewers, each finding independently re-verified)
 | New `public` functions are not executable by anon/authenticated by default | A test fails if any function outside an (empty) allowlist is. |
 | Landing showcase: pause button; reduced motion shows still frames | WCAG 2.2.2. Play under reduced motion animates the chickens but keeps the camera still. |
 | Disposing a renderer also disposes three's shared DFG LUT texture | r186 keeps a listener per renderer on it, which leaked every disposed canvas. Recheck on a three upgrade. |
+
+## Phase 1 review outcomes
+
+A second adversarial review (6 areas including a data-driven balance critic, every finding re-verified) confirmed 50 issues (2 high, 12 medium); all were fixed before PR #2. ★ = Sammy's call.
+
+| Decision | Why |
+|---|---|
+| ★ At full Heat, away+Space is a peck; the super is Space with no direction (or up) | Poking no longer burns a full meter by accident, and "away+Space peck, then Space" is a working peck → super cancel. |
+| ★ The dive kick stays unblockable but is reactable | It can start only from the 14th air tick (was 4) and its landing recovery is 24 (was 14); the spec's 6-frame startup is unchanged. It now connects 21–24 ticks after the jump press. Making it blockable remains an option. |
+| Wake-up is invulnerable for 2 ticks | A meaty dive kick used to beat every wake-up option except the super. |
+| The peck cancels only into the super, and only on a clean hit | Cancels on block made blocked pecks safe; the peck → shove cancel whiffed or was punishable at most ranges. |
+| A buffered Space remembers the directions held at the press; dash taps read the raw keys | Short taps no longer turn shoves into pecks, and SOCD cleaning no longer invents a dash in the wrong direction. |
+| Shoves move exactly 2 units; anyone shoved past 8.0 u rings out | The slide's last tick used to be wall-clamped. |
+| ★ Slam launch stays [160, 180] | Ring-outs end 21% of rounds between reactive bots, half of them by slam; [100, 180] would make it 15%. |
+| CPU rebuilt: ordered, beatable, not trivially exploitable | Levels keep the plan's reaction delays (22 / 14 / 8 ticks) and block rates; each harder level beats the easier one 100%. Walk-and-peck used to win 100% against every level; now 30–58% vs Easy, 3–45% vs Normal, 0% vs Hard. Hard is the patient level. |
+| Camera: a hard fit on top of an eased composition | Both bodies, the feet and the top of a jump stay between the frame edges and the HUD band (a fixed CSS height, `hudBand.ts`, measured in e2e) at every aspect including portrait. Jumps raise the look target before pulling back. |
+| The shake setting scales everything that moves the view | Trauma shake, the per-hit kick, the punch zoom and the super's FOV kick. Off really is off. |
+| Quality "low" also trims the arena | Drops embers, smoke, the crowd flash pass and the haze, with no rebuild or recompile. |
+| The ring lip is flush with the floor | A shove that falls short leaves a fighter standing up to x = 10. |
+| A fight engine resets the HUD and drops its callbacks | Rematches and restarts used to keep every earlier engine alive (6 WebGL contexts after 5 restarts; now 1) and could show a stale pause menu. Renderers are disposed through `disposeRenderer`. |
+| Game keys ignore focused controls and are off while paused | The pause menu and match-end buttons work from the keyboard; keys pressed while paused don't fire after resume. |
+| The arena rules run whenever `arena.glb` exists | `ringedge_L/R` empties are required at x = ∓10 (±0.05); missing fire / crowd / flood groups are warnings (the procedural layout fills in). |
+| Hero import is staged in `art/blender/out/` and swapped in atomically | The glb and `hitboxes.json` are renamed in, `hitboxes.json` last; Ctrl-C cleans up. A dry run never overwrites the glb the game loads. |
+| The Blender UI preset is generated and sets every exporter option | Applying a preset only sets what it lists, so a partial preset didn't guarantee the scripted settings. |
+
+## Phones: on-screen buttons (added to Phase 1)
+
+Sammy asked for the playtest to work on phones, so the spec's Phase 2 mobile controls moved up. ★ = Sammy's call.
+
+| Decision | Why |
+|---|---|
+| ★ Both orientations play; upright is a controller panel under the fight | Sammy's choice, instead of the spec's "rotate your phone" card. The fight takes the top of the screen (about square, ≥ 200 px left for the panel), the panel the rest. Sideways, the fight fills the screen and the buttons sit see-through in the bottom corners. Layout is CSS only (`app/play/play.css`), one element tree, so turning the phone never remounts the canvas or restarts the fight. |
+| ★ Buttons: a d-pad, PECK, and a context button reading JUMP / SLAM / DIVE | The d-pad is the arrow keys (hold ▼ to block, double-tap to dash); PECK is Space. The context button jumps on the ground, slams with ▼ held when the thumb lands, and dives in the air: the moves that need two keys become one thumb. JUMP is its idle label; DIVE dims when a dive can't happen (spent, too low, knocked into the air). PECK reads SUPER when Heat is full, the d-pad is neutral and you're grounded. |
+| Touch makes the same 5-bit mask as the keyboard | No separate sim path (the spec's rule): the sim, replays and golden hashes are unchanged. Touch plays P1 against the CPU only; 2P still needs a keyboard (the mode picker says so on phones). |
+| D-pad changes are queued, one per tick; Space is a one-tick pulse per press | Thumbs are faster than 16.7 ms ticks. A tap and re-tap between two ticks still reach the sim as R, 0, R (the two raw press edges a dash needs), and every button press is a new Space press edge (holding PECK then pressing DIVE would otherwise send nothing new). The sim only reads Space's press edge, and the CPU already sends it this way. |
+| The d-pad is 8-way with sticky edges | Neutral inside 28% of its radius (16% once a direction is held); left/right sectors are the widest (60°); a held sector keeps 7° past its edge; a diagonal stays diagonal while the thumb stays on its side (↘ back to ↓ keeps ↘). The sim counts every raw → press toward a dash, so without these a blocking thumb wobbling between ↓ and ↘ dashed forward. No outer limit: a thumb that slides off keeps its direction. |
+| Fingers: the newest on the d-pad drives it; when it lifts, a finger still on the pad takes over | A second finger on the context button is one more press of what it's doing (holding JUMP in the air and tapping dives, like ↑ + Space). |
+| Each half of the upright panel is one hit zone | A thumb anywhere on the left drives the d-pad; on the right, whichever button is nearer. Sideways, each cluster has a large invisible zone. No zone reaches into the 32 px at the screen's sides (the system back swipe: ~24 dp on Android). Upright, the pad and buttons sit under the PAUSE / SOUND pills and shrink to fit a short panel (the panel is a size container). |
+| The system back gesture pauses instead of leaving | An edge swipe is easy to hit with a thumb on the d-pad. During a touch fight one extra history entry sits on top (Next's router copies its state into it, so going back to it restores the page without a reload); going back pauses. From the pause menu or a finished match, back leaves as usual. |
+| No pull-to-refresh, no iOS input zoom on the fight screen | `overscroll-behavior: none` on the page while a fight is on screen and `overscroll-contain` on the pause menu (a downward swipe there would reload and end the fight). The pause menu's selects are 16 px, because iOS zooms into smaller fields, and the fight screen allows no gesture to zoom back out. |
+| The camera keeps 60% of the buttons' reach clear (`INSET_SHARE`) | The buttons sit in the corners; keeping all of it clear would shrink the chickens by a quarter on a phone held sideways. At 60% close-range framing is unchanged; jumps pull back a little more. The inset never leaves under 0.6 NDC of height between it and the HUD. |
+| HUD tiers follow the fight area (container queries), with a new short tier | Sideways phones got the 112 px desktop band (a third of the screen); the short tier is 72 px (measured 53). Upright, the fight area is under 640 px wide, so the narrow tier (88 px). Names never wrap (a wrapped "CPU (NORMAL)" pushed the bars past the band). |
+| Upright and square screens compose tighter | 2 u of pit each side of the pair (not 3.5) and a 6.5 u minimum width below aspect 0.95, easing to the landscape values at 1.3 (so a pixel of height never jumps the framing; landscape desktops and phones are unchanged). The width sets the scale there, and the old margins left the chickens ~45 px tall on a phone, including the about square fight area an iPhone gets upright in Safari. The hard fit still keeps both bodies and a full jump in frame. |
+| The timer is the pause button (plus PAUSE / SOUND pills upright) | There was no way to pause without a keyboard. It works with a mouse too, but stays out of the tab order and never takes focus on a click: a focused button would take Space and Enter (the peck keys). |
+| The controls are divs, never focusable, with native non-passive touch listeners | A focused control would take the keyboard's keys; React's touch listeners are passive, so preventDefault (no scroll, no pinch or double-tap zoom, no callout) needs native ones. |
+| Shown on coarse pointers, or after the first touch in a tab | `?touch=1` forces them on (desktop testing), `?touch=0` off. |
+| iOS audio plays as "playback" (`navigator.audioSession`) while unmuted | The default "ambient" category is muted by the silent switch, which would make the game silent on most iPhones. "playback" stops the player's own music, so muting the game (the SOUND pill, the pause menu) switches back to "ambient". |
+| Screen readers get the timer (labelled with the time and round), the pills and the pause menu | The pad itself is `aria-hidden` (thumbs only). The pills are click targets so VoiceOver / TalkBack can press them. |
+| `viewport-fit=cover` on /play | The fight area stays inside the safe area itself (notch, rounded corners); only the floor runs under the home bar. |
+| `?debug=1&cpu=idle` stands the CPU still | e2e checks P1's touch input without the CPU hitting P1 mid-check. Ignored without debug. |
+| CI e2e: more time under software GL | CI renders about a frame a second (SwiftShader has no parallel shader compile). The keyboard walk steps the sim inside the page instead of rendering a frame per tick; the six-page quality test gets 240 s; tests get 150 s under software GL; the touch suite runs as its own CI job (`test:e2e:touch`) beside the desktop one (`test:e2e:desktop`). |
+
