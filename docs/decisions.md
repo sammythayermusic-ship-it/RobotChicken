@@ -229,23 +229,23 @@ Agreed with Sammy before the build (2026-09-24): launch on **pump.fun**, Custom 
 quote, creator fee **3%**, fees shared 70% to the hot wallet / 30% to the launch wallet through
 pump.fun's "Share creator rewards"; players paid in PUMP; tiers $30 / $250 / $1,000 at 1× / 2.5× / 6×;
 cross-tier pairs after 60 s at the lower rate; the seed drains at most 1/14 per day; one global daily
-top 10 by wins. ★ = Sammy's call at the Phase 3 review.
+top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 review (2026-09-25).
 
 ### Economy (`packages/economy`, proven by the synthetic-month test)
 
 | Decision | Why |
 |---|---|
 | The budget rule is a **ledger allowance**, not a trailing-24 h window | The plan said "payouts in any 24 h ≤ 70% of fees claimed in that window + the seed draw". Run as written, an eight-hour claim outage stalls every payout (the window's claims age out while its payouts don't), which contradicts invariant 7. The allowance (claimed player share + seed draws − payouts sent − sweeps) is what the hot wallet should hold by the ledger's own count; a payout may never take it below zero. The trailing-24 h prize sizing (D / W) and the USD caps provide the rate limit. Invariant 1 and 6 in `docs/plan-phase3.md` now read this way. |
-| ★ `MAX_PAYOUT_USD` is **500**, not 75 | 75 is below a Gold win's cap (P_max × 6 = $450): every Gold win would have paused payouts. `validateParams` refuses a cap below the Gold cap. |
-| ★ Daily rewards have their own cap (`MAX_DAILY_REWARD_USD` = 5,000) and are exempt from the hourly cap | First place on a $500k-volume day is $750 and on a launch day well over $1,500; with the $75 / $3,000-per-hour caps the midnight batch paused payouts every night in the simulation. Wins keep the per-payout and hourly caps; everything counts toward the daily cap. |
-| ★ The caps as shipped: $500 / win, $5,000 / daily reward, $3,000 / hour of wins, $20,000 / day | The daily cap tripped on the simulated $800k launch day ($16.8k of player share plus the previous day's top 10). Raise it on funding day if launch-day volume looks like that; a pause is one click to clear in `/admin`. |
+| ✓ `MAX_PAYOUT_USD` is **500**, not 75 | 75 is below a Gold win's cap (P_max × 6 = $450): every Gold win would have paused payouts. `validateParams` refuses a cap below the Gold cap. |
+| ✓ Daily rewards have their own cap (`MAX_DAILY_REWARD_USD` = 5,000) and are exempt from the hourly cap | First place on a $500k-volume day is $750 and on a launch day well over $1,500; with the $75 / $3,000-per-hour caps the midnight batch paused payouts every night in the simulation. Wins keep the per-payout and hourly caps; everything counts toward the daily cap. |
+| ✓ The caps as shipped: $500 / win, $5,000 / daily reward, $3,000 / hour of wins, $20,000 / day | $20k covers about $950k of daily volume (payouts run ≈ 2.1% of volume). Sammy chose to keep it at launch and resume by hand if a big day trips it: a pause is one click in `/admin`, and the tighter cap bounds what a bad day could leak. |
 | Amounts are `bigint` raw units; dollars are converted at the hourly price, truncated | A double holds PUMP's 6 decimals badly at the sizes the vault holds; a dollar knob converted at $0.0000031 keeps its digits by scaling to micro-dollars first. |
 | Sweep = min(wallet − keep, allowance − keep), where keep = hot target + payouts booked but unsent | Dust the ledger never saw stays in the wallet; what is booked stays covered. Only with `COLD_WALLET` set. |
 | A signed payout is written to the ledger before it is broadcast | The signature is known at signing. A crash in between leaves a `sent` row that reconcile settles from the chain: confirmed → paid; blockhash dead (or, after a restart, unseen for 5 minutes) → back to pending with a new attempt; five expired attempts → failed with an alert. Every status change is a guarded PATCH (`status=in.(…)`), so a row can't be sent twice. |
 | The seed draw is estimated from the day that just closed | The draw is booked at 00:00 UTC for the day ahead from yesterday's fees (the plan's formula); a dead day draws the day after. A failed seed transfer books nothing and retries every minute. |
 | Zero-amount daily rewards are skipped; a day is booked even with no rewards | `daily_pools` is the idempotency record, so midnight never runs twice. |
-| Draws, open matches, quality 0, a flagged wallet and the caps book **0**, with the reason on the match row | `payout_reason` (`draw`, `open`, `quality`, `flagged`, `cap_wins`, `cap_opponent`, `no_pool`); the result screen says why. ★ Drawn matches don't pay (as proposed in the plan). |
-| The q-multiplier "void over 30%" is 0 (nothing paid), not a voided match | The match still counts for ELO and the leaderboard; only the prize is 0. |
+| Draws, open matches, quality 0, a flagged wallet and the caps book **0**, with the reason on the match row | `payout_reason` (`draw`, `open`, `quality`, `flagged`, `cap_wins`, `cap_opponent`, `no_pool`); the result screen says why. ✓ Drawn matches don't pay (two players can't draw on purpose to split prizes). |
+| ✓ The q-multiplier "void over 30%" is 0 (nothing paid), not a voided match | The match still counts for ELO and the leaderboard; only the prize is 0. |
 
 ### Chain
 
@@ -270,7 +270,7 @@ top 10 by wins. ★ = Sammy's call at the Phase 3 review.
 
 | Decision | Why |
 |---|---|
-| ★ `QUEUE_MIN_PLAYERS` defaults to **2** (the spec says 4) | With 4, two friends can never play ranked on a quiet night. The rematch cooldown and the 10-per-opponent cap already bound what two colluding wallets can farm. Set it to 4 at launch if the queue is busy enough. |
+| ✓ `QUEUE_MIN_PLAYERS` defaults to **2** (the spec says 4) | With 4, two friends can never play ranked on a quiet night. The rematch cooldown and the 10-per-opponent cap already bound what two colluding wallets can farm. Set it to 4 at launch if the queue is busy enough. |
 | Private and loopback IPs count as unknown | Locally everyone is 127.0.0.1; on Fly the client IP is `Fly-Client-IP`. Only salted hashes of the IP's /24 and the browser id (the open queue's guest id, reused as the fingerprint) reach the database. |
 | The bot check is timing only, and it holds rather than refuses | Metronome-regular button changes (CV < 0.04 over ≥ 60 changes) or a macro repeated ≥ 4 times flag the match; the payout is booked but held (`deferred` until `/admin` clears or voids it) and an abuse event is filed. A false flag costs a human look, not a prize. |
 | Usernames: `cockfight:claim:<nonce>:<name>` signed by the wallet, the nonce an HMAC with a 5-minute expiry | The name is inside the signed text, so a signature can't be reused for another name; nonces need no table. The claim UI uses the wallet-standard `window.solana.signMessage`, nothing on chain. |

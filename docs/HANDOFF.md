@@ -53,11 +53,9 @@ If the Netlify CLI asks which monorepo project to use, deploy from a copy of `ap
 ## Open decisions for Sammy (★ in `docs/decisions.md`)
 
 - [ ] **Phase 3, money:**
-  - `MAX_PAYOUT_USD` 500 (must cover a Gold win), `MAX_DAILY_REWARD_USD` 5,000 with daily rewards exempt from the hourly cap, and whether the $20,000 daily cap is right for launch day;
-  - `QUEUE_MIN_PLAYERS` 2 rather than the spec's 4;
-  - drawn matches pay nothing; "void over 30%" pays 0 rather than voiding the match;
   - funding day: the seed amount, `GUARANTEED_WIN_BUDGET_USD`, `GUARANTEED_DAILY_POOL_USD`;
-  - a lawyer's read and the geo-block list before mainnet (spec).
+  - a lawyer's read and the geo-block list before mainnet (spec);
+  - *(Confirmed at the Phase 3 review: the caps ($500 / win, $5,000 / daily reward, $3,000 / hour, $20,000 / day, resume by hand), `QUEUE_MIN_PLAYERS` 2, draws pay nothing, "void over 30%" pays 0 but the match counts.)*
 - [ ] **Phase 2, online:**
   - both fighters predicted and rolled back (instead of the spec's opponent shown 100 ms late);
   - corrections up to 3 units blended instead of snapping above 0.5 (no teleports on missed dashes);
