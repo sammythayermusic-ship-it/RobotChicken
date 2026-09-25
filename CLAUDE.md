@@ -16,9 +16,10 @@ every non-obvious choice is in `docs/decisions.md`. Phases stop for review; one 
 - `packages/sim` — THE game. Pure deterministic integer simulation shared by server (authoritative) and client (prediction). `step(prev, b1, b2, R)` is pure. Data in `data/{moves,hitboxes,chicken.contract}.json`.
 - `packages/net` — online play: binary protocol, `ServerMatch` (authoritative, buffered inputs), `ClientPredictor` (confirmed state + rollback prediction, clock control, correction blending), results/ELO. `test/harness.ts` simulates a network; use it for any netcode change.
 - `packages/shared` — constants, tiers, zod env schemas (everything boots with zero env vars).
-- `packages/solana` — the wallet gate (`BalanceGate`: RPC balance, Jupiter / fixed price, cache) and chain interfaces for Phase 3.
+- `packages/solana` — the wallet gate (`BalanceGate`: RPC balance, Jupiter / fixed price, cache), hand-built transactions (PDAs, ATAs, SPL, pump.fun; parity-tested against web3.js) and a JSON-RPC client.
+- `packages/economy` — the pool maths and the `Treasury` engine every worker job runs through; `test/month.test.ts` is the synthetic month that proves the pool can't run dry. Run it for any money change.
 - `apps/web` — Next 16 site + plain three.js engine in `src/game/` (no React there; React wrappers in `src/game/react/`).
-- `apps/game` — Colyseus 0.18 server (`makeServer()` factory): `QueueRoom` (one per process, created in `listen()`), `FightRoom` (lifecycle, pause/forfeit, results), `POST /gate`, `GET /config`, `/api/matches/:id`, `/api/leaderboard`. `GATE_MODE` open (playtest) or required (wallet gate). `apps/worker` — payouts (Phase 3; stub now).
+- `apps/game` — Colyseus 0.18 server (`makeServer()` factory): `QueueRoom` (one per process, created in `listen()`), `FightRoom` (lifecycle, pause/forfeit, results), `POST /gate`, `GET /config`, `/api/matches/:id`, `/api/leaderboard`. `GATE_MODE` open (playtest) or required (wallet gate). `apps/worker` — the treasury on Solana + Supabase: fee claims every `CLAIM_EVERY_MIN` (10), the pool every minute, payouts every 5 s, the daily top 10 at 00:00 UTC; health / observer / live by env.
 - `tools` — asset validate/bake, Blender runner, PGlite DB harness. `supabase/migrations` — SQL.
 - `art/blender` — scripted Blender pipeline (`cf_common.py` owns the export settings).
 

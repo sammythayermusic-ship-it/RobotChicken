@@ -25,13 +25,13 @@ money until Phase 4 (mainnet); everything is built and tested against devnet fir
 
 ```
 trader swaps $COCK ⇄ PUMP on pump.fun (bonding curve, then PumpSwap); the 3% creator fee accrues
-        │  hourly claim (worker)
+        │  claim every 10 minutes (worker)
         ▼
 LAUNCH_WALLET  (PUMP, Sammy's)  ──── 30%: the project share, via pump.fun's "Share creator rewards"
         │  70% shared to HOT_WALLET the same way (★ verify on the throwaway token; else the worker
         │  claims everything with a claim-only key and forwards 30% to Sammy hourly)
         ▼
-HOT_WALLET  (PUMP + a little SOL for fees)  ── claims its share hourly; pays wins within seconds, top 10 at 00:00 UTC.
+HOT_WALLET  (PUMP + a little SOL for fees)  ── claims its share every 10 min; pays wins within seconds, top 10 at 00:00 UTC.
                                               Holds ≤ 36 h of payouts: anything above that is swept to a COLD_WALLET (Sammy's)
         │
 SEED_WALLET (PUMP, Sammy's launch seed) ── worker may draw ≤ 1/14 of the original seed per day,
@@ -59,7 +59,7 @@ p(t)  = clamp(base × w_t, P_min × w_t, P_max × w_t) × q
 ```
 
 - `w_t` = 1 / 2.5 / 6 for Rust / Chrome / Gold. A cross-tier match uses the lower tier.
-- `P_min`, `P_max` are set in USD and converted to PUMP at the hourly claim price:
+- `P_min`, `P_max` are set in USD and converted to PUMP at the price of the latest claim (every 10 min):
   **$0.75 and $75 for Rust** (so Gold's cap is $450). Both tunable in `/admin`.
 - `q` = net-quality multiplier from the spec: 1 normally, 0.5 if the winner dropped
   > 15% of inputs, 0 if > 30% or for a forfeit under 30 s.
@@ -152,7 +152,7 @@ fees, the player share and the project share to the lamport.
   rent, paid by HOT_WALLET's SOL) in the same transaction as the first payout.
   SOL for fees and rent is a separate small balance with its own low-balance alert.
 - Gate pricing stays in USD via Jupiter ($COCK in USD, PUMP in USD). `P_min`, `P_max`,
-  `G_win`, `G_daily` are USD too, converted at each hourly claim, so a PUMP price move
+  `G_win`, `G_daily` are USD too, converted at each claim (every 10 min), so a PUMP price move
   changes the PUMP amounts, not the dollar value.
 
 ## Data

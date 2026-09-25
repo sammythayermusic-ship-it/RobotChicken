@@ -72,7 +72,7 @@ async function start(): Promise<void> {
   await chain.init();
   const treasury = new Treasury({ params, ledger, chain, alerts, drawSeed: mode === "live" && !!(chain as SolanaChain).seed });
   loop = new WorkerLoop({
-    treasury, ledger, mode, status,
+    treasury, ledger, mode, status, claimEveryMin: env.CLAIM_EVERY_MIN,
     reloadParams: async () => treasury.updateParams(applySettings(params, await ledger.settings())),
   });
   await loop.start();

@@ -5,7 +5,7 @@
  *
  *   every minute  recompute()   pool state from the ledger → pool_state row
  *   every 5 s     payPass()     send due payouts (allowance, caps, wallet cover), confirm sent ones
- *   every hour    claimTick()   price, distribute creator fees to the hot wallet, sweep the excess
+ *   every 10 min  claimTick()   price, distribute creator fees to the hot wallet, sweep the excess
  *   00:00 UTC     midnight()    pay yesterday's top 10, book today's seed draw
  *   at boot       reconcile()   settle rows left `sent` by a crash, run a missed midnight
  */
@@ -132,7 +132,7 @@ export class Treasury {
     return state;
   }
 
-  /** Hourly: price, creator fees → hot wallet, sweep what the hot wallet doesn't need. */
+  /** Every claim window (10 min): price, creator fees → hot wallet, sweep what the hot wallet doesn't need. */
   async claimTick(now = this.now()): Promise<void> {
     let price: Price;
     try {

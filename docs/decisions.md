@@ -255,6 +255,7 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Fees are claimed with the permissionless `distribute_creator_fees_v2` from the hot wallet | Verified on the throwaway coin: after "Share creator rewards" the bonding curve's creator is the sharing config, the vault is `pda(["creator-vault", sharing_config])`, and anyone may pay the distribution to the shareholders' ATAs. The launch wallet's key is never on a server. After graduation `transfer_creator_fees_to_pump_v2` sweeps the AMM side first. The claim refuses to run until the sharing config lists the hot wallet. |
 | A winner's PUMP ATA is created in the payout transaction (idempotent), rent paid by the hot wallet | About 0.002 SOL per first-time winner; the hot wallet's SOL has a low-balance alert. |
 | The claim's "received" is the hot ATA's balance delta | Independent of pump.fun's fee accounting; gross = received / 0.70. |
+| Fees are claimed every 10 minutes (`CLAIM_EVERY_MIN`) | Sammy's call (2026-09-25), up from the plan's hourly. Prizes are sized from claimed fees, so on launch day they catch up with trading within 10 minutes instead of an hour. A claim costs about 0.000006 SOL (about 0.001 SOL a day) and is skipped, with no transaction, when nothing is waiting. The price is refreshed and the sweep checked at the same time. |
 | Priority fee 10,000 µlamports / CU, compute limit 80k | Enough to land during normal congestion; `PRIORITY_FEE_MICROLAMPORTS` tunes it. |
 
 ### Worker

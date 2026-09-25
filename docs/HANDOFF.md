@@ -21,7 +21,7 @@ then `CLAUDE.md`.
 1. `supabase db push` (the Phase 3 migration) with the Supabase CLI logged in to the project.
 2. Deploy the game server with the new env (`.env.example`, "game"): `QUEUE_JWT_SECRET`, `ADMIN_PASSWORD` (Fly secrets), `QUEUE_MIN_PLAYERS`, and `GATE_MODE=required` with the real `NEXT_PUBLIC_COCK_MINT` once the coin exists.
 3. Deploy the worker in **observer** mode: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `HELIUS_API_KEY`, `PAYOUT_MINT` (PUMP), `COCK_MINT`, `PAYOUTS_ENABLED=false`. `/health` shows the pool; the site shows it too.
-4. Test the claim on the throwaway coin: set `COCK_MINT` to it, `HOT_WALLET_KEYPAIR` (Fly secret, entered by Sammy), `PAYOUTS_ENABLED=true`; the hourly claim distributes the ~680 PUMP waiting in its vault and `fee_claims` gets its first row. Play a ranked match on it: the payout lands in seconds.
+4. Test the claim on the throwaway coin: set `COCK_MINT` to it, `HOT_WALLET_KEYPAIR` (Fly secret, entered by Sammy), `PAYOUTS_ENABLED=true`; the next claim (every 10 minutes) distributes the ~680 PUMP waiting in its vault and `fee_claims` gets its first row. Play a ranked match on it: the payout lands in seconds.
 5. Funding day: Sammy funds the seed wallet and sets `SEED_WALLET_KEYPAIR`, `GUARANTEED_WIN_BUDGET_USD`, `GUARANTEED_DAILY_POOL_USD` (or the knobs in `/admin`), `COLD_WALLET`, and switches `COCK_MINT` to the real coin after launch + "Share creator rewards" (70 hot / 30 launch).
 
 **Redeploy the playtest** (see the README's "Playtest build" section):

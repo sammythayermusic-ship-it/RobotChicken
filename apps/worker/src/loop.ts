@@ -4,7 +4,7 @@
  *
  *   every 5 s    pay pass (live only)
  *   every 60 s   settings reload, pool recompute, midnight check
- *   every hour   claim tick (live only; observer refreshes the price instead)
+ *   every 10 min claim tick (CLAIM_EVERY_MIN; live only; observer refreshes the price instead)
  *   at boot      reconcile
  */
 import type { Chain, ClaimResult, Price, PreparedTransfer, Treasury, TxStatus } from "@cockfight/economy";
@@ -68,17 +68,24 @@ export interface WorkerLoopOptions {
   status: WorkerStatus;
   reloadParams: () => Promise<void>;
   now?: () => number;
+  /** Minutes between fee claims (default 10). */
+  claimEveryMin?: number;
 }
 
 export class WorkerLoop {
   private readonly o: WorkerLoopOptions;
   private readonly timers: NodeJS.Timeout[] = [];
   private readonly running = new Map<string, Promise<void>>();
-  private lastClaimHour = -1;
+  private lastClaimSlot = -1;
   private stopped = false;
 
   constructor(o: WorkerLoopOptions) {
     this.o = o;
+  }
+
+  /** Which claim window `now` falls in (windows of claimEveryMin minutes, aligned to the clock). */
+  private claimSlot(): number {
+    return Math.floor(this.now / ((this.o.claimEveryMin ?? 10) * MINUTE_MS));
   }
 
   private get now(): number {
@@ -111,7 +118,7 @@ export class WorkerLoop {
     await this.guard("reload", this.o.reloadParams);
     await this.guard("reconcile", async () => {
       await treasury.reconcile(this.now);
-      this.lastClaimHour = Math.floor(this.now / HOUR_MS);
+      this.lastClaimSlot = this.claimSlot();
       this.publish();
     });
     this.timers.push(setInterval(() => void this.minute(), MINUTE_MS));
@@ -123,9 +130,9 @@ export class WorkerLoop {
   private async minute(): Promise<void> {
     if (this.stopped) return;
     await this.guard("reload", this.o.reloadParams);
-    const hour = Math.floor(this.now / HOUR_MS);
-    if (hour !== this.lastClaimHour) {
-      this.lastClaimHour = hour;
+    const slot = this.claimSlot();
+    if (slot !== this.lastClaimSlot) {
+      this.lastClaimSlot = slot;
       await this.guard("claim", async () => {
         if (this.o.mode === "live") await this.o.treasury.claimTick(this.now);
         else await this.o.treasury.refreshPrice();
