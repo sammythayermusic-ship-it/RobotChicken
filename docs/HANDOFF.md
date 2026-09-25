@@ -10,7 +10,7 @@ then `CLAUDE.md`.
 | Phase 0: scaffold | Done. [PR #1](https://github.com/sammythayermusic-ship-it/cockfight/pull/1), branch `phase-0-scaffold`, CI green |
 | Phase 1: the local fighter (+ phone controls) | Done. [PR #2](https://github.com/sammythayermusic-ship-it/cockfight/pull/2), branch `phase-1-fighter` (stacked on PR #1), CI green |
 | Phase 2: online | Done. [PR #3](https://github.com/sammythayermusic-ship-it/cockfight/pull/3), merged 2026-09-24 |
-| Phase 3: money | Built, waiting for review. Branch `phase-3-money` (off `main`), PR #4. Plan: `docs/plan-phase3.md`; what shipped: `docs/changelog.md`; choices: `docs/decisions.md` (★ = Sammy's) |
+| Phase 3: money | Built, waiting for review. Branch `phase-3-money` (off `main`), [PR #4](https://github.com/sammythayermusic-ship-it/cockfight/pull/4). Plan: `docs/plan-phase3.md`; what shipped: `docs/changelog.md`; choices: `docs/decisions.md` (★ = Sammy's) |
 | Domain / X | cockfightsol.fun (Cloudflare) · @CockFightSol |
 | Playtest | https://cockfight-playtest.netlify.app (static build on Sammy's Netlify account; keyboard and phones; online needs a deployed game server, see below) |
 
