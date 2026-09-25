@@ -21,6 +21,7 @@ function rec(id: string, winner: 0 | 1 | null, endedAt: number, players: [Player
     netQuality: [1, 1],
     tierPaid: null,
     qualityBps: null,
+    flag: null,
   };
 }
 

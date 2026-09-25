@@ -33,6 +33,8 @@ export interface MatchRecord {
   /** Ranked: the tier the win pays at (the lower of the two) and the quality multiplier (bps). Null for open matches. */
   tierPaid: PayTier | null;
   qualityBps: number | null;
+  /** The bot check's verdict on the winner's inputs (null: clean). */
+  flag: string | null;
 }
 
 /** What record_match booked for the winner. */
@@ -291,6 +293,7 @@ export class SupabaseStore implements RatingStore {
       p_p2_ip_hash: b.ipHash,
       p_p1_fp: a.fp,
       p_p2_fp: b.fp,
+      p_flag: rec.flag,
     };
     const res = await this.f(`${this.cfg.url}/rest/v1/rpc/record_match`, {
       method: "POST",

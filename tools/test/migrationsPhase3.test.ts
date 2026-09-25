@@ -120,6 +120,29 @@ describe.each(GRANT_MODES)("Phase 3 functions on a %s-grants project", (mode) =>
     });
   });
 
+  it("record_match holds a flagged match's payout for review and files an abuse event", async () => {
+    await scratch(async (c) => {
+      await setPool(c);
+      const id = uuid();
+      const out = await rows<{ payout: string; payout_reason: string }>(
+        c,
+        `select * from public.record_match($1, 'iad', now() - interval '2 minutes', now(), $2, $3, 'rust', 'rust', $2, 'ko',
+           '[{"n":1}]'::jsonb, '{"v":1}', $4, 1.0, 1.0, 'rust', 10000::smallint, null, null, null, null, 'timing')`,
+        [id, ROOSTER, HEN, HASH],
+      );
+      expect(out[0]).toMatchObject({ payout: "580000000", payout_reason: "paid" });
+      expect(await rows(c, "select status, last_error, next_attempt_at::text as next from public.payouts")).toEqual([
+        { status: "deferred", last_error: "review: timing", next: "infinity" },
+      ]);
+      expect(await rows(c, "select flag from public.matches where id = $1", [id])).toEqual([{ flag: "timing" }]);
+      expect(await rows(c, "select address, kind, match_id, details from public.abuse_events")).toEqual([
+        { address: ROOSTER, kind: "timing", match_id: id, details: { payout: 580000000 } },
+      ]);
+      // Held rows are never due (the worker's query asks for next_attempt_at <= now).
+      expect(await rows(c, "select count(*)::int as n from public.payouts where status = 'pending' or (status = 'deferred' and next_attempt_at <= now())")).toEqual([{ n: 0 }]);
+    });
+  });
+
   it("record_match applies the per-wallet caps: 10 paid matches a day against the same opponent", async () => {
     await scratch(async (c) => {
       await setPool(c);

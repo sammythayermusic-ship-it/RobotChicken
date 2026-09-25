@@ -55,6 +55,13 @@ export const gameEnv = z.object({
   QUEUE_MIN_PLAYERS: z.coerce.number().int().min(2).default(2),
   /** Two wallets are not paired again within this long (spec: 2 minutes). */
   REMATCH_COOLDOWN_S: z.coerce.number().int().nonnegative().default(120),
+  /** /admin: off unless set (Fly secret). Basic auth, any username. */
+  ADMIN_PASSWORD: z.string().min(16).optional(),
+  /** /admin: only these client IPs (comma-separated); empty = any IP with the password. */
+  ADMIN_ALLOWED_IPS: z
+    .string()
+    .default("")
+    .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean)),
   REDIS_URL: z.url().optional(),
   HELIUS_API_KEY: z.string().optional(),
   /** Overrides the Helius RPC URL built from HELIUS_API_KEY (e.g. a local validator). */

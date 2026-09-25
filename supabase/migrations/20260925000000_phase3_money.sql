@@ -354,11 +354,13 @@ $$;
 
 -- record_match, Phase 3: the payout is booked in the same transaction as the
 -- result. The game server passes the paid tier (the lower of the two), the
--- quality multiplier and the IP / fingerprint hashes; the function applies
--- the per-wallet caps (40 paid wins a day per address, IP or fingerprint; 10
--- paid matches a day against the same opponent), the flag, and books what
--- pool_state says the tier pays. Returns both players' ratings and, on the
--- winner's row, the payout booked and why it is what it is.
+-- quality multiplier, the IP / fingerprint hashes and any bot flag; the
+-- function applies the per-wallet caps (40 paid wins a day per address, IP
+-- or fingerprint; 10 paid matches a day against the same opponent), the
+-- wallet flag, and books what pool_state says the tier pays. A flagged
+-- match's payout is booked but held (deferred until /admin clears or voids
+-- it). Returns both players' ratings and, on the winner's row, the payout
+-- booked and why it is what it is.
 drop function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real);
 create function public.record_match(
   p_id              uuid,
@@ -381,7 +383,8 @@ create function public.record_match(
   p_p1_ip_hash      text default null,
   p_p2_ip_hash      text default null,
   p_p1_fp           text default null,
-  p_p2_fp           text default null
+  p_p2_fp           text default null,
+  p_flag            text default null
 ) returns table (address text, elo_before integer, elo_after integer, payout numeric, payout_reason text)
 language plpgsql
 set search_path = ''
@@ -456,11 +459,11 @@ begin
   insert into public.matches (
     id, p1, p2, region, started_at, ended_at, winner, reason, rounds,
     input_log, result_hash, net_quality_p1, net_quality_p2,
-    tier_paid, quality_bps, payout, payout_reason, p1_ip_hash, p2_ip_hash, p1_fp, p2_fp
+    tier_paid, quality_bps, payout, payout_reason, p1_ip_hash, p2_ip_hash, p1_fp, p2_fp, flag
   ) values (
     p_id, p_p1, p_p2, p_region, p_started_at, p_ended_at, p_winner, p_reason, p_rounds,
     convert_to(p_input_log, 'UTF8'), p_result_hash, p_net_quality_p1, p_net_quality_p2,
-    p_tier_paid, p_quality_bps, v_amount, v_reason, p_p1_ip_hash, p_p2_ip_hash, p_p1_fp, p_p2_fp
+    p_tier_paid, p_quality_bps, v_amount, v_reason, p_p1_ip_hash, p_p2_ip_hash, p_p1_fp, p_p2_fp, p_flag
   )
   on conflict (id) do nothing
   returning id into v_new;
@@ -474,8 +477,15 @@ begin
   end if;
 
   if v_amount > 0 then
-    insert into public.payouts (kind, idem_key, match_id, to_address, amount, usd)
-    values ('win', 'win:' || p_id::text, p_id, p_winner, v_amount, round(v_amount / power(10::numeric, v_decimals) * v_price, 4));
+    insert into public.payouts (kind, idem_key, match_id, to_address, amount, usd, status, last_error, next_attempt_at)
+    values ('win', 'win:' || p_id::text, p_id, p_winner, v_amount, round(v_amount / power(10::numeric, v_decimals) * v_price, 4),
+            case when p_flag is null then 'pending' else 'deferred' end,
+            case when p_flag is null then null else 'review: ' || p_flag end,
+            case when p_flag is null then null else 'infinity'::timestamptz end);
+    if p_flag is not null then
+      insert into public.abuse_events (address, kind, match_id, details)
+      values (p_winner, p_flag, p_id, jsonb_build_object('payout', v_amount));
+    end if;
   end if;
 
   v_score := case when p_winner is null then 0.5 when p_winner = p_p1 then 1 else 0 end;
@@ -489,7 +499,7 @@ begin
     (p_p2, v_r2, v_r2 - v_d, case when p_winner = p_p2 then v_amount else 0 end, v_reason);
 end
 $$;
-comment on function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real, text, smallint, text, text, text, text) is
+comment on function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real, text, smallint, text, text, text, text, text) is
   'Store a finished match, update both ratings and book the win payout in one transaction; idempotent on the id (game server, service_role).';
 
 -- Public views ----------------------------------------------------------------
@@ -651,11 +661,11 @@ revoke all on function public.book_daily(date, numeric, numeric, numeric, jsonb)
 revoke all on function public.book_seed_draw(date, numeric, numeric, numeric, text) from public, anon, authenticated;
 revoke all on function public.seed_topup(numeric) from public, anon, authenticated;
 revoke all on function public.claim_username(text, text, text) from public, anon, authenticated;
-revoke all on function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real, text, smallint, text, text, text, text) from public, anon, authenticated;
+revoke all on function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real, text, smallint, text, text, text, text, text) from public, anon, authenticated;
 grant execute on function public.treasury_window(timestamptz) to service_role;
 grant execute on function public.daily_ranking(date) to service_role;
 grant execute on function public.book_daily(date, numeric, numeric, numeric, jsonb) to service_role;
 grant execute on function public.book_seed_draw(date, numeric, numeric, numeric, text) to service_role;
 grant execute on function public.seed_topup(numeric) to service_role;
 grant execute on function public.claim_username(text, text, text) to service_role;
-grant execute on function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real, text, smallint, text, text, text, text) to service_role;
+grant execute on function public.record_match(uuid, text, timestamptz, timestamptz, text, text, text, text, text, text, jsonb, text, text, real, real, text, smallint, text, text, text, text, text) to service_role;

@@ -272,6 +272,13 @@ describe("usernames", () => {
   });
 });
 
+describe("/admin", () => {
+  it("is not there without ADMIN_PASSWORD", async () => {
+    expect((await fetch(`${base}/admin`)).status).toBe(404);
+    expect((await fetch(`${base}/admin/api/state`)).status).toBe(404);
+  });
+});
+
 describe("bans", () => {
   it("a banned wallet is refused at the gate until the ban ends", async () => {
     balances.set(DAVE, 40_000_000n);

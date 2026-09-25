@@ -31,6 +31,7 @@ import {
 import { lowerTier, qualityBps } from "@cockfight/economy";
 import { RECONNECT_GRACE_S, SNAPSHOT_HZ, TICK_RATE } from "@cockfight/shared";
 import { Phase, serialize, type MatchState } from "@cockfight/sim";
+import { analyzeTiming } from "../botcheck";
 import { getContext } from "../context";
 import { withRetry, type MatchRecord } from "../results";
 import { ROOM_KEY, cleanName, type FightOptions, type PlayerInfo, type SeatAuth } from "../seats";
@@ -408,6 +409,8 @@ export class FightRoom extends Room<{ state: FightState }> {
         })
       : null;
     if (tierPaid) this.state.payoutTier = tierPaid;
+    // The winner's inputs under the bot check: a flag holds the payout for review.
+    const flag = ranked ? analyzeTiming(this.#sm.masksUsed()[res.winner as 0 | 1]).flag : null;
     const rec: MatchRecord = {
       id: this.#sm.matchId,
       ranked: this.state.ranked,
@@ -423,6 +426,7 @@ export class FightRoom extends Room<{ state: FightState }> {
       netQuality: [round3(this.#sm.quality(0)), round3(this.#sm.quality(1))],
       tierPaid,
       qualityBps: q,
+      flag,
     };
     ctx.memory.remember(rec);
     const store = rec.ranked ? ctx.ranked : ctx.memory;
