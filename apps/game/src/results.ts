@@ -12,6 +12,7 @@
  */
 import { createHash } from "node:crypto";
 import { ELO_START, eloUpdate, type MatchReason, type RoundRecord } from "@cockfight/net";
+import type { PayTier } from "@cockfight/economy";
 import type { Tier } from "@cockfight/shared";
 import type { PlayerInfo } from "./seats";
 
@@ -29,6 +30,31 @@ export interface MatchRecord {
   inputLog: string;
   resultHash: string;
   netQuality: [number, number];
+  /** Ranked: the tier the win pays at (the lower of the two) and the quality multiplier (bps). Null for open matches. */
+  tierPaid: PayTier | null;
+  qualityBps: number | null;
+  /** The bot check's verdict on the winner's inputs (null: clean). */
+  flag: string | null;
+}
+
+/** What record_match booked for the winner. */
+export interface PayoutBooking {
+  /** Raw units of the payout token; 0 with a reason. */
+  amount: bigint;
+  reason: string;
+}
+
+export interface RecordResult {
+  elo: EloChange;
+  payout: PayoutBooking | null;
+}
+
+/** A payout row as the result screen follows it. */
+export interface PayoutStatus {
+  amount: bigint;
+  usd: number;
+  status: string;
+  sig: string | null;
 }
 
 /** A match as the public replay page reads it (the shape of match_replay_v, plus tiers). */
@@ -70,7 +96,7 @@ export type EloChange = [[number, number], [number, number]];
 export interface RatingStore {
   /** Current ratings of both players (for the HUD before the match). */
   ratings(players: [PlayerInfo, PlayerInfo]): Promise<[number, number]>;
-  record(rec: MatchRecord): Promise<EloChange>;
+  record(rec: MatchRecord): Promise<RecordResult>;
 }
 
 export const MEMORY_MATCHES = 500;
@@ -101,11 +127,11 @@ export class MemoryStore implements RatingStore {
     return [this.players.get(players[0].id)?.elo ?? ELO_START, this.players.get(players[1].id)?.elo ?? ELO_START];
   }
 
-  async record(rec: MatchRecord): Promise<EloChange> {
+  async record(rec: MatchRecord): Promise<RecordResult> {
     this.remember(rec);
     if (this.matches.has(rec.id) && this.recorded.has(rec.id)) {
       const [a, b] = await this.ratings(rec.players);
-      return [[a, a], [b, b]];
+      return { elo: [[a, a], [b, b]], payout: null };
     }
     this.recorded.add(rec.id);
     const p = rec.players.map((pl) => this.player(pl)) as [MemPlayer, MemPlayer];
@@ -122,7 +148,7 @@ export class MemoryStore implements RatingStore {
       const cutoff = this.now() - 7 * DAY_MS;
       while (pl.results.length > 0 && (pl.results[0] as { at: number }).at < cutoff) pl.results.shift();
     });
-    return [[before[0], after[0]], [before[1], after[1]]];
+    return { elo: [[before[0], after[0]], [before[1], after[1]]], payout: null };
   }
 
   /** Keep the match for the replay page (also used for ranked matches stored in Supabase). */
@@ -242,7 +268,7 @@ export class SupabaseStore implements RatingStore {
     return [elo(ids[0] as string), elo(ids[1] as string)];
   }
 
-  async record(rec: MatchRecord): Promise<EloChange> {
+  async record(rec: MatchRecord): Promise<RecordResult> {
     const [a, b] = rec.players;
     if (!a.address || !b.address) throw new Error("record: ranked players need addresses");
     const body = {
@@ -261,6 +287,13 @@ export class SupabaseStore implements RatingStore {
       p_result_hash: rec.resultHash,
       p_net_quality_p1: rec.netQuality[0],
       p_net_quality_p2: rec.netQuality[1],
+      p_tier_paid: rec.tierPaid,
+      p_quality_bps: rec.qualityBps,
+      p_p1_ip_hash: a.ipHash,
+      p_p2_ip_hash: b.ipHash,
+      p_p1_fp: a.fp,
+      p_p2_fp: b.fp,
+      p_flag: rec.flag,
     };
     const res = await this.f(`${this.cfg.url}/rest/v1/rpc/record_match`, {
       method: "POST",
@@ -272,13 +305,49 @@ export class SupabaseStore implements RatingStore {
       const msg = `supabase record_match: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`;
       throw res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429 ? new PermanentError(msg) : new Error(msg);
     }
-    const rows = (await res.json()) as { address: string; elo_before: number; elo_after: number }[];
+    const rows = (await res.json()) as { address: string; elo_before: number; elo_after: number; payout: string | number; payout_reason: string | null }[];
     const pick = (addr: string): [number, number] => {
       const r = rows.find((x) => x.address === addr);
       if (!r) throw new Error("record_match returned no row for a player");
       return [r.elo_before, r.elo_after];
     };
-    return [pick(a.address), pick(b.address)];
+    const winner = rec.winner === null ? null : rows.find((x) => x.address === rec.players[rec.winner as 0 | 1].address);
+    const payout: PayoutBooking | null = winner ? { amount: BigInt(String(winner.payout ?? 0)), reason: winner.payout_reason ?? "" } : null;
+    return { elo: [pick(a.address), pick(b.address)], payout };
+  }
+
+  /** The player's username and ban, or null when unknown. */
+  async player(address: string): Promise<{ username: string | null; bannedUntil: number | null } | null> {
+    const url = `${this.cfg.url}/rest/v1/players?select=username,banned_until&address=eq.${address}`;
+    const res = await this.f(url, { headers: supabaseHeaders(this.cfg.serviceKey), signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`supabase players: HTTP ${res.status}`);
+    const [row] = (await res.json()) as { username: string | null; banned_until: string | null }[];
+    if (!row) return null;
+    return { username: row.username, bannedUntil: row.banned_until ? Date.parse(row.banned_until) : null };
+  }
+
+  /** The win payout for a match, as the worker moves it along (the result screen polls this). */
+  async payoutStatus(matchId: string): Promise<PayoutStatus | null> {
+    const url = `${this.cfg.url}/rest/v1/payouts?select=amount,usd,status,tx_sig&idem_key=eq.win:${matchId}`;
+    const res = await this.f(url, { headers: supabaseHeaders(this.cfg.serviceKey), signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`supabase payouts: HTTP ${res.status}`);
+    const [row] = (await res.json()) as { amount: string | number; usd: string | number; status: string; tx_sig: string | null }[];
+    if (!row) return null;
+    return { amount: BigInt(String(row.amount)), usd: Number(row.usd), status: row.status, sig: row.status === "sent" || row.status === "paid" ? row.tx_sig : null };
+  }
+
+  /** claim_username(): throws PermanentError("taken") on a case-insensitive clash. */
+  async claimUsername(address: string, username: string, sig: string): Promise<void> {
+    const res = await this.f(`${this.cfg.url}/rest/v1/rpc/claim_username`, {
+      method: "POST",
+      headers: supabaseHeaders(this.cfg.serviceKey),
+      body: JSON.stringify({ p_address: address, p_username: username, p_sig: sig }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) return;
+    const text = await res.text();
+    if (res.status === 409 || /23505|duplicate key/.test(text)) throw new PermanentError("taken");
+    throw new Error(`supabase claim_username: HTTP ${res.status} ${text.slice(0, 200)}`);
   }
 
   /** record_gate(): the audit row and the player's tier. Returns the rating (null below the gate). */

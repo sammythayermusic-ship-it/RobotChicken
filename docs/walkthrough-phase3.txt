@@ -1,0 +1,63 @@
+COCKFIGHT. The full walkthrough. Where we are, how the money works, and what you need to do.
+
+Part one. Where things stand.
+
+The game is built and works. You've played it against the computer, and online play is done too: two people anywhere in the world can type a name, get matched, and fight. Phone controls, replays, and a leaderboard are all in. That's Phases zero, one and two, sitting on GitHub as three pull requests, waiting for you to click Merge. All the automated checks are green.
+
+Phase three is the money. That's what we planned today, and the plan is in the project as a document called plan phase three. Nothing in it moves real money until we've tested every piece on a throwaway coin first.
+
+Part two. Where the money comes from.
+
+You launch COCK on pump fun, paired to PUMP, with the creator fee set to three percent. That means every time anyone buys or sells COCK, three percent of that trade comes to you as the creator, and because the coin is paired to PUMP, those fees arrive in PUMP. Not SOL. PUMP.
+
+Seventy percent of every fee goes to players. Thirty percent is yours, for servers, art, marketing, and a reserve. That seventy for players splits again: fifty percent of all fees is the prize pool for winning matches, and twenty percent is the daily pool for the top ten players.
+
+Part three. How a win gets paid.
+
+Here's the rule that makes the whole thing safe. Prizes are never a fixed amount. Every minute, the worker looks at how much was claimed in the last twenty four hours and how many matches were played in that time, and divides one by the other. That number is what the next win pays. If a lot of people are playing, each prize is smaller. If fees go up, each prize goes up. The game can never promise more than fees actually delivered.
+
+Tiers make it bigger for bigger holders. There are three. Rust, at thirty dollars of COCK, which is the minimum to play at all. Chrome, at two hundred fifty dollars. And Gold, at a thousand dollars. A Rust win pays the base prize. A Chrome win pays two and a half times that. A Gold win pays six times that. Everyone draws from the same pool, so a whale can't drain it by grinding: the more Gold matches happen, the more the pool spreads out.
+
+Matchmaking pairs you with your own tier first. If nobody in your tier shows up within sixty seconds, you get matched with anyone, and that fight pays at the lower of the two tiers. So a Gold player can't farm Rust players for Gold-sized money.
+
+For scale: at five hundred thousand dollars of daily trading volume, fees are fifteen thousand dollars a day. With fifteen hundred matches a day, a Rust win pays about three dollars, Chrome about seven, Gold about seventeen, and first place on the daily board takes about seven hundred fifty dollars. At fifty thousand of volume, divide all of that by ten.
+
+The money lands in the winner's wallet within about ten seconds of the knockout, with a link to the transaction on the result screen.
+
+Part four. The daily top ten.
+
+At midnight UTC every day, the worker takes twenty percent of that day's fees, ranks everyone by wins, and pays the top ten. First place gets twenty five percent of the pool, then eighteen, thirteen, ten, eight, seven, six, five, four, and four. The leaderboard page shows the pool growing all day, a countdown, and what each rank would earn right now.
+
+Part five. Your seed, and why it can't run dry.
+
+You said you'd fund the wallet at launch. That seed only does one job: on quiet days, when fees don't cover the minimum prizes you set, it tops them up. It can never drain faster than one fourteenth per day, so no matter what happens, it lasts at least two weeks. And it's only drawn on when it's needed. If fees cover the day, nothing comes out. When the seed is gone, the site just shows the real numbers.
+
+On top of that, the hot wallet, the one that pays players, only ever holds about thirty six hours of payouts. There are caps per payment, per hour and per day; if any of them trips, payouts pause and your Telegram gets a message. And every payout has a unique key, so a crash or a retry can never pay anyone twice. Before I build any wallet code, I build a simulator that runs a fake month, with whale farming, bot bursts and dead days, and proves every one of these rules holds.
+
+Part six. What the site shows.
+
+The front page shows the live pool: what the next win pays in each tier, today's leaderboard pool and countdown, total fees claimed, total paid to players, and how much seed is left. Every number comes straight from the ledger, so nothing on the page can be stale or made up.
+
+Part seven. What I need from you.
+
+One. Make three fresh wallets. A launch wallet, which is yours and creates the coin. A hot wallet, which pays players. And a seed wallet. The two worker keys go into Fly as secrets, entered by you. Never paste any key into our chat. Put about half a SOL in the hot wallet for transaction fees.
+
+Two. Launch a throwaway coin on pump fun from the launch wallet, with exactly the settings from your screenshot: Custom pair, PUMP, Creator selected and not Holders, Mayhem mode off, and creator fee three. Then buy and sell it a few times for a few dollars, so there are fees to claim. Send me its address. That's how I prove the claim code works before real money is on the line. After it's created, look at the coin page for Share creator rewards; that's where we'll route seventy percent straight to the hot wallet if pump fun allows it.
+
+Three. Set up the accounts and enter the keys yourself: Helius for the blockchain connection, Supabase for the database, Fly for the servers, Cloudflare Turnstile for the bot check, and a Telegram bot for alerts.
+
+Four. Register the domain. The spec names cockfight dot fun. Put the DNS on Cloudflare. And create the X account.
+
+Five. On funding day, three numbers: how much seed you're putting in, and your two minimums in dollars per day: the guaranteed per-win budget, and the guaranteed daily pool.
+
+Part eight. The videos and the launch.
+
+Two videos, neither using ElevenLabs. The hype video is real gameplay captured on your Mac, cut to the beat, with some rendered chicken shots, and you mix the sound. The explainer is motion graphics over the how-it-works script, and you record the voice yourself. Both come after the money code exists, so the numbers on screen are real.
+
+Launch order: teaser clips from the playtest, then the explainer, then the domain goes live with the pool showing your seed, then the token and the site on the same day.
+
+Part nine. What happens next.
+
+When you say start phase three, I build in this order: the simulator, then the worker that claims fees and pays out, then the fee claim test on your throwaway coin, then tiers in matchmaking, then the site, then the admin page. One branch, one pull request, and I stop for your review before anything touches mainnet. Before real money moves, the spec also calls for a lawyer's read and a list of countries to block. That's yours to arrange.
+
+That's the whole thing. Merge the three pull requests when you're ready, send me the throwaway coin, and say start phase three.

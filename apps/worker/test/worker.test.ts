@@ -19,7 +19,7 @@ describe("worker HTTP", () => {
   let base: string;
 
   beforeAll(async () => {
-    server = createWorkerServer();
+    server = createWorkerServer(() => ({ ok: true, mode: "health", payoutsEnabled: false, startedAt: "2026-09-25T00:00:00.000Z" }));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -29,12 +29,12 @@ describe("worker HTTP", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it("GET /health reports ok with payouts disabled", async () => {
+  it("GET /health reports the mode with payouts disabled", async () => {
     const res = await fetch(`${base}/health`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/json");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ ok: true, payoutsEnabled: false });
+    expect(await res.json()).toEqual({ ok: true, mode: "health", payoutsEnabled: false, startedAt: "2026-09-25T00:00:00.000Z" });
   });
 
   it("answers HEAD /health and ignores the query string", async () => {
@@ -54,11 +54,11 @@ describe("worker HTTP", () => {
 });
 
 describe("worker process", () => {
-  it("boots from env, logs that payouts are disabled, and exits 0 on SIGTERM", async () => {
+  it("boots from env alone in health mode (no database: nothing to compute), and exits 0 on SIGTERM", async () => {
     const port = await freePort();
     const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
       cwd: join(import.meta.dirname, ".."),
-      // PAYOUTS_ENABLED=true must still leave payouts off in this build.
+      // PAYOUTS_ENABLED=true without a database, RPC or keys must still send nothing.
       env: { PATH: process.env.PATH ?? "", PORT: String(port), PAYOUTS_ENABLED: "true" },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -78,9 +78,8 @@ describe("worker process", () => {
           await new Promise((r) => setTimeout(r, 100));
         }
       }
-      expect(body).toEqual({ ok: true, payoutsEnabled: false });
-      expect(out).toContain("payouts are disabled");
-      expect(out).toContain("PAYOUTS_ENABLED=true is ignored");
+      expect(body).toMatchObject({ ok: true, mode: "health", payoutsEnabled: false });
+      expect(out).toContain("health only: set SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY, HELIUS_API_KEY or SOLANA_RPC_URL, PAYOUT_MINT");
 
       child.kill("SIGTERM");
       const [code, signal] = await exit;

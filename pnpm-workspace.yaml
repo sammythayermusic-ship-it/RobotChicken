@@ -8,6 +8,10 @@ allowBuilds:
   esbuild: true
   unrs-resolver: true
   msgpackr-extract: false
+  # @solana/web3.js (a devDependency for the transaction parity test) has optional native builds; JS fallbacks are fine.
+  bigint-buffer: false
+  bufferutil: false
+  utf-8-validate: false
 
 # Filtered installs (CI replay job, Docker) must not trigger an automatic full reinstall on `pnpm run`.
 verifyDepsBeforeRun: false
@@ -55,3 +59,5 @@ catalog:
   smol-toml: ^1.9.0
   bs58: ^6.0.0
   "@noble/curves": ^2.4.0
+  "@solana/web3.js": ^1.98.4
+  "@solana/spl-token": ^0.4.14

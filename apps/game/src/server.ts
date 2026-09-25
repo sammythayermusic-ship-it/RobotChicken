@@ -18,7 +18,9 @@ import { clientIp } from "./gate";
 import { originPolicy } from "./origins";
 import { FightRoom } from "./rooms/FightRoom";
 import { QUEUE_ROOM, QueueRoom } from "./rooms/QueueRoom";
+import { ADMIN_HTML, AdminService } from "./admin";
 import { ROOM_KEY } from "./seats";
+import { UsernameService } from "./usernames";
 
 export interface MakeServerOptions {
   /** Parsed environment. Defaults to `loadGameEnv(process.env)`. */
@@ -34,6 +36,16 @@ export interface MakeServerOptions {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const NO_STORE = { "cache-control": "no-store" };
+
+/** A JSON body posted as text/plain (a CORS "simple" request); null when it isn't JSON. */
+function parseBody(body: unknown): unknown {
+  if (typeof body !== "string") return body;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
 
 export function makeServer(opts: MakeServerOptions = {}) {
   const env = opts.env ?? loadGameEnv(process.env);
@@ -63,17 +75,40 @@ export function makeServer(opts: MakeServerOptions = {}) {
    */
   const gate = createEndpoint("/gate", { method: "POST" }, async (c) => {
     const req = c.request;
-    let body: unknown = c.body;
-    if (typeof body === "string") {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        body = null;
-      }
-    }
-    const res = await ctx.gate.enter(body, req ? clientIp(req.headers) : null);
+    const res = await ctx.gate.enter(parseBody(c.body), req ? clientIp(req.headers) : null);
     return Response.json(res.body, { status: res.status, headers: NO_STORE });
   });
+
+  /** Usernames by signed message: a nonce, then the claim. Both posted as text/plain like /gate. */
+  const usernames = new UsernameService(env.QUEUE_JWT_SECRET, ctx.supabase);
+  const usernameNonce = createEndpoint("/username/nonce", { method: "POST" }, async (c) => {
+    const res = usernames.nonce(parseBody(c.body));
+    return Response.json(res.body, { status: res.status, headers: NO_STORE });
+  });
+  const usernameClaim = createEndpoint("/username", { method: "POST" }, async (c) => {
+    const res = await usernames.claim(parseBody(c.body), c.request ? clientIp(c.request.headers) : null);
+    return Response.json(res.body, { status: res.status, headers: NO_STORE });
+  });
+
+  /** /admin (see admin.ts): the page, its state, and the actions. */
+  const admin = new AdminService({ env, fetch: opts.context?.fetch ?? fetch, webOrigin: env.ALLOWED_ORIGINS[0] ?? "http://localhost:3000" });
+  const adminGate = (c: { request?: Request }) => admin.gate(c.request?.headers ?? new Headers(), c.request ? clientIp(c.request.headers) : null);
+  const adminReply = (r: { status: number; body: unknown }) => Response.json(r.body, { status: r.status, headers: r.status === 401 ? { ...NO_STORE, "www-authenticate": 'Basic realm="cockfight admin"' } : NO_STORE });
+  const adminPage = createEndpoint("/admin", { method: "GET" }, async (c) => {
+    const denied = adminGate(c);
+    if (denied) return adminReply(denied);
+    return new Response(ADMIN_HTML, { headers: { ...NO_STORE, "content-type": "text/html; charset=utf-8", "x-robots-tag": "noindex" } });
+  });
+  const adminState = createEndpoint("/admin/api/state", { method: "GET" }, async (c) => adminReply(adminGate(c) ?? (await admin.state())));
+  const adminAction = (path: string, fn: (body: unknown) => Promise<{ status: number; body: unknown }>) =>
+    createEndpoint(path, { method: "POST" }, async (c) => adminReply(adminGate(c) ?? (await fn(parseBody(c.body)))));
+  const adminKnob = adminAction("/admin/api/knob", (b) => admin.setKnob(b));
+  const adminKnobClear = adminAction("/admin/api/knob/clear", (b) => admin.clearKnob(b));
+  const adminPause = adminAction("/admin/api/pause", (b) => admin.pause(b));
+  const adminSeed = adminAction("/admin/api/seed/topup", (b) => admin.seedTopup(b));
+  const adminPlayer = adminAction("/admin/api/player", (b) => admin.player(b));
+  const adminMatch = adminAction("/admin/api/match", (b) => admin.match(b));
+  const adminPayout = adminAction("/admin/api/payout", (b) => admin.payout(b));
 
   /** Finished matches this process played (open playtests, and ranked ones as a fallback to Supabase). */
   const match = createEndpoint("/api/matches/:id", { method: "GET" }, async (c) => {
@@ -100,7 +135,10 @@ export function makeServer(opts: MakeServerOptions = {}) {
       fight: defineRoom(FightRoom),
     },
     // Colyseus' own router (no Express app is mounted); the matchmaking routes are added at listen().
-    routes: createRouter({ health, config, gate, match, leaderboard }),
+    routes: createRouter({
+      health, config, gate, usernameNonce, usernameClaim, match, leaderboard,
+      adminPage, adminState, adminKnob, adminKnobClear, adminPause, adminSeed, adminPlayer, adminMatch, adminPayout,
+    }),
   });
 }
 

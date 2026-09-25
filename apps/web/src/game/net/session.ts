@@ -25,6 +25,19 @@ export interface SeatView {
   eloDelta: number;
 }
 
+/** What the win booked (ranked), as the room mirrors it from the database. */
+export interface PayoutView {
+  /** Raw units of the payout token, as a string (0 when nothing was booked). */
+  amount: string;
+  usd: number;
+  /** paid, quality, flagged, cap_wins, cap_opponent, no_pool, draw, open. */
+  reason: string;
+  /** The tier the win paid at (the lower of the two). */
+  tier: string;
+  /** The transaction once the worker has sent it. */
+  sig: string;
+}
+
 export interface NetSnapshot {
   status: NetStatus;
   seats: [SeatView, SeatView];
@@ -39,6 +52,7 @@ export interface NetSnapshot {
   /** The connection is gone for good while the match wasn't over (the server has forfeited it by now). */
   lost: boolean;
   rtt: number;
+  payout: PayoutView;
 }
 
 /** Who sits where, as the queue announced it (stable for the whole fight). */
@@ -53,6 +67,8 @@ export interface QueueOptions {
   /** Open playtest: a display name and a stable per-browser id. */
   name?: string;
   guestId?: string;
+  /** A stable per-browser id (ranked): the queue never pairs two tickets from one browser, and the caps count by it. */
+  fp?: string;
   rtt: number;
 }
 
@@ -150,6 +166,7 @@ export async function joinQueue(opts: QueueOptions, me: { name: string; tier: Ti
 }
 
 const EMPTY_SEAT: SeatView = { name: "", tier: "rust", connected: false, ready: false, elo: 0, eloDelta: 0 };
+const NO_PAYOUT: PayoutView = { amount: "0", usd: 0, reason: "", tier: "", sig: "" };
 
 export class NetSession {
   readonly room: Room;
@@ -179,6 +196,7 @@ export class NetSession {
       reconnecting: false,
       lost: false,
       rtt: 100,
+      payout: NO_PAYOUT,
     };
     // Reconnect even in a fight's first seconds (the SDK's default waits 5 s of uptime).
     room.reconnection.minUptime = 0;
@@ -265,6 +283,11 @@ export class NetSession {
       recorded?: boolean;
       ranked?: boolean;
       pauseLeft?: number;
+      payout?: string;
+      payoutUsd?: number;
+      payoutReason?: string;
+      payoutTier?: string;
+      payoutSig?: string;
     };
     const seats = s.seats ? Array.from(s.seats) : [];
     const seat = (i: number): SeatView => ({ ...EMPTY_SEAT, ...(seats[i] ?? {}) }) as SeatView;
@@ -276,6 +299,13 @@ export class NetSession {
       recorded: !!s.recorded,
       ranked: !!s.ranked,
       pauseLeft: s.pauseLeft ?? 0,
+      payout: {
+        amount: s.payout ?? "0",
+        usd: typeof s.payoutUsd === "number" ? s.payoutUsd : 0,
+        reason: s.payoutReason ?? "",
+        tier: s.payoutTier ?? "",
+        sig: s.payoutSig ?? "",
+      },
     });
   }
 

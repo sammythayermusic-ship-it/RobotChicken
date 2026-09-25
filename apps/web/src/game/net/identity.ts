@@ -43,6 +43,8 @@ export interface SavedToken {
   address: string;
   tier: string;
   usd: number;
+  /** The claimed username, when the wallet has one. */
+  name?: string | null;
 }
 
 export function saveToken(t: SavedToken | null): void {

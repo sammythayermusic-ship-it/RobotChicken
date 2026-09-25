@@ -35,5 +35,5 @@ lines.push("", "/decoders/*", "  Cache-Control: public, max-age=31536000, immuta
 lines.push("", "/models/*", "  Cache-Control: public, max-age=0, must-revalidate");
 writeFileSync(join(web, "out/_headers"), lines.join("\n") + "\n");
 // /m/<match id> is the static /m page (it reads the id from the address bar); next start rewrites it the same way.
-writeFileSync(join(web, "out/_redirects"), "/m/*  /m/index.html  200\n");
+writeFileSync(join(web, "out/_redirects"), "/m/*  /m/index.html  200\n/p/*  /p/index.html  200\n");
 console.log("\nexport: static site in apps/web/out (with _headers). Serve it from any static host.");

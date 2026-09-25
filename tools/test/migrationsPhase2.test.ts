@@ -70,9 +70,10 @@ describe.each(GRANT_MODES)("Phase 2 functions on a %s-grants project", (mode) =>
       const id = "11111111-1111-4111-8111-111111111111";
       const out = await recordMatch(c, { id, log: '{"v":1,"matchId":"m"}' });
       const [p1, p2] = eloUpdate(1000, 1000, 1);
+      // Without a paid tier (open mode) no payout is booked: Phase 3's test covers the paid path.
       expect(out).toEqual([
-        { address: ROOSTER, elo_before: 1000, elo_after: p1 },
-        { address: HEN, elo_before: 1000, elo_after: p2 },
+        { address: ROOSTER, elo_before: 1000, elo_after: p1, payout: "0", payout_reason: "open" },
+        { address: HEN, elo_before: 1000, elo_after: p2, payout: "0", payout_reason: "open" },
       ]);
       const [m] = await rows<{ winner: string; reason: string; input_log: Uint8Array }>(c, "select winner, reason, input_log from public.matches where id = $1", [id]);
       expect(m?.winner).toBe(ROOSTER);

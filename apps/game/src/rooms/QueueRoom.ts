@@ -20,14 +20,19 @@
  * - Then the fight room is created with ROOM_KEY, both seats are reserved,
  *   and each client gets its reservation ("matched").
  *
- * Phase 3's anti-abuse rules (at least 4 in the queue, no shared IP /24 or
- * fingerprint, the rematch cooldown) plug into canPair().
+ * Phase 3 (ranked): tiers pair with their own tier first and with anyone
+ * after 60 s (the match then pays the lower tier); never two tickets sharing
+ * an IP /24 or a fingerprint; not the same two wallets again within the
+ * rematch cooldown; and no pairing at all until QUEUE_MIN_PLAYERS are
+ * waiting (spec: 4, so two colluding wallets can't be sure to meet).
  */
 import { randomUUID } from "node:crypto";
 import { Room, logger, matchMaker, type AuthContext, type Client } from "@colyseus/core";
 import { RULES } from "@cockfight/sim";
 import { schema, t, type SchemaType } from "@colyseus/schema";
 import { anonName } from "@cockfight/solana";
+import { payTier } from "@cockfight/economy";
+import { clientIp } from "../gate";
 import { getContext } from "../context";
 import { ROOM_KEY, cleanName, type FightOptions, type PlayerInfo, type SeatAuth } from "../seats";
 
@@ -36,6 +41,8 @@ export const RTT_TIGHT = 120;
 export const RTT_WIDE = 200;
 export const WIDEN_AFTER_MS = 20_000;
 export const ANY_RTT_AFTER_MS = 60_000;
+/** Ranked: after this long in the queue a ticket takes an opponent from any tier. */
+export const ANY_TIER_AFTER_MS = 60_000;
 
 export const QUEUE_ROOM = "queue";
 
@@ -65,13 +72,29 @@ export interface KickedMsg {
   shortUsd?: number;
 }
 
-/** Whether two waiting tickets may be paired now (RTT rules; Phase 3 adds anti-abuse). */
+/** Whether two waiting tickets may be paired now on latency (spec's RTT steps). */
 export function rttAllows(a: Pick<Ticket, "rtt" | "joinedAt">, b: Pick<Ticket, "rtt" | "joinedAt">, now: number): boolean {
   const waited = now - Math.min(a.joinedAt, b.joinedAt);
   if (waited >= ANY_RTT_AFTER_MS) return true;
   const limit = waited >= WIDEN_AFTER_MS ? RTT_WIDE : RTT_TIGHT;
   return a.rtt <= limit && b.rtt <= limit;
 }
+
+/** Same paying tier, or either has waited long enough to take anyone. */
+export function tierAllows(a: Pick<Ticket, "player" | "joinedAt">, b: Pick<Ticket, "player" | "joinedAt">, now: number): boolean {
+  if (payTier(a.player.tier) === payTier(b.player.tier)) return true;
+  return now - Math.min(a.joinedAt, b.joinedAt) >= ANY_TIER_AFTER_MS;
+}
+
+/** The spec's identity rules: never the same wallet, IP /24 or fingerprint on both sides. */
+export function identityAllows(a: PlayerInfo, b: PlayerInfo): boolean {
+  if (a.id === b.id) return false;
+  if (a.ipHash && b.ipHash && a.ipHash === b.ipHash) return false;
+  if (a.fp && b.fp && a.fp === b.fp) return false;
+  return true;
+}
+
+export const pairKey = (a: string, b: string): string => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 export class QueueRoom extends Room<{ state: QueueState }> {
   override maxClients = 2000;
@@ -89,20 +112,21 @@ export class QueueRoom extends Room<{ state: QueueState }> {
    */
   static override async onAuth(
     _token: string,
-    options: { token?: unknown; name?: unknown; guestId?: unknown; rules?: unknown } = {},
-    _ctx: AuthContext,
+    options: { token?: unknown; name?: unknown; guestId?: unknown; rules?: unknown; fp?: unknown } = {},
+    authCtx: AuthContext,
   ): Promise<PlayerInfo> {
     const ctx = getContext();
     if (options.rules !== RULES.hash) throw new Error("Your game is out of date: reload the page.");
     if (ctx.env.GATE_MODE === "required") {
       const c = ctx.gate.tokens.verify(options.token);
       if (!c) throw new Error("queue token missing or expired: pass the gate again");
-      return { id: c.sub, address: c.sub, name: anonName(c.sub), tier: c.tier };
+      const ip = clientIp(authCtx.headers) ?? authCtx.ip ?? null;
+      return { id: c.sub, address: c.sub, name: c.name ?? anonName(c.sub), tier: c.tier, ipHash: ctx.abuse.ip(ip), fp: ctx.abuse.fingerprint(options.fp) };
     }
     const name = cleanName(options.name);
     if (!name) throw new Error("pick a name: 1-16 letters, digits, spaces, _ or -");
     const guest = typeof options.guestId === "string" && /^[A-Za-z0-9_-]{8,40}$/.test(options.guestId) ? options.guestId : randomUUID();
-    return { id: `guest:${guest}`, address: null, name, tier: "rust" };
+    return { id: `guest:${guest}`, address: null, name, tier: "rust", ipHash: null, fp: null };
   }
 
   override onCreate(options: { key?: string } = {}): void {
@@ -130,9 +154,19 @@ export class QueueRoom extends Room<{ state: QueueState }> {
     this.state.size = this.tickets.size;
   }
 
-  /** Phase 3 anti-abuse hook. */
-  protected canPair(a: Ticket, b: Ticket): boolean {
-    return a.player.id !== b.player.id;
+  /** When each pair of wallets last started a match (ranked): the rematch cooldown. */
+  readonly recentPairs = new Map<string, number>();
+
+  /** The identity and rematch rules (ranked); open playtests only refuse a player against themselves. */
+  protected canPair(a: Ticket, b: Ticket, now = Date.now()): boolean {
+    if (a.player.id === b.player.id) return false;
+    const ctx = getContext();
+    if (ctx.env.GATE_MODE !== "required") return true;
+    if (!identityAllows(a.player, b.player)) return false;
+    if (!tierAllows(a, b, now)) return false;
+    const last = this.recentPairs.get(pairKey(a.player.id, b.player.id));
+    if (last !== undefined && now - last < ctx.env.REMATCH_COOLDOWN_S * 1000) return false;
+    return true;
   }
 
   /** One pairing pass (public for tests). */
@@ -140,12 +174,18 @@ export class QueueRoom extends Room<{ state: QueueState }> {
     if (this.#pairing) return;
     this.#pairing = true;
     try {
+      const ctx = getContext();
       const waiting = [...this.tickets.values()].filter((t) => !t.busy).sort((a, b) => a.joinedAt - b.joinedAt);
+      if (ctx.env.GATE_MODE === "required" && waiting.length < ctx.env.QUEUE_MIN_PLAYERS) return;
+      if (this.recentPairs.size > 5000) {
+        const keep = ctx.env.REMATCH_COOLDOWN_S * 1000;
+        for (const [k, t] of this.recentPairs) if (now - t >= keep) this.recentPairs.delete(k);
+      }
       const taken = new Set<Ticket>();
       const pairs: [Ticket, Ticket][] = [];
       for (const a of waiting) {
         if (taken.has(a)) continue;
-        const b = waiting.find((x) => x !== a && !taken.has(x) && rttAllows(a, x, now) && this.canPair(a, x));
+        const b = waiting.find((x) => x !== a && !taken.has(x) && rttAllows(a, x, now) && this.canPair(a, x, now));
         if (!b) continue;
         taken.add(a).add(b);
         a.busy = b.busy = true;
@@ -195,6 +235,7 @@ export class QueueRoom extends Room<{ state: QueueState }> {
     }
     // Random sides, so the older ticket isn't always P1.
     const [p1, p2] = Math.random() < 0.5 ? [a, b] : [b, a];
+    if (ranked) this.recentPairs.set(pairKey(a.player.id, b.player.id), Date.now());
     const matchId = randomUUID();
     const opts: FightOptions = { key: ROOM_KEY, matchId, ranked, players: [p1.player, p2.player] };
     try {

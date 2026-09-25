@@ -4,6 +4,7 @@
  * read these the same way; makeServer() installs them.
  */
 import type { GameEnv } from "@cockfight/shared/env";
+import { AbuseIds } from "./abuse";
 import { GateService } from "./gate";
 import { MemoryStore, SupabaseStore, type RatingStore } from "./results";
 
@@ -16,6 +17,8 @@ export interface GameContext {
   ranked: RatingStore;
   supabase: SupabaseStore | null;
   gate: GateService;
+  /** Salted IP / fingerprint hashes for the caps and pairing rules. */
+  abuse: AbuseIds;
 }
 
 let current: GameContext | null = null;
@@ -43,5 +46,6 @@ export function buildContext(env: GameEnv, o: ContextOverrides = {}): GameContex
       : null;
   const gate = o.gate ?? new GateService(env, supabase, o.fetch ?? fetch);
   // Ranked results need the database; open playtests never touch it.
-  return { env, region: env.FLY_REGION, memory, ranked: supabase ?? memory, supabase, gate };
+  const abuse = new AbuseIds(env.ANTI_ABUSE_SALT ?? env.QUEUE_JWT_SECRET);
+  return { env, region: env.FLY_REGION, memory, ranked: supabase ?? memory, supabase, gate, abuse };
 }

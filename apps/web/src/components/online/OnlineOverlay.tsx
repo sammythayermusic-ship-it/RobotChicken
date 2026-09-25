@@ -3,6 +3,16 @@
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import type { NetSession } from "@/game/net/session";
+import { formatRaw, formatUsd, txUrl } from "@/lib/data";
+
+const PAYOUT_DECIMALS = 6;
+const NO_PAY: Record<string, string> = {
+  quality: "no prize: too many dropped inputs, or a forfeit inside 30 s",
+  flagged: "prize on hold: this wallet is under review",
+  cap_wins: "no prize: 40 paid wins today already",
+  cap_opponent: "no prize: 10 paid matches against this opponent today",
+  no_pool: "no prize: the pool isn't live yet",
+};
 
 const REASON: Record<string, string> = {
   ko: "by KO",
@@ -54,6 +64,27 @@ export function OnlineOverlay({ session, loading, onRequeue }: { session: NetSes
             {title}
           </p>
           {how ? <p className="text-zinc-300">{how}</p> : null}
+          {!cancelled && won && s.ranked && s.recorded ? (
+            <p className="text-sm" data-testid="online-payout" data-reason={s.payout.reason}>
+              {s.payout.amount !== "0" ? (
+                <>
+                  <span className="font-display text-2xl text-lime-300">+{formatRaw(s.payout.amount, PAYOUT_DECIMALS)}</span>
+                  {s.payout.usd > 0 ? <span className="ml-2 font-mono text-zinc-300">{formatUsd(s.payout.usd)}</span> : null}
+                  {s.payout.tier ? <span className="ml-2 text-xs uppercase tracking-widest text-zinc-400">{s.payout.tier} rate</span> : null}
+                  <br />
+                  {s.payout.sig ? (
+                    <a href={txUrl(s.payout.sig)} target="_blank" rel="noreferrer" className="font-mono text-xs text-cyan-300" data-testid="online-payout-tx">
+                      paid · view the transaction ↗
+                    </a>
+                  ) : (
+                    <span className="font-mono text-xs text-zinc-400">sending to your wallet…</span>
+                  )}
+                </>
+              ) : (
+                <span className="text-zinc-400">{NO_PAY[s.payout.reason] ?? "no prize for this match"}</span>
+              )}
+            </p>
+          ) : null}
           {!cancelled && seat.elo > 0 ? (
             <p className="font-mono text-sm text-zinc-400" data-testid="online-elo">
               {s.recorded ? (

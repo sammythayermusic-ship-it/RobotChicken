@@ -35,3 +35,7 @@ art/blender/out/
 # Python bytecode (Blender scripts)
 __pycache__/
 *.pyc
+
+# Spoken walkthroughs rendered locally with `say`
+docs/*.m4a
+docs/*.aiff

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { TierBadge } from "@/components/online/OnlineLobby";
-import { fetchLeaderboard, type Board, type LeaderRow } from "@/lib/data";
+import { DAILY_SPLIT_BPS, fetchDailyRewards, fetchLeaderboard, fetchPool, formatUsd, rawUsd, txUrl, type Board, type DailyRewardView, type LeaderRow, type PoolView } from "@/lib/data";
 
 const TABS: { id: Board; label: string }[] = [
   { id: "today", label: "TODAY" },
@@ -25,6 +25,22 @@ export default function LeaderboardClient() {
   const [data, setData] = useState<{ board: Board; rows: LeaderRow[]; source: string } | { board: Board; error: string } | null>(null);
   // Null while prerendered (the build's clock would never match the browser's): set after mount.
   const [now, setNow] = useState<number | null>(null);
+  const [pool, setPool] = useState<PoolView | null>(null);
+  const [yesterday, setYesterday] = useState<DailyRewardView[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      fetchPool().then((p) => alive && setPool(p)).catch(() => {});
+      fetchDailyRewards().then((r) => alive && setYesterday(r)).catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -75,7 +91,14 @@ export default function LeaderboardClient() {
         </div>
         {board === "today" ? (
           <p className="text-sm text-zinc-400">
-            Ranked by wins today (UTC), ties by ELO.{now !== null ? ` Resets in ${untilMidnightUtc(now)}.` : ""} The daily prize pool for the top 10 starts with payouts.
+            Ranked by wins today (UTC), ties by ELO.{now !== null ? ` Resets in ${untilMidnightUtc(now)}.` : ""}{" "}
+            {pool ? (
+              <span data-testid="leaderboard-pool">
+                Today&apos;s pool: <span className="font-mono text-amber-300">{formatUsd(rawUsd(pool.dailyPool, pool.decimals, pool.priceUsd))}</span>, split 25/18/13/10/8/7/6/5/4/4 at midnight.
+              </span>
+            ) : (
+              "The daily prize pool for the top 10 starts with payouts."
+            )}
           </p>
         ) : null}
         {!current ? <p className="text-zinc-400">Loading…</p> : null}
@@ -91,6 +114,7 @@ export default function LeaderboardClient() {
                   <th className="py-2 pr-2">Fighter</th>
                   <th className="py-2 pr-2 text-right">Wins</th>
                   <th className="hidden py-2 pr-2 text-right sm:table-cell">Win rate</th>
+                  {board === "today" && pool ? <th className="py-2 pr-2 text-right">Would earn</th> : null}
                   <th className="py-2 text-right">ELO</th>
                 </tr>
               </thead>
@@ -101,11 +125,22 @@ export default function LeaderboardClient() {
                     <tr key={r.id} className="border-t border-zinc-800" data-testid="leaderboard-row">
                       <td className="py-2 pr-2 font-display text-zinc-400">{i + 1}</td>
                       <td className="py-2 pr-2">
-                        <span className="mr-2">{r.name}</span>
+                        {current.source === "supabase" ? (
+                          <Link href={`/p/${r.id}`} className="mr-2 hover:text-amber-200">
+                            {r.name}
+                          </Link>
+                        ) : (
+                          <span className="mr-2">{r.name}</span>
+                        )}
                         {r.tier ? <TierBadge tier={r.tier} /> : null}
                       </td>
                       <td className="py-2 pr-2 text-right font-mono">{w}</td>
                       <td className="hidden py-2 pr-2 text-right font-mono text-zinc-400 sm:table-cell">{played ? `${Math.round((w / played) * 100)}%` : "–"}</td>
+                      {board === "today" && pool ? (
+                        <td className="py-2 pr-2 text-right font-mono text-amber-200">
+                          {i < DAILY_SPLIT_BPS.length && w > 0 ? formatUsd((rawUsd(pool.dailyPool, pool.decimals, pool.priceUsd) * (DAILY_SPLIT_BPS[i] as number)) / 10_000) : ""}
+                        </td>
+                      ) : null}
                       <td className="py-2 text-right font-mono">{r.elo ?? "–"}</td>
                     </tr>
                   );
@@ -116,6 +151,34 @@ export default function LeaderboardClient() {
         ) : null}
         {current && "source" in current && current.source === "server" ? (
           <p className="text-xs text-zinc-500">Playtest standings from the game server (reset when it restarts).</p>
+        ) : null}
+        {board === "today" && yesterday.length > 0 ? (
+          <section className="mt-4" data-testid="leaderboard-yesterday">
+            <h2 className="font-display text-xl text-amber-300">Paid on {yesterday[0]!.day}</h2>
+            <ul className="mt-2 divide-y divide-zinc-800 text-sm">
+              {yesterday.map((r) => (
+                <li key={r.rank} className="flex items-center justify-between py-1.5">
+                  <span>
+                    <span className="font-display text-zinc-400">#{r.rank}</span>{" "}
+                    <Link href={`/p/${r.address}`} className="hover:text-amber-200">
+                      {r.name}
+                    </Link>{" "}
+                    <span className="text-zinc-500">{r.wins} wins</span>
+                  </span>
+                  <span className="font-mono text-xs">
+                    {pool ? formatUsd(rawUsd(r.amount, pool.decimals, pool.priceUsd)) : ""}{" "}
+                    {r.sig ? (
+                      <a href={txUrl(r.sig)} target="_blank" rel="noreferrer" className="text-cyan-300">
+                        tx ↗
+                      </a>
+                    ) : (
+                      <span className="text-zinc-500">{r.status ?? "queued"}</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
         ) : null}
       </div>
     </main>
