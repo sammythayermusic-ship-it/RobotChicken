@@ -23,17 +23,22 @@ const BOOT_MS = 60_000;
 const TABLES = [
   "abuse_events",
   "balance_checks",
+  "daily_pools",
   "daily_rewards",
   "fee_claims",
-  "fee_swaps",
   "matches",
   "payouts",
   "players",
   "pool_snapshots",
+  "pool_state",
+  "seed",
+  "seed_draws",
+  "settings",
+  "sweeps",
 ] as const;
-const VIEWS = ["leaderboard_v", "match_replay_v", "pool_v"] as const;
+const VIEWS = ["daily_rewards_v", "leaderboard_v", "match_replay_v", "payouts_v", "pool_v"] as const;
 /** Columns no relation readable by the web keys may ever have. input_log is public on purpose (match_replay_v). */
-const PRIVATE_COLUMNS = ["ip_hash", "fingerprint", "flags", "flag", "username_sig", "details"] as const;
+const PRIVATE_COLUMNS = ["ip_hash", "fingerprint", "flags", "flag", "username_sig", "details", "p1_ip_hash", "p2_ip_hash", "p1_fp", "p2_fp", "flagged", "banned_until"] as const;
 const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "MAINTAIN"] as const;
 
 // Real 32-byte addresses (system program ids), so they are valid base58 too.
@@ -218,6 +223,7 @@ describe("migration files and the harness", () => {
       "20260923000000_init.sql",
       "20260923000100_cron.sql",
       "20260924000000_phase2_results.sql",
+      "20260925000000_phase3_money.sql",
     ]);
   });
 
@@ -304,7 +310,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   }
 
-  it("creates exactly the 9 tables and 3 views, owned by postgres", async () => {
+  it("creates exactly the 14 tables and 5 views, owned by postgres", async () => {
     const rels = await rows(
       db,
       `select c.relname, c.relkind, pg_get_userbyid(c.relowner) as owner from pg_class c
@@ -314,8 +320,10 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     expect(rels).toEqual(
       [
         ...TABLES.map((relname) => ({ relname, relkind: "r", owner: "postgres" })),
+        { relname: "daily_rewards_v", relkind: "v", owner: "postgres" },
         { relname: "leaderboard_v", relkind: "m", owner: "postgres" },
         { relname: "match_replay_v", relkind: "v", owner: "postgres" },
+        { relname: "payouts_v", relkind: "v", owner: "postgres" },
         { relname: "pool_v", relkind: "v", owner: "postgres" },
       ].sort((a, b) => a.relname.localeCompare(b.relname)),
     );
@@ -335,16 +343,23 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     expect(Object.fromEntries(cols.map((r) => [r.t, r.cols]))).toEqual({
       abuse_events: `id uuid!, address sol_address, fingerprint text, ip_hash text, kind text!, match_id uuid, details jsonb!, created_at ${ts}!, resolved_by text, resolved_at ${ts}`,
       balance_checks: `id uuid!, address sol_address!, usd numeric(14,4)!, tokens numeric(40,0)!, decimals smallint!, source text!, checked_at ${ts}!`,
-      daily_rewards: "day date!, rank smallint!, address sol_address!, wins integer!, elo integer!, pool_lamports bigint!, share_bps integer!, lamports bigint!, payout_id uuid",
-      fee_claims: `id uuid!, stage text!, gme_claimed numeric(40,0)!, cock_claimed numeric(40,0)!, player_share_lamports bigint, project_share_gme numeric(40,0), claim_sig sol_signature, at ${ts}!`,
-      fee_swaps: `swap_sig sol_signature!, fee_claim_id uuid!, lamports bigint!, at ${ts}!`,
-      leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_lamports_7d bigint, wins_all integer, matches_all integer, win_rate_all numeric, earned_lamports_all bigint`,
+      daily_pools: `day date!, gross numeric(40,0)!, seed_part numeric(40,0)!, pool numeric(40,0)!, rewards smallint!, ranked_at ${ts}!`,
+      daily_rewards: "day date!, rank smallint!, address sol_address!, wins integer!, pool numeric(40,0)!, share_bps integer!, amount numeric(40,0)!, payout_id uuid",
+      daily_rewards_v: "day date, rank smallint, address sol_address, display_name text, wins integer, pool numeric(40,0), share_bps integer, amount numeric(40,0), tx_sig sol_signature, status text",
+      fee_claims: `id uuid!, stage text!, gross numeric(40,0)!, player_share numeric(40,0)!, project_share numeric(40,0)!, sig sol_signature!, at ${ts}!, price_usd numeric(20,10)`,
+      leaderboard_v: `address sol_address, display_name text, elo integer, tier text, wins_today integer, matches_today integer, wins_7d integer, matches_7d integer, win_rate_7d numeric, earned_today numeric(40,0), earned_7d numeric(40,0), wins_all integer, matches_all integer, win_rate_all numeric, earned_all numeric(40,0), earned_usd_today numeric(14,4), earned_usd_all numeric(14,4)`,
       match_replay_v: `id uuid, p1 sol_address, p2 sol_address, p1_name text, p2_name text, winner sol_address, reason text, rounds jsonb, input_log bytea, result_hash text, started_at ${ts}, ended_at ${ts}`,
-      matches: `id uuid!, p1 sol_address!, p2 sol_address!, region text!, started_at ${ts}!, ended_at ${ts}, winner sol_address, reason text, rounds jsonb!, input_log bytea, result_hash text, net_quality_p1 real, net_quality_p2 real, payout_lamports bigint!, flag text`,
-      payouts: `id uuid!, kind text!, idem_key text!, match_id uuid, to_address sol_address!, lamports bigint!, status text!, tx_sig sol_signature, attempts integer!, next_attempt_at ${ts}, last_error text, created_at ${ts}!, paid_at ${ts}`,
-      players: `address sol_address!, username text, username_sig sol_signature, elo integer!, tier text, first_seen ${ts}!, last_seen ${ts}!, flags jsonb!`,
-      pool_snapshots: `at ${ts}!, creator_balance_gme numeric(40,0)!, hot_balance bigint!, matches_24h integer!, payout_per_win bigint!, daily_pool_lamports bigint!, market_cap_usd numeric(20,2)`,
-      pool_v: `snapshot_at ${ts}, creator_balance_gme numeric(40,0), hot_balance bigint, matches_24h integer, payout_per_win bigint, daily_pool_lamports bigint, market_cap_usd numeric(20,2), claims_24h integer, gme_claimed_24h numeric, cock_claimed_24h numeric, sol_after_swap_24h bigint, player_share_lamports_24h bigint, project_share_gme_24h numeric, paid_count_24h integer, paid_lamports_24h bigint, computed_at ${ts}`,
+      matches: `id uuid!, p1 sol_address!, p2 sol_address!, region text!, started_at ${ts}!, ended_at ${ts}, winner sol_address, reason text, rounds jsonb!, input_log bytea, result_hash text, net_quality_p1 real, net_quality_p2 real, flag text, tier_paid text, quality_bps smallint, payout numeric(40,0)!, payout_reason text, p1_ip_hash text, p2_ip_hash text, p1_fp text, p2_fp text`,
+      payouts: `id uuid!, kind text!, idem_key text!, match_id uuid, to_address sol_address!, amount numeric(40,0)!, status text!, tx_sig sol_signature, attempts integer!, next_attempt_at ${ts}, last_error text, created_at ${ts}!, paid_at ${ts}, day date, rank smallint, usd numeric(14,4)!, sent_at ${ts}`,
+      payouts_v: `id uuid, kind text, match_id uuid, day date, rank smallint, to_address sol_address, display_name text, amount numeric(40,0), usd numeric(14,4), status text, tx_sig sol_signature, created_at ${ts}, paid_at ${ts}`,
+      players: `address sol_address!, username text, username_sig sol_signature, elo integer!, tier text, first_seen ${ts}!, last_seen ${ts}!, flags jsonb!, flagged boolean!, banned_until ${ts}`,
+      pool_snapshots: `at ${ts}!, price_usd numeric(20,10)!, win_rust numeric(40,0)!, daily_pool numeric(40,0)!, gross_24h numeric(40,0)!, weighted_milli numeric(40,0)!`,
+      pool_state: `id boolean!, computed_at ${ts}!, price_usd numeric(20,10)!, decimals smallint!, win_rust numeric(40,0)!, win_chrome numeric(40,0)!, win_gold numeric(40,0)!, per_win_budget numeric(40,0)!, weighted_milli numeric(40,0)!, daily_pool numeric(40,0)!, hot_target numeric(40,0)!, gross_24h numeric(40,0)!, gross_today numeric(40,0)!, allowance numeric(40,0)!, outstanding numeric(40,0)!, detail jsonb!`,
+      pool_v: `computed_at ${ts}, price_usd numeric(20,10), decimals smallint, win_rust numeric(40,0), win_chrome numeric(40,0), win_gold numeric(40,0), per_win_budget numeric(40,0), weighted_milli numeric(40,0), daily_pool numeric(40,0), gross_24h numeric(40,0), gross_today numeric(40,0), outstanding numeric(40,0), detail jsonb, gross_all numeric(40,0), player_share_all numeric(40,0), claims_all integer, last_claim_at ${ts}, paid_all numeric(40,0), paid_usd_all numeric(14,4), paid_count_all integer, paid_24h numeric(40,0), paid_count_24h integer, seed_original numeric(40,0), seed_remaining numeric(40,0), paused boolean, now ${ts}`,
+      seed: `id boolean!, original numeric(40,0)!, remaining numeric(40,0)!, updated_at ${ts}!`,
+      seed_draws: `day date!, win numeric(40,0)!, daily numeric(40,0)!, total numeric(40,0)!, shortfall numeric(40,0)!, sig sol_signature, at ${ts}!`,
+      settings: `key text!, value jsonb!, updated_at ${ts}!, updated_by text`,
+      sweeps: `sig sol_signature!, amount numeric(40,0)!, at ${ts}!`,
     });
   });
 
@@ -363,15 +378,22 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     const expected: Record<string, Record<ApiRole, string[]>> = {
       abuse_events: { anon: [], authenticated: [], service_role: readWrite },
       balance_checks: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "DELETE"] },
+      daily_pools: { anon: [], authenticated: [], service_role: readWrite },
       daily_rewards: { anon: [], authenticated: [], service_role: readWrite },
       fee_claims: { anon: [], authenticated: [], service_role: readWrite },
-      fee_swaps: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
       matches: { anon: [], authenticated: [], service_role: readWrite },
       payouts: { anon: [], authenticated: [], service_role: readWrite },
       players: { anon: [], authenticated: [], service_role: readWrite },
       pool_snapshots: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
+      pool_state: { anon: [], authenticated: [], service_role: readWrite },
+      seed: { anon: [], authenticated: [], service_role: ["SELECT", "UPDATE"] },
+      seed_draws: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
+      settings: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
+      sweeps: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
+      daily_rewards_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
       leaderboard_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT", "MAINTAIN"] },
       match_replay_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
+      payouts_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
       pool_v: { anon: ["SELECT"], authenticated: ["SELECT"], service_role: ["SELECT"] },
     };
     const actual: Record<string, Record<string, string[]>> = {};
@@ -461,13 +483,16 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       const pool = await as(db, role, () => rows(db, "select * from public.pool_v"));
       expect(pool).toHaveLength(1);
       expect(pool[0]).toMatchObject({
-        snapshot_at: null,
-        payout_per_win: null,
-        claims_24h: 0,
+        computed_at: null,
+        win_rust: null,
+        claims_all: 0,
         paid_count_24h: 0,
-        paid_lamports_24h: 0,
-        player_share_lamports_24h: 0,
+        paid_all: "0",
+        seed_remaining: "0",
+        paused: false,
       });
+      expect(await as(db, role, () => rows(db, "select * from public.payouts_v"))).toEqual([]);
+      expect(await as(db, role, () => rows(db, "select * from public.daily_rewards_v"))).toEqual([]);
     }
     // Every relation the web keys can read, whatever a later migration adds:
     // exactly the public views, none of them with a private column.
@@ -486,7 +511,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       }
     }
     // The plain views read with their owner's rights on purpose (not security_invoker).
-    for (const v of ["pool_v", "match_replay_v"]) {
+    for (const v of ["pool_v", "match_replay_v", "payouts_v", "daily_rewards_v"]) {
       expect(await one(db, "select reloptions from pg_class where oid = $1::regclass", [`public.${v}`]), v).toEqual({
         reloptions: ["security_barrier=true"],
       });
@@ -546,37 +571,36 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         const matchId = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
         const win = await one<{ id: string }>(
           c,
-          "insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 41000000) returning id",
+          "insert into public.payouts (kind, idem_key, match_id, to_address, amount, usd) values ('win', 'win:' || $1, $2, $3, 41000000, 0.2) returning id",
           [matchId, matchId, ROOSTER],
         );
-        await c.query("update public.payouts set status = 'sent', tx_sig = $1, attempts = 1 where id = $2", [sig("6"), win.id]);
+        await c.query("update public.payouts set status = 'sent', tx_sig = $1, sent_at = now(), attempts = 1 where id = $2", [sig("6"), win.id]);
         await c.query("update public.payouts set status = 'paid', paid_at = now() where id = $1", [win.id]);
         const daily = await one<{ id: string }>(
           c,
-          "insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', '2026-09-23:1', $1, 2500000000) returning id",
+          "insert into public.payouts (kind, idem_key, day, rank, to_address, amount) values ('daily', 'daily:2026-09-23:1', '2026-09-23', 1, $1, 2500000000) returning id",
           [ROOSTER],
         );
         await c.query(
-          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
-           values ('2026-09-23', 1, $1, 40, 1016, 10000000000, 2500, 2500000000, $2)`,
+          `insert into public.daily_rewards (day, rank, address, wins, pool, share_bps, amount, payout_id)
+           values ('2026-09-23', 1, $1, 40, 10000000000, 2500, 2500000000, $2)`,
           [ROOSTER, daily.id],
         );
-        const claim = await one<{ id: string }>(
-          c,
-          `insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, claim_sig)
-           values ('dbc', 123456789012345678901234567890, 61600000000, 37037036703703703670370370367, $1) returning id`,
+        await c.query("insert into public.daily_pools (day, gross, pool, rewards) values ('2026-09-23', 50000000000, 10000000000, 1)");
+        await c.query(
+          `insert into public.fee_claims (stage, gross, player_share, project_share, sig, price_usd)
+           values ('curve', 123456789012345678901234567890, 86419752308641975230864197523, 37037036703703703670370370367, $1, 0.0051)`,
           [sig("7")],
         );
-        // Swapped in two chunks, one row per swap transaction.
-        await c.query("insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $3, 50000000000), ($2, $3, 38000000000)", [
-          sig("8"),
-          sig("A"),
-          claim.id,
-        ]);
+        await c.query("insert into public.pool_snapshots (price_usd, win_rust, daily_pool, gross_24h, weighted_milli) values (0.005, 580000000, 17600000000, 3000000000000, 2600000)");
         await c.query(
-          `insert into public.pool_snapshots (creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports, market_cap_usd)
-           values (5, 1000000000, 1500, 29000000, 17600000000, 500000.25)`,
+          `insert into public.pool_state (price_usd, decimals, win_rust, win_chrome, win_gold, per_win_budget, weighted_milli, daily_pool, hot_target, gross_24h, gross_today, allowance, outstanding)
+           values (0.005, 6, 580000000, 1450000000, 3480000000, 1500000000000, 2600000, 600000000000, 2850000000000, 3000000000000, 3000000000000, 2000000000000, 0)`,
         );
+        await c.query("update public.seed set original = 1000000000000, remaining = 1000000000000");
+        await c.query("insert into public.seed_draws (day, win, daily, total, shortfall, sig) values ('2026-09-23', 50000000000, 20000000000, 70000000000, 90000000000, $1)", [sig("8")]);
+        await c.query("insert into public.sweeps (sig, amount) values ($1, 100000000000)", [sig("A")]);
+        await c.query(`insert into public.settings (key, value, updated_by) values ('payouts_paused', '{"paused": false}', 'sammy')`);
         await c.query(
           "insert into public.abuse_events (address, fingerprint, ip_hash, kind, match_id, details) values ($1, 'fp', 'ih', 'self_match', $2, $3)",
           [HEN, matchId, JSON.stringify({ sameSubnet: true })],
@@ -587,13 +611,18 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         expect(counts).toEqual({
           abuse_events: 1,
           balance_checks: 1,
+          daily_pools: 1,
           daily_rewards: 1,
           fee_claims: 1,
-          fee_swaps: 2,
           matches: 1,
           payouts: 2,
           players: 2,
           pool_snapshots: 1,
+          pool_state: 1,
+          seed: 1,
+          seed_draws: 1,
+          settings: 1,
+          sweeps: 1,
         });
         // Retention deletes where granted; money rows are never deleted or truncated.
         await c.query("delete from public.pool_snapshots");
@@ -601,14 +630,15 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         await expect(c.query("delete from public.payouts")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("delete from public.matches")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("truncate public.fee_claims")).rejects.toMatchObject({ code: "42501" });
-        // A recorded swap is final.
-        await expect(c.query("update public.fee_swaps set lamports = 0")).rejects.toMatchObject({ code: "42501" });
-        await expect(c.query("delete from public.fee_swaps")).rejects.toMatchObject({ code: "42501" });
+        // A recorded seed draw or sweep is final.
+        await expect(c.query("update public.seed_draws set total = 0")).rejects.toMatchObject({ code: "42501" });
+        await expect(c.query("delete from public.sweeps")).rejects.toMatchObject({ code: "42501" });
+        await expect(c.query("delete from public.seed")).rejects.toMatchObject({ code: "42501" });
         // MAINTAIN lets the worker refresh the leaderboard itself.
         await c.exec("refresh materialized view concurrently public.leaderboard_v");
       });
-      const lb = await one(c, "select display_name, tier, wins_all, earned_lamports_all from public.leaderboard_v where address = $1", [ROOSTER]);
-      expect(lb).toEqual({ display_name: "Rooster", tier: "gold", wins_all: 1, earned_lamports_all: 41000000 });
+      const lb = await one(c, "select display_name, tier, wins_all, earned_all::text as earned_all, earned_usd_all::text as earned_usd_all from public.leaderboard_v where address = $1", [ROOSTER]);
+      expect(lb).toEqual({ display_name: "Rooster", tier: "gold", wins_all: 1, earned_all: "41000000", earned_usd_all: "0.2000" });
     });
   });
 
@@ -655,13 +685,13 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await c.exec("begin");
       const rounds = [{ winner: 0, reason: "timeout" }, ...Array.from({ length: 4 }, () => ({ winner: 2, reason: "sdExpired" }))];
       const id = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "decision", rounds });
-      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 29000000)", [id, id, ROOSTER]);
+      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, amount) values ('win', 'win:' || $1, $2, $3, 29000000)", [id, id, ROOSTER]);
       await c.exec("commit");
-      expect(await one(c, "select m.winner, m.reason, jsonb_array_length(m.rounds) as n, p.lamports from public.matches m join public.payouts p on p.match_id = m.id")).toEqual({
+      expect(await one(c, "select m.winner, m.reason, jsonb_array_length(m.rounds) as n, p.amount::text as amount from public.matches m join public.payouts p on p.match_id = m.id")).toEqual({
         winner: ROOSTER,
         reason: "decision",
         n: 5,
-        lamports: 29000000,
+        amount: "29000000",
       });
       // Mapping that final round's draw straight to the match reason is the bug this guards against.
       await expect(addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER, reason: "draw", rounds })).rejects.toMatchObject({
@@ -676,79 +706,87 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       await addPlayers(c, ROOSTER, HEN);
       const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
       const drawn = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: null, reason: "draw" });
-      const pay = (kind: string, key: string, matchId: string | null, to: string) =>
-        c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ($1, $2, $3, $4, 1000)", [kind, key, matchId, to]);
+      const pay = (kind: string, key: string, matchId: string | null, to: string, day: string | null = null, rank: number | null = null) =>
+        c.query("insert into public.payouts (kind, idem_key, match_id, to_address, amount, day, rank) values ($1, $2, $3, $4, 1000, $5, $6)", [kind, key, matchId, to, day, rank]);
 
-      await pay("win", won, won, ROOSTER);
-      await expect(pay("win", won, won, ROOSTER)).rejects.toMatchObject({ code: "23505", constraint: "payouts_idem_key_key" });
-      await pay("daily", "2026-09-23:10", null, HEN);
-      await expect(pay("daily", "2026-09-23:10", null, ROOSTER)).rejects.toMatchObject({ code: "23505", constraint: "payouts_idem_key_key" });
+      await pay("win", `win:${won}`, won, ROOSTER);
+      await expect(pay("win", `win:${won}`, won, ROOSTER)).rejects.toMatchObject({ code: "23505", constraint: "payouts_idem_key_key" });
+      await pay("daily", "daily:2026-09-23:10", null, HEN, "2026-09-23", 10);
+      await expect(pay("daily", "daily:2026-09-23:10", null, ROOSTER, "2026-09-23", 10)).rejects.toMatchObject({ code: "23505", constraint: "payouts_idem_key_key" });
 
       // Win payouts: keyed on the match, only to its winner, never for a draw.
       await expect(pay("win", "not-the-match-id", won, ROOSTER)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
-      await expect(pay("win", won, null, ROOSTER)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
+      await expect(pay("win", won, won, ROOSTER)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
+      await expect(pay("win", `win:${won}`, null, ROOSTER)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
       const lost = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN });
-      await expect(pay("win", lost, lost, ROOSTER)).rejects.toMatchObject({ code: "23503", constraint: "payouts_win_to_winner" });
-      await expect(pay("win", drawn, drawn, ROOSTER)).rejects.toMatchObject({ code: "23503", constraint: "payouts_win_to_winner" });
+      await expect(pay("win", `win:${lost}`, lost, ROOSTER)).rejects.toMatchObject({ code: "23503", constraint: "payouts_win_to_winner" });
+      await expect(pay("win", `win:${drawn}`, drawn, ROOSTER)).rejects.toMatchObject({ code: "23503", constraint: "payouts_win_to_winner" });
       const ghost = "00000000-0000-4000-8000-000000000000";
-      await expect(pay("win", ghost, ghost, ROOSTER)).rejects.toMatchObject({ code: "23503", constraint: "payouts_win_to_winner" });
+      await expect(pay("win", `win:${ghost}`, ghost, ROOSTER)).rejects.toMatchObject({ code: "23503", constraint: "payouts_win_to_winner" });
       // With a payout recorded, the match's winner cannot change and the match cannot go.
       await expect(c.query("update public.matches set winner = $1 where id = $2", [HEN, won])).rejects.toMatchObject({ code: "23503" });
       await expect(c.query("delete from public.matches where id = $1", [won])).rejects.toMatchObject({ code: "23503" });
 
-      // Daily payouts: "YYYY-MM-DD:rank" with rank 1..10, and no match.
-      for (const key of ["2026-09-23:0", "2026-09-23:11", "2026-9-23:1", "2026-09-23", "x"]) {
-        await expect(pay("daily", key, null, HEN), key).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
+      // Daily payouts: "daily:YYYY-MM-DD:rank" with the day and rank 1..10 as columns, and no match.
+      await expect(pay("daily", "daily:2026-09-23:0", null, HEN, "2026-09-23", 0)).rejects.toMatchObject({ code: "23514", constraint: "payouts_rank_check" });
+      await expect(pay("daily", "daily:2026-09-23:11", null, HEN, "2026-09-23", 11)).rejects.toMatchObject({ code: "23514", constraint: "payouts_rank_check" });
+      for (const key of ["2026-09-23:1", "daily:2026-9-23:1", "daily:2026-09-23", "x"]) {
+        await expect(pay("daily", key, null, HEN, "2026-09-23", 1), key).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
       }
-      await expect(pay("daily", "2026-09-24:1", won, ROOSTER)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
-      await expect(pay("tip", "2026-09-24:1", null, HEN)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_check" });
+      await expect(pay("daily", "daily:2026-09-24:1", null, HEN, "2026-09-23", 1)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
+      await expect(pay("daily", "daily:2026-09-24:1", won, ROOSTER, "2026-09-24", 1)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
+      await expect(pay("daily", "daily:2026-09-24:1", null, ROOSTER)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_key" });
+      await expect(pay("tip", "daily:2026-09-24:1", null, HEN, "2026-09-24", 1)).rejects.toMatchObject({ code: "23514", constraint: "payouts_kind_check" });
 
       // Status enumeration and the sent/paid invariants.
-      const setStatus = (s: string) => c.query("update public.payouts set status = $1 where idem_key = $2", [s, won]);
+      const setStatus = (s: string) => c.query("update public.payouts set status = $1 where idem_key = $2", [s, `win:${won}`]);
       await expect(setStatus("refunded")).rejects.toMatchObject({ code: "23514", constraint: "payouts_status_check" });
-      await expect(setStatus("sent")).rejects.toMatchObject({ code: "23514", constraint: "payouts_sig_when_sent" });
+      await expect(setStatus("sent")).rejects.toMatchObject({ code: "23514" }); // no signature, no sent_at
       await expect(setStatus("paid")).rejects.toMatchObject({ code: "23514", constraint: "payouts_paid_at_iff_paid" });
       for (const s of ["deferred", "failed", "voided", "pending"]) await setStatus(s);
       await expect(
-        c.query("update public.payouts set status = 'paid', tx_sig = $1 where idem_key = $2", [sig("9"), won]),
+        c.query("update public.payouts set status = 'sent', tx_sig = $1 where idem_key = $2", [sig("9"), `win:${won}`]),
+      ).rejects.toMatchObject({ code: "23514", constraint: "payouts_sent_at_when_sent" });
+      await expect(
+        c.query("update public.payouts set status = 'paid', tx_sig = $1, sent_at = now() where idem_key = $2", [sig("9"), `win:${won}`]),
       ).rejects.toMatchObject({ code: "23514", constraint: "payouts_paid_at_iff_paid" });
-      await c.query("update public.payouts set status = 'paid', tx_sig = $1, paid_at = now() where idem_key = $2", [sig("9"), won]);
+      await c.query("update public.payouts set status = 'paid', tx_sig = $1, sent_at = now(), paid_at = now() where idem_key = $2", [sig("9"), `win:${won}`]);
       // One transaction signature settles one payout.
       await expect(
-        c.query("update public.payouts set status = 'sent', tx_sig = $1 where idem_key = '2026-09-23:10'", [sig("9")]),
+        c.query("update public.payouts set status = 'sent', tx_sig = $1, sent_at = now() where idem_key = 'daily:2026-09-23:10'", [sig("9")]),
       ).rejects.toMatchObject({ code: "23505", constraint: "payouts_tx_sig_key" });
       await expect(c.query("update public.payouts set attempts = -1")).rejects.toMatchObject({ code: "23514", constraint: "payouts_attempts_check" });
-      await expect(c.query("update public.payouts set lamports = -1")).rejects.toMatchObject({ code: "23514", constraint: "payouts_lamports_check" });
+      await expect(c.query("update public.payouts set amount = 0")).rejects.toMatchObject({ code: "23514", constraint: "payouts_amount_check" });
     });
   });
 
   it("pays one address at most once per day, even when a daily retry re-ranks", async () => {
     await scratch(async (c) => {
       await addPlayers(c, ROOSTER, HEN);
-      const enqueue = (key: string, to: string, lamports: number) =>
+      const enqueue = (day: string, rank: number, to: string, amount: number) =>
         rows<{ id: string }>(
           c,
-          `insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', $1, $2, $3)
+          `insert into public.payouts (kind, idem_key, day, rank, to_address, amount) values ('daily', 'daily:' || $1 || ':' || $2, $1::date, $2::smallint, $3, $4)
            on conflict (idem_key) do nothing returning id`,
-          [key, to, lamports],
+          [day, String(rank), to, amount],
         );
       // Run 1 ranks HEN first, then crashes before enqueueing rank 2.
-      const [henPay] = await enqueue("2026-09-22:1", HEN, 100);
+      const [henPay] = await enqueue("2026-09-22", 1, HEN, 100);
       // The retry re-ranks (an ELO tie moved): ROOSTER first, HEN second. The
       // idempotency key skips rank 1, and HEN's second payout for the day fails.
-      expect(await enqueue("2026-09-22:1", ROOSTER, 100)).toEqual([]);
-      await expect(enqueue("2026-09-22:2", HEN, 72)).rejects.toMatchObject({ code: "23505", constraint: "payouts_daily_day_address_key" });
+      expect(await enqueue("2026-09-22", 1, ROOSTER, 100)).toEqual([]);
+      await expect(enqueue("2026-09-22", 2, HEN, 72)).rejects.toMatchObject({ code: "23505", constraint: "payouts_daily_day_address_key" });
       // Other days, and win payouts to the same address, are unaffected.
-      expect(await enqueue("2026-09-23:2", HEN, 72)).toHaveLength(1);
+      expect(await enqueue("2026-09-23", 2, HEN, 72)).toHaveLength(1);
       const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: HEN });
-      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, lamports) values ('win', $1, $2, $3, 5)", [won, won, HEN]);
+      await c.query("insert into public.payouts (kind, idem_key, match_id, to_address, amount) values ('win', 'win:' || $1, $2, $3, 5)", [won, won, HEN]);
 
       // A reward row can only link the payout that pays its own address its own amount.
-      const reward = (address: string, lamports: number, payoutId: string | undefined) =>
+      const reward = (address: string, amount: number, payoutId: string | undefined) =>
         c.query(
-          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
-           values ('2026-09-22', 1, $1, 9, 1000, 400, 2500, $2, $3)`,
-          [address, lamports, payoutId],
+          `insert into public.daily_rewards (day, rank, address, wins, pool, share_bps, amount, payout_id)
+           values ('2026-09-22', 1, $1, 9, 400, 2500, $2, $3)`,
+          [address, amount, payoutId],
         );
       await expect(reward(ROOSTER, 100, henPay?.id)).rejects.toMatchObject({ code: "23503", constraint: "daily_rewards_payout_matches" });
       await expect(reward(HEN, 99, henPay?.id)).rejects.toMatchObject({ code: "23503", constraint: "daily_rewards_payout_matches" });
@@ -756,12 +794,12 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       // One payout per reward row, and a linked payout's recipient and amount are fixed.
       await expect(
         c.query(
-          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports, payout_id)
-           values ('2026-09-21', 1, $1, 9, 1000, 400, 2500, 100, $2)`,
+          `insert into public.daily_rewards (day, rank, address, wins, pool, share_bps, amount, payout_id)
+           values ('2026-09-21', 1, $1, 9, 400, 2500, 100, $2)`,
           [HEN, henPay?.id],
         ),
       ).rejects.toMatchObject({ code: "23505", constraint: "daily_rewards_payout_id_key" });
-      await expect(c.query("update public.payouts set lamports = 101 where id = $1", [henPay?.id])).rejects.toMatchObject({
+      await expect(c.query("update public.payouts set amount = 101 where id = $1", [henPay?.id])).rejects.toMatchObject({
         code: "23503",
         constraint: "daily_rewards_payout_matches",
       });
@@ -808,40 +846,44 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
 
       const match = "insert into public.matches (p1, p2, region";
       await rejects("matches_region_check", `${match}) values ($1, $2, 'US-EAST')`, [ROOSTER, HEN]);
-      await rejects("matches_payout_lamports_check", `${match}, payout_lamports) values ($1, $2, 'iad', -1)`, [ROOSTER, HEN]);
+      await rejects("matches_payout_check", `${match}, payout) values ($1, $2, 'iad', -1)`, [ROOSTER, HEN]);
+      await rejects("matches_tier_paid_check", `${match}, tier_paid) values ($1, $2, 'iad', 'diamond')`, [ROOSTER, HEN]);
+      await rejects("matches_quality_bps_check", `${match}, quality_bps) values ($1, $2, 'iad', 7500)`, [ROOSTER, HEN]);
+      await rejects("matches_payout_reason_check", `${match}, payout_reason) values ($1, $2, 'iad', 'because')`, [ROOSTER, HEN]);
+      await rejects("matches_p1_ip_hash_check", `${match}, p1_ip_hash) values ($1, $2, 'iad', '1.2.3.4')`, [ROOSTER, HEN]);
       await rejects("matches_result_hash_check", `${match}, result_hash) values ($1, $2, 'iad', 'ABC')`, [ROOSTER, HEN]);
       await rejects("matches_net_quality_p1_check", `${match}, net_quality_p1) values ($1, $2, 'iad', 1.5)`, [ROOSTER, HEN]);
       await rejects("matches_input_log_check", `${match}, input_log) values ($1, $2, 'iad', $3)`, [ROOSTER, HEN, new Uint8Array(1048577)]);
 
-      await rejects("fee_claims_stage_check", "insert into public.fee_claims (stage) values ('pumpfun')");
-      await rejects("fee_claims_gme_claimed_check", "insert into public.fee_claims (stage, gme_claimed) values ('dbc', -1)");
-      await rejects("sol_signature_check", "insert into public.fee_claims (stage, claim_sig) values ('dbc', $1)", [ROOSTER]);
-      const claim = await one<{ id: string }>(c, "insert into public.fee_claims (stage, claim_sig) values ('dbc', $1) returning id", [sig("C")]);
-      const swap = "insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $2, $3)";
-      await rejects("fee_swaps_lamports_check", swap, [sig("D"), claim.id, -1]);
-      await rejects("sol_signature_check", swap, [ROOSTER, claim.id, 1]);
-      await c.query(swap, [sig("D"), claim.id, 1]);
-      // A swap transaction is recorded once, and only against a real claim.
-      await expect(c.query(swap, [sig("D"), claim.id, 1])).rejects.toMatchObject({ code: "23505", constraint: "fee_swaps_pkey" });
-      await expect(c.query(swap, [sig("E"), "00000000-0000-4000-8000-000000000000", 1])).rejects.toMatchObject({
-        code: "23503",
-        constraint: "fee_swaps_fee_claim_id_fkey",
-      });
+      const claim = "insert into public.fee_claims (stage, gross, player_share, project_share, sig) values";
+      await rejects("fee_claims_stage_check", `${claim} ('dbc', 10, 7, 3, $1)`, [sig("C")]);
+      await rejects("fee_claims_gross_check", `${claim} ('curve', -1, 0, 0, $1)`, [sig("C")]);
+      await rejects("fee_claims_shares_sum", `${claim} ('curve', 10, 7, 2, $1)`, [sig("C")]);
+      await rejects("sol_signature_check", `${claim} ('curve', 10, 7, 3, $1)`, [ROOSTER]);
+      await c.query(`${claim} ('curve', 10, 7, 3, $1)`, [sig("C")]);
+      // A claim transaction is recorded once: recording it twice would count its fees twice.
+      await expect(c.query(`${claim} ('curve', 10, 7, 3, $1)`, [sig("C")])).rejects.toMatchObject({ code: "23505", constraint: "fee_claims_sig_key" });
 
-      const snapshot = "insert into public.pool_snapshots (at, creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports)";
+      const snapshot = "insert into public.pool_snapshots (at, price_usd, win_rust, daily_pool, gross_24h, weighted_milli)";
       const minute = "date_trunc('minute', now(), 'UTC')";
       await rejects("pool_snapshots_whole_minute", `${snapshot} values (${minute} + interval '1 second', 0, 0, 0, 0, 0)`);
-      await rejects("pool_snapshots_hot_balance_check", `${snapshot} values (${minute}, 0, -1, 0, 0, 0)`);
+      await rejects("pool_snapshots_win_rust_check", `${snapshot} values (${minute}, 0, -1, 0, 0, 0)`);
+      await rejects("seed_check", "update public.seed set original = 5, remaining = 6");
+      await rejects("seed_draws_total_is_sum", "insert into public.seed_draws (day, win, daily, total, shortfall, sig) values ('2026-09-23', 1, 1, 3, 5, $1)", [sig("G")]);
+      await rejects("seed_draws_sig_iff_drawn", "insert into public.seed_draws (day, win, daily, total, shortfall) values ('2026-09-23', 1, 1, 2, 5)");
+      await rejects("sweeps_amount_check", "insert into public.sweeps (sig, amount) values ($1, 0)", [sig("F")]);
+      await rejects("settings_key_check", `insert into public.settings (key, value) values ('Not A Key', '1')`);
+      await rejects("pool_state_id_check", "insert into public.pool_state (id, price_usd, decimals, win_rust, win_chrome, win_gold, per_win_budget, weighted_milli, daily_pool, hot_target, gross_24h, gross_today, allowance, outstanding) values (false, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)");
 
       await rejects("abuse_events_kind_check", "insert into public.abuse_events (kind) values ('Self Match')");
       await rejects("abuse_events_resolution", "insert into public.abuse_events (kind, resolved_by) values ('bot', 'sammy')");
       await rejects("abuse_events_details_check", "insert into public.abuse_events (kind, details) values ('bot', '1')");
 
-      const reward = (rank: number, share: number, lamports: number) =>
+      const reward = (rank: number, share: number, amount: number) =>
         c.query(
-          `insert into public.daily_rewards (day, rank, address, wins, elo, pool_lamports, share_bps, lamports)
-           values ('2026-09-23', $1, $2, 1, 1000, 1000, $3, $4)`,
-          [rank, ROOSTER, share, lamports],
+          `insert into public.daily_rewards (day, rank, address, wins, pool, share_bps, amount)
+           values ('2026-09-23', $1, $2, 1, 1000, $3, $4)`,
+          [rank, ROOSTER, share, amount],
         );
       await expect(reward(11, 100, 10)).rejects.toMatchObject({ code: "23514", constraint: "daily_rewards_rank_check" });
       await expect(reward(1, 10001, 10)).rejects.toMatchObject({ code: "23514", constraint: "daily_rewards_share_bps_check" });
@@ -862,16 +904,19 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       const old = await addMatch(c, { p1: CHICK, p2: ROOSTER, winner: CHICK, reason: "ringout", endedAgo: "10 days" });
       await addMatch(c, { p1: HEN, p2: CHICK, endedAgo: null }); // unfinished: counts for nobody
       let n = 0;
-      const payout = (key: string, matchId: string | null, to: string, lamports: number, paidAgo: string | null) =>
+      const payout = (matchId: string | null, day: string | null, rank: number | null, to: string, amount: number, paidAgo: string | null) =>
         c.query(
-          `insert into public.payouts (kind, idem_key, match_id, to_address, lamports, status, tx_sig, paid_at)
-           values ($1, $2, $3, $4, $5, $6, $7, now() - $8::interval)`,
-          [matchId ? "win" : "daily", key, matchId, to, lamports, paidAgo ? "paid" : "pending", paidAgo ? sig(String(++n)) : null, paidAgo],
+          `insert into public.payouts (kind, idem_key, match_id, day, rank, to_address, amount, usd, status, tx_sig, sent_at, paid_at)
+           values ($1, $2, $3, $4, $5, $6, $7, $7 / 1000.0, $8, $9, now() - $10::interval, now() - $10::interval)`,
+          [
+            matchId ? "win" : "daily", matchId ? `win:${matchId}` : `daily:${day}:${rank}`, matchId, day, rank, to, amount,
+            paidAgo ? "paid" : "pending", paidAgo ? sig(String(++n)) : null, paidAgo,
+          ],
         );
-      await payout(today, today, ROOSTER, 1000, "1 day");
-      await payout("2026-09-01:1", null, ROOSTER, 500, "20 days");
-      await payout("2026-09-22:3", null, ROOSTER, 7777, null); // pending: not earned yet
-      await payout(old, old, CHICK, 300, "10 days");
+      await payout(today, null, null, ROOSTER, 1000, "1 day");
+      await payout(null, "2026-09-01", 1, ROOSTER, 500, "20 days");
+      await payout(null, "2026-09-22", 3, ROOSTER, 7777, null); // pending: not earned yet
+      await payout(old, null, null, CHICK, 300, "10 days");
 
       // Before a refresh the view still shows the old (empty) snapshot.
       expect(await rows(c, "select * from public.leaderboard_v")).toEqual([]);
@@ -880,7 +925,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         rows(
           c,
           `select address, display_name, elo, wins_today, matches_today, wins_7d, matches_7d, win_rate_7d,
-                  earned_lamports_7d, wins_all, matches_all, win_rate_all, earned_lamports_all
+                  earned_7d::text as earned_7d, wins_all, matches_all, win_rate_all, earned_all::text as earned_all, earned_usd_all::text as earned_usd_all
            from public.leaderboard_v order by address`,
         ),
       );
@@ -888,18 +933,18 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       const expected = [
         {
           address: ROOSTER, display_name: "Rooster", elo: 1032,
-          wins_today: 1, matches_today: 2, wins_7d: 1, matches_7d: 3, win_rate_7d: "0.3333", earned_lamports_7d: 1000,
-          wins_all: 1, matches_all: 4, win_rate_all: "0.2500", earned_lamports_all: 1500,
+          wins_today: 1, matches_today: 2, wins_7d: 1, matches_7d: 3, win_rate_7d: "0.3333", earned_7d: "1000",
+          wins_all: 1, matches_all: 4, win_rate_all: "0.2500", earned_all: "1500", earned_usd_all: "1.5000",
         },
         {
           address: HEN, display_name: anonName(HEN), elo: 1000,
-          wins_today: 0, matches_today: 1, wins_7d: 1, matches_7d: 2, win_rate_7d: "0.5000", earned_lamports_7d: 0,
-          wins_all: 1, matches_all: 2, win_rate_all: "0.5000", earned_lamports_all: 0,
+          wins_today: 0, matches_today: 1, wins_7d: 1, matches_7d: 2, win_rate_7d: "0.5000", earned_7d: "0",
+          wins_all: 1, matches_all: 2, win_rate_all: "0.5000", earned_all: "0", earned_usd_all: "0.0000",
         },
         {
           address: CHICK, display_name: anonName(CHICK), elo: 1000,
-          wins_today: 0, matches_today: 1, wins_7d: 0, matches_7d: 1, win_rate_7d: "0.0000", earned_lamports_7d: 0,
-          wins_all: 1, matches_all: 2, win_rate_all: "0.5000", earned_lamports_all: 300,
+          wins_today: 0, matches_today: 1, wins_7d: 0, matches_7d: 1, win_rate_7d: "0.0000", earned_7d: "0",
+          wins_all: 1, matches_all: 2, win_rate_all: "0.5000", earned_all: "300", earned_usd_all: "0.3000",
         },
       ];
       expect(board).toEqual(expected.sort((a, b) => (a.address < b.address ? -1 : 1)));
@@ -929,63 +974,59 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     });
   });
 
-  it("serves pool_v to anon: the latest snapshot and trailing-24h totals", async () => {
+  it("serves pool_v to anon: the live pool state plus all-time totals", async () => {
     await scratch(async (c) => {
       await addPlayers(c, ROOSTER, HEN);
-      const snap = (minutesAgo: number, perWin: number) =>
-        c.query(
-          `insert into public.pool_snapshots (at, creator_balance_gme, hot_balance, matches_24h, payout_per_win, daily_pool_lamports, market_cap_usd)
-           values (date_trunc('minute', now(), 'UTC') - make_interval(mins => $1), 9, 5000000000, 1500, $2, 17600000000, 500000)`,
-          [minutesAgo, perWin],
-        );
-      await snap(2, 1);
-      await snap(1, 29000000);
-      await snap(3, 2);
+      await c.query(
+        `insert into public.pool_state (price_usd, decimals, win_rust, win_chrome, win_gold, per_win_budget, weighted_milli, daily_pool, hot_target, gross_24h, gross_today, allowance, outstanding, detail)
+         values (0.005, 6, 580000000, 1450000000, 3480000000, 1500000000000, 2600000, 600000000000, 2850000000000, 3000000000000, 3000000000000, 2000000000000, 0, '{"min": {"rust": 150000000}}')`,
+      );
       let n = 0;
-      const claim = async (ago: string, gme: string, lamports: number, swaps: number[], signed = true) => {
-        const r = await one<{ id: string }>(
-          c,
-          `insert into public.fee_claims (stage, gme_claimed, player_share_lamports, project_share_gme, claim_sig, at)
-           values ('damm', $1, $2, 1, $3, now() - $4::interval) returning id`,
-          [gme, lamports, signed ? sig(String(++n)) : null, ago],
-        );
-        for (const out of swaps) {
-          await c.query("insert into public.fee_swaps (swap_sig, fee_claim_id, lamports) values ($1, $2, $3)", [sig(String(++n)), r.id, out]);
-        }
-      };
-      await claim("1 hour", "100000000000000000000", 700, [400, 300, 250]); // three chunks
-      await claim("23 hours", "5", 70, []); // not swapped yet
-      await claim("25 hours", "1000", 7, [9000]); // outside the window
-      await claim("2 hours", "777", 7000, [7000], false); // no claim transaction (a dry run): not counted
+      const claim = (ago: string, gross: number) =>
+        c.query("insert into public.fee_claims (stage, gross, player_share, project_share, sig, at) values ('curve', $1, $2, $3, $4, now() - $5::interval)", [
+          gross, Math.floor(gross * 0.7), gross - Math.floor(gross * 0.7), sig(String(++n)), ago,
+        ]);
+      await claim("1 hour", 1000);
+      await claim("25 hours", 100);
       const won = await addMatch(c, { p1: ROOSTER, p2: HEN, winner: ROOSTER });
       await c.query(
-        `insert into public.payouts (kind, idem_key, match_id, to_address, lamports, status, tx_sig, paid_at)
-         values ('win', $1, $2, $3, 41000000, 'paid', $4, now() - interval '2 hours')`,
+        `insert into public.payouts (kind, idem_key, match_id, to_address, amount, usd, status, tx_sig, sent_at, paid_at)
+         values ('win', 'win:' || $1, $2, $3, 41000000, 0.205, 'paid', $4, now() - interval '2 hours', now() - interval '2 hours')`,
         [won, won, ROOSTER, sig("A")],
       );
       await c.query(
-        `insert into public.payouts (kind, idem_key, to_address, lamports, status, tx_sig, paid_at)
-         values ('daily', '2026-09-20:1', $1, 999, 'paid', $2, now() - interval '3 days')`,
+        `insert into public.payouts (kind, idem_key, day, rank, to_address, amount, usd, status, tx_sig, sent_at, paid_at)
+         values ('daily', 'daily:2026-09-20:1', '2026-09-20', 1, $1, 999, 0.005, 'paid', $2, now() - interval '3 days', now() - interval '3 days')`,
         [HEN, sig("B")],
       );
-      await c.query("insert into public.payouts (kind, idem_key, to_address, lamports) values ('daily', '2026-09-22:1', $1, 55)", [HEN]);
+      await c.query("insert into public.payouts (kind, idem_key, day, rank, to_address, amount) values ('daily', 'daily:2026-09-22:1', '2026-09-22', 1, $1, 55)", [HEN]);
+      await c.query("update public.seed set original = 700, remaining = 650");
+      await c.query(`insert into public.settings (key, value) values ('payouts_paused', '{"paused": true, "reason": "test"}')`);
 
-      const pool = await as(c, "anon", () => one<Row & { snapshot_at: Date }>(c, "select * from public.pool_v"));
+      const pool = await as(c, "anon", () => one<Row>(c, "select * from public.pool_v"));
       expect(pool).toMatchObject({
-        payout_per_win: 29000000,
-        hot_balance: 5000000000,
-        daily_pool_lamports: 17600000000,
-        matches_24h: 1500,
-        claims_24h: 2,
-        gme_claimed_24h: "100000000000000000005",
-        sol_after_swap_24h: 950,
-        player_share_lamports_24h: 770,
-        project_share_gme_24h: "2",
+        win_rust: "580000000",
+        win_gold: "3480000000",
+        daily_pool: "600000000000",
+        detail: { min: { rust: 150000000 } },
+        gross_all: "1100",
+        player_share_all: "770",
+        claims_all: 2,
+        paid_all: "41000999",
+        paid_usd_all: "0.2100",
+        paid_count_all: 2,
+        paid_24h: "41000000",
         paid_count_24h: 1,
-        paid_lamports_24h: 41000000,
+        seed_original: "700",
+        seed_remaining: "650",
+        paused: true,
       });
-      const latest = await one<{ at: Date }>(c, "select max(at) as at from public.pool_snapshots");
-      expect(pool.snapshot_at).toEqual(latest.at);
+      const paid = await as(c, "anon", () => rows<Row>(c, "select kind, display_name, amount::text as amount, status, tx_sig from public.payouts_v order by created_at"));
+      expect(paid).toEqual([
+        { kind: "win", display_name: `anon-${ROOSTER.slice(-4)}`, amount: "41000000", status: "paid", tx_sig: sig("A") },
+        { kind: "daily", display_name: `anon-${HEN.slice(-4)}`, amount: "999", status: "paid", tx_sig: sig("B") },
+        { kind: "daily", display_name: `anon-${HEN.slice(-4)}`, amount: "55", status: "pending", tx_sig: null },
+      ]);
     });
   });
 
