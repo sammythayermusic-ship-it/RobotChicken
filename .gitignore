@@ -28,3 +28,10 @@ art/blender/out/
 .DS_Store
 .vscode/
 .idea/
+
+# Claude Code worktrees / local settings
+.claude/
+
+# Python bytecode (Blender scripts)
+__pycache__/
+*.pyc

@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "units": {
+    "pos": "mu = 1/1000 unit",
+    "hp": "x100",
+    "heat": "x60",
+    "time": "ticks @ 60 Hz"
+  },
+  "match": {
+    "countdown": 180,
+    "round": 3600,
+    "roundEnd": 120,
+    "suddenDeath": 1800,
+    "winsNeeded": 2,
+    "maxRounds": 5,
+    "startX": 2500,
+    "wallEdge": 9500,
+    "ringEdge": 10000,
+    "ringOutFloor": -20000
+  },
+  "heat": {
+    "max": 6000,
+    "onHit": 480,
+    "onBlock": 180,
+    "decayPerTick": 1,
+    "latchAtMax": true
+  },
+  "fighter": {
+    "hpMax": 10000,
+    "gravity": 15,
+    "walkFwd": 60,
+    "walkBack": 45,
+    "inputBuffer": 5,
+    "pushbox": {
+      "halfW": 400,
+      "h": 1200
+    },
+    "hurtFallback": {
+      "ax": 0,
+      "ay": 250,
+      "bx": 0,
+      "by": 950,
+      "r": 350
+    },
+    "jump": {
+      "vy": 270,
+      "vxFwd": 55,
+      "vxBack": 45,
+      "airTicks": 36,
+      "landLag": 4
+    },
+    "dash": {
+      "window": 12,
+      "duration": 12,
+      "invuln": [
+        3,
+        6
+      ],
+      "fwd": {
+        "speed": 160,
+        "frames": 9
+      },
+      "back": {
+        "speed": 150,
+        "frames": 8
+      }
+    },
+    "block": {
+      "chipPct": 10
+    },
+    "knockdown": {
+      "lie": 40,
+      "getup": 20
+    }
+  },
+  "moves": {
+    "peck": {
+      "startup": 4,
+      "active": 2,
+      "recovery": 8,
+      "damage": 600,
+      "blockable": true,
+      "hitsAir": true,
+      "ringOut": false,
+      "hitstun": 14,
+      "blockstun": 8,
+      "hitstop": 3,
+      "blockHitstop": 3,
+      "onHit": {
+        "push": [
+          300,
+          6
+        ]
+      },
+      "onBlock": {
+        "push": [
+          240,
+          6
+        ]
+      },
+      "cancel": {
+        "into": [
+          "shove",
+          "super"
+        ],
+        "from": 5,
+        "to": 10
+      },
+      "hitNode": "hit_beak",
+      "box": {
+        "x": 750,
+        "y": 800,
+        "r": 220
+      }
+    },
+    "shove": {
+      "startup": 8,
+      "active": 3,
+      "recovery": 16,
+      "damage": 400,
+      "blockable": true,
+      "hitsAir": false,
+      "ringOut": true,
+      "hitstun": 24,
+      "blockstun": 12,
+      "hitstop": 3,
+      "blockHitstop": 3,
+      "onHit": {
+        "push": [
+          2000,
+          10
+        ]
+      },
+      "onBlock": {
+        "push": [
+          1000,
+          10
+        ]
+      },
+      "hitNode": "hit_beak",
+      "box": {
+        "x": 700,
+        "y": 600,
+        "r": 300
+      }
+    },
+    "slam": {
+      "startup": 14,
+      "active": 4,
+      "recovery": 22,
+      "damage": 1800,
+      "blockable": false,
+      "hitsAir": false,
+      "ringOut": true,
+      "hitstun": 0,
+      "blockstun": 0,
+      "hitstop": 8,
+      "blockHitstop": 8,
+      "onHit": {
+        "launch": [
+          160,
+          180
+        ]
+      },
+      "onBlock": {
+        "push": [
+          0,
+          1
+        ]
+      },
+      "hitNode": "hit_beak",
+      "box": {
+        "x": 800,
+        "y": 150,
+        "r": 350
+      },
+      "heatGain": [
+        480,
+        0
+      ]
+    },
+    "dive_kick": {
+      "startup": 6,
+      "active": 40,
+      "recovery": 14,
+      "damage": 1000,
+      "blockable": false,
+      "hitsAir": true,
+      "ringOut": false,
+      "hitstun": 18,
+      "blockstun": 0,
+      "hitstop": 3,
+      "blockHitstop": 3,
+      "onHit": {
+        "push": [
+          400,
+          8
+        ]
+      },
+      "onBlock": {
+        "push": [
+          0,
+          1
+        ]
+      },
+      "dive": [
+        180,
+        -180
+      ],
+      "minAirTick": 4,
+      "minY": 900,
+      "bounce": [
+        -40,
+        150
+      ],
+      "hitNode": "hit_beak",
+      "box": {
+        "x": 400,
+        "y": -100,
+        "r": 250
+      },
+      "heatGain": [
+        480,
+        0
+      ]
+    },
+    "super": {
+      "startup": 10,
+      "active": 6,
+      "recovery": 30,
+      "damage": 3000,
+      "blockable": true,
+      "hitsAir": true,
+      "ringOut": true,
+      "hitstun": 0,
+      "blockstun": 20,
+      "hitstop": 8,
+      "blockHitstop": 8,
+      "onHit": {
+        "launch": [
+          160,
+          180
+        ]
+      },
+      "onBlock": {
+        "push": [
+          600,
+          10
+        ]
+      },
+      "fullScreenMaxY": 1800,
+      "invuln": [
+        1,
+        16
+      ],
+      "heatCost": 6000,
+      "hitNode": "hit_beak",
+      "box": {
+        "x": 900,
+        "y": 800,
+        "r": 400
+      },
+      "heatGain": [
+        0,
+        0
+      ]
+    }
+  }
+}

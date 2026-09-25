@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "installCommand": "pnpm install --frozen-lockfile --filter @cockfight/web...",
+  "ignoreCommand": "git diff --quiet ${VERCEL_GIT_PREVIOUS_SHA:-HEAD^} HEAD -- . ../../packages ../../pnpm-lock.yaml ../../pnpm-workspace.yaml ../../package.json"
+}

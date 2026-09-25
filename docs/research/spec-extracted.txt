@@ -1,0 +1,1232 @@
+PAGES: 23
+
+===== PAGE 1 =====
+COCKFIGHT — Build Plan
+COCKFIGHT — Build Plan
+Sep 23, 2026 ·
+@Someone
+Overview
+COCKFIGHT is a browser-based 1v1 3D fighting game where robotic chickens brawl, entry
+requires holding $30 of $COCK, and every win pays instant SOL from the coin's 3%
+trading fees, and the daily top 10 split a leaderboard pool. Nothing is wagered: the loser
+keeps every token. The pitch in one line: hold to play, win to earn.
+This document is the spec for a Claude Code session to build the whole thing: game,
+server, site, chain layer, payouts. Read it top to bottom before writing code; the locked
+decisions and build phases are the contract.
+Done means: a stranger with $30 of $COCK can open cockfight.fun on a laptop or phone,
+paste a wallet, get matched with another real human within 30 seconds, play a best-of-3
+that feels like a real fighter (hit-stop, shake, sound), and see SOL land in their wallet within
+10 seconds of winning, with the live fee pool and leaderboard on the front page.
+Locked decisions
+These are settled. Code should not re-open them; anything not listed here is Code's call,
+documented in the repo README.
+Decision Choice Why
+Rendering Coin Fee split Real-time 3D in browser: Three.js +
+glTF chickens modeled and rigged in
+Blender
+New token, ticker $COCK, launched
+paired to GME (GME is the quote
+token, not SOL) on a Meteora DBC-
+style launchpad with a 3% trading
+fee, same day as the site
+70% of claimed fees to players, 30%
+to the project (servers, RPC, art,
+marketing, reserve)
+Sammy builds assets in Blender; 3D
+is the visual differentiator
+The 3% fee is the whole revenue
+model; a higher market cap means
+more volume, more fees, bigger
+payouts
+Simple, public, auditable on the
+front page
+Page 1 of 23
+
+===== PAGE 2 =====
+COCKFIGHT — Build Plan
+Decision Choice Why
+Payout model Instant SOL per win from the player
+pool, plus a daily leaderboard payout
+to the top 10 at 00:00 UTC
+Payout
+currency
+Fees accrue in GME; the worker
+swaps to SOL via Jupiter and pays in
+SOL
+Entry gate Hold ≥ $30 USD of $COCK at queue
+time and at match start; nothing is
+wagered
+Wallet Paste a public address, no wallet
+connect; optional message-sign to
+claim a username
+Format Best of 3 rounds, 60 s per round, ring-
+outs count as a KO
+Platform Desktop keyboard first; mobile gets
+an on-screen d-pad + two buttons
+Server Colyseus (Node/TypeScript)
+authoritative simulation on Fly.io, 2
+regions (US-East, EU)
+Web/data Next.js on Vercel, Supabase
+Postgres, Helius RPC, Jupiter price +
+swap API
+Fairness Holding tiers unlock cosmetics only,
+never stats
+Dopamine per match, and a reason
+to grind all day
+SOL is what every wallet expects;
+switch to paying GME if Sammy
+prefers, it's one flag
+Loser loses nothing, which keeps it
+a skill game, not a bet
+Zero friction; the address only
+receives, never signs for the game
+Short matches, fast queue
+turnover
+Most volume will come from
+Twitter links on phones
+Server-authoritative is mandatory
+with money attached
+Same stack as parking.fun; Sammy
+already has accounts
+Whales should look better, not hit
+harder
+Assumptions carried from chat (say so if wrong): Sammy models, rigs and animates the
+chickens in Blender himself; Code writes the export/import pipeline and a placeholder
+chicken so gameplay work never blocks on art; domain is cockfight.fun; ticker is $COCK.
+Page 2 of 23
+
+===== PAGE 3 =====
+COCKFIGHT — Build Plan
+Game design
+A 2.5D fighter: 3D models and camera, but movement is locked to one axis (left/right) like
+Street Fighter, which keeps netcode, hitboxes and readability simple. Camera is a fixed
+side view with subtle dolly-in on hits and pull-back on distance.
+Controls
+Input Action Notes
+← → Walk Hold; facing auto-flips toward opponent
+← ← / → → (double tap ≤
+200 ms)
+Dash 12 frames, invulnerable frames 3–6
+↑ Jump Fixed arc, 36 frames airborne
+↓ (hold) Block Blocks all grounded attacks; chip damage
+10%
+Space Peck Fast jab, 4f startup, 2f active, 8f recovery
+Space in air Dive kick Cancels jump into a 45° dive, 6f startup
+↓ + Space Ground slam 14f startup, 4f active, 22f recovery;
+unblockable low, big knockback
+→ + Space (toward
+opponent)
+Wing shove 8f startup, pushes 2 units, sets up ring-
+out
+Space with full Heat Super: Rooster
+Rocket
+10f startup, screen-wide, 30% damage,
+drains Heat
+Simulation runs at 60 ticks/s;
+exposes it all in one moves.json "f" = ticks. Frame data above is the starting point; Code
+so tuning is data, not code changes.
+Rounds and win conditions
+Best of 3 rounds, 60 s each, 3 s pre-round countdown, 2 s KO freeze.
+100 HP per chicken. Round ends on 0 HP , ring-out (leaving the arena edge), or timeout
+(higher HP wins; equal HP = sudden death, first hit wins).
+Heat meter: 0–100, +8 per hit landed, +3 per hit blocked, decays 1/s. Full Heat enables
+the super. Heat resets each round.
+Page 3 of 23
+
+===== PAGE 4 =====
+COCKFIGHT — Build Plan
+Match ends 2–0 or 2–1. Disconnect = forfeit after a 10 s grace (see Netcode).
+Arena
+One arena at launch: a junkyard fighting pit ringed by stacked car bodies, oil-drum fires, a
+crowd of silhouetted robot chickens in the bleachers. 20 units wide, ring-out beyond ±10.
+Add arenas later as pure cosmetics.
+Cosmetic tiers (checked at queue time, cosmetics only)
+Tier Holding (USD) Look
+Rust $30 Scrap-metal body, dull red eyes
+Chrome $250 Polished chrome, blue eyes, dash leaves a light trail
+Gold $1,000 Gold plating, gold eyes, hits throw extra sparks,
+custom KO sting
+Diamond $5,000 Iridescent shader, arena crowd cheers your name,
+entrance animation
+Juice (non-negotiable for feel)
+Hit-stop: 3 ticks on normal hits, 8 on slam and super.
+Camera shake scaled to damage; chromatic aberration pulse on KO.
+Sparks, screws and feathers as GPU particles on every hit.
+Audio: layered metal-impact hits, a chicken scream per damage tier, crowd swell on
+Heat fill, a KO horn. Sammy delivers the sound pack; Code wires a placeholder set first.
+Art pipeline (Blender → glTF)
+One rigged chicken model with swappable materials covers all four tiers; the tiers are
+material/shader variants and particle flags, not separate meshes. Export is .glb (binary
+glTF) with Draco compression, loaded by Three.js GLTFLoader + DRACOLoader.
+Page 4 of 23
+
+===== PAGE 5 =====
+COCKFIGHT — Build Plan
+Budgets
+Asset Budget
+Chicken mesh Chicken textures Arena T otal first load ≤ 15k triangles, one skinned mesh, ≤ 40 bones
+2k PBR set (base color, metal/rough packed,
+normal, emissive) in KTX2/Basis; one set per tier
+≤ 60k triangles total, baked lighting into a lightmap,
+4k
+≤ 12 MB on the wire; lazy-load non-Rust tiers and
+arena extras
+Animation list (Blender actions, exported as glTF clips, names exact)
+idle, walk
+fwd, walk
+_
+_
+back, dash, jump, fall, land, block, block
+_
+hit, peck,
+dive
+_
+kick, slam, shove, super, hit
+_
+light, hit
+_
+heavy, knockdown, getup, ko,
+win, entrance.
+Every attack clip has its startup/active/recovery split defined in moves.json, not baked
+into the clip, so Code can retime without a re-export. Root motion stays off; movement is
+driven by the simulation.
+Rig requirements
+Armature named Rig, root bone root at origin, Y-up on export (Blender's glTF
+exporter converts).
+Apply all transforms, scale 1.0 = 1 game unit = roughly one chicken width.
+Two hitbox helpers as empties parented to the rig: hurt
+_
+body (capsule) and
+hit
+_
+beak (sphere). Code reads their transforms per clip to generate hitbox
+keyframes; combat never uses mesh geometry.
+Export checklist (Sammy, each time)
+File → Export → glTF 2.0, format glb, include Selected Objects only
+Animation: export all actions, sampling on, group by NLA track, optimize keyframes
+Compression: Draco on, quantization 14/10/8
+Page 5 of 23
+
+===== PAGE 6 =====
+COCKFIGHT — Build Plan
+T extures: export as separate files, then convert with toktx to KTX2 (script in repo:
+tools/textures.sh )
+Drop into apps/web/public/models/, run pnpm assets:validate (checks names,
+budgets, missing clips)
+Code ships chicken
+_placeholder.glb (a boxy rigged chicken generated procedurally or
+hand-modeled in a day) so the fighter is playable before Sammy's hero model exists. The
+Blender tools available through Higgsfield Bridge can be used to inspect or nudge scene
+setup, but the hero modeling is hand work.
+Architecture
+A pnpm monorepo with three deployables and one shared simulation package. The
+simulation is pure TypeScript with no DOM or Node dependencies so the exact same code
+runs on the server (authoritative) and the client (prediction).
+flowchart LR
+B[Browser<br/>Next.js + Three.js] -->|WebSocket inputs| G[Game
+server<br/>Colyseus on Fly.io]
+B -->|HTTPS| A[API routes<br/>Next.js on Vercel]
+G -->|match results| D[(Supabase<br/>Postgres)]
+A --> D
+A -->|balance + price| H[Helius RPC<br/>Jupiter Price]
+G -->|payout job| P[Payout worker<br/>hot wallet]
+P -->|SOL transfer| S[Solana]
+C[Fee claim cron] -->|claim creator fees| S
+C --> P
+Inputs flow browser → game server; results flow game server → Postgres → payout worker
+→ Solana. The Next.js app never touches the hot wallet.
+Page 6 of 23
+
+===== PAGE 7 =====
+COCKFIGHT — Build Plan
+Repo layout
+cockfight/
+apps/
+web/ Next.js 15, app router, Three.js scene, queue UI,
+leaderboard
+game/ Colyseus server (Node 22, TS), Dockerfile, fly.toml
+worker/ fee-claim cron + payout signer (Node, runs on Fly as a
+separate app)
+packages/
+sim/ deterministic fighter simulation, moves.json, hitboxes, RNG
+shared/ zod schemas for messages, DB types, constants
+solana/ Helius/Jupiter clients, balance gate, tx builders
+supabase/ migrations, RLS policies
+tools/ asset validation, texture conversion
+Components
+Component Stack Responsibility
+apps/web Next.js 15, React 19, Three.js r170+,
+@react-three/fiber optional,
+T ailwind, Zustand
+apps/game Colyseus 0.16, @colyseus/redis-
+driver for multi-instance rooms,
+Fly.io (iad + fra)
+apps/worker Node cron, @solana/web3.js,
+Helius
+packages/sim Pure TS, fixed-point math (no floats
+in state), seeded xorshift RNG
+Postgres Supabase, RLS on, service role only
+from server/worker
+Landing page, wallet paste, queue,
+3D match view, replays,
+leaderboard, live pool
+Matchmaking lobby room,
+FightRoom running
+packages/sim at 60 ticks, result
+signing
+Claims creator fees hourly, keeps
+hot wallet topped up, processes
+payout queue with idempotency
+keys
+step(state, inputsP1,
+inputsP2) → state; hitbox
+resolution; round/match state
+machine
+Players, matches, rounds, payouts,
+balance snapshots, abuse flags
+Page 7 of 23
+
+===== PAGE 8 =====
+COCKFIGHT — Build Plan
+Component Stack Responsibility
+Redis Upstash Queue tickets, rate limits, balance
+cache (60 s TTL), fingerprint
+pairing memory
+Hosting and regions
+Game server on Fly.io Machines in iad and fra, 1 shared-CPU 1 GB each at launch,
+autoscale to 3 per region. Colyseus matchmaker picks the region by client-reported
+RTT probe.
+Vercel for web, Supabase (US-East) for Postgres, Upstash Redis (global).
+Worker as a single Fly Machine in iad; it is the only process holding the hot wallet key.
+Determinism rules for packages/sim
+All positions, velocities, timers as integers (units × 1000). No seeded per match from the match id.
+No Date.now(); time is the tick counter.
+State is a plain serializable object; step input logs and assert identical final state hashes.
+Math.random; RNG
+is a pure function. Unit tests replay recorded
+Netcode
+Server-authoritative fixed-tick simulation with client-side prediction and reconciliation.
+The server is the only truth; clients never send positions or hits, only button states.
+sequenceDiagram
+participant P1 as Client P1
+participant S as FightRoom (server)
+participant P2 as Client P2
+P1->>S: input {tick, buttons}
+P2->>S: input {tick, buttons}
+S->>S: step() at 60 Hz with latest inputs
+S-->>P1: snapshot {tick, state, ackTick} @ 20 Hz
+S-->>P2: snapshot {tick, state, ackTick} @ 20 Hz
+P1->>P1: rewind to ackTick, replay local inputs
+Page 8 of 23
+
+===== PAGE 9 =====
+COCKFIGHT — Build Plan
+Each client predicts its own chicken from local inputs and interpolates the opponent 2
+snapshots (100 ms) behind, so the opponent is smooth and your own inputs feel instant.
+Protocol
+Input message: { t: number, b: uint8 } where b is a bitmask (L, R, U, D, Space).
+Sent every tick a button state changes, plus a keepalive every 10 ticks. Client tags with
+its predicted tick.
+Server keeps a 6-tick input buffer per player; a missing input repeats the last one.
+Inputs older than 30 ticks are dropped and counted toward a jitter score.
+Snapshot: Colyseus schema with tick, both fighters (pos, vel, hp, heat, state enum,
+stateTick, facing), round timer, round wins, lastAck per player. Delta-encoded by
+Colyseus.
+Reconciliation: on snapshot, the client rewinds its sim to lastAck, re-applies buffered
+local inputs, and blends the visual position over 3 frames if the correction is < 0.5 units;
+snaps if larger.
+Match lifecycle (state machine)
+waiting → countdown(3 s) → fighting → roundEnd(2 s) → (countdown | matchEnd)
+with matchEnd writing the result. Disconnect during fighting pauses the room 10 s;
+reconnect via Colyseus allowReconnection resumes; timeout forfeits the match to the
+connected player.
+Latency handling
+Region chosen by RTT probe; matches only pair players within 120 ms RTT of the same
+region when queue depth allows, widening to 200 ms after 20 s in queue.
+Server adds 2 ticks of input delay for both players to absorb jitter, shown nowhere in
+the UI.
+Per-match netQuality score stored with the result; matches with > 15% dropped
+inputs on one side pay out at half rate (see Economics) to blunt lag-switching.
+Replays
+Every match stores its input log (two arrays of {t,b}, a few KB). Because the sim is
+deterministic, any match can be replayed client-side from the log: used for the share page,
+abuse review, and regression tests.
+Page 9 of 23
+
+===== PAGE 10 =====
+COCKFIGHT — Build Plan
+Solana integration
+Three chain touchpoints: reading a pasted wallet's $COCK balance, claiming creator fees
+into the treasury, and paying winners. Only the worker holds a private key.
+Entry gate (wallet paste)
+1. Player pastes a base58 address; client validates the checksum and length before any
+2. request.
+POST /api/gate → server fetches all token accounts for the address filtered to the
+$COCK mint (Helius getTokenAccountsByOwner or DAS getAssetsByOwner), sums the
+balance, prices it with Jupiter Price API v2 ( /price?ids=<mint> ), caches the USD
+value in Redis for 60 s.
+3. Gate passes at ≥ $30; tier assigned by the table in Game design. Response returns {
+ok, usd, tier, queueToken } ; the queue token is a signed JWT (5 min) the game
+server verifies, so the game server never calls Helius itself .
+4. Re-check at match start (cache bypass). If either player dropped below $30, the match
+is cancelled and both are re-queued with a toast explaining why.
+Jupiter price can be stale in the first minutes after launch; fallback is the pump.fun
+bonding-curve quote ( /coins/<mint> from the pump.fun frontend API, or reading the
+curve account directly) until the token migrates to PumpSwap.
+Optional identity (username claim)
+Pasting alone gives "anon-<last 4 chars>" on the leaderboard. T o claim a username, the
+site offers "sign a message" via any Solana wallet adapter; a valid signature over
+cockfight:claim:<nonce> binds the username to the address. Payouts still go to the
+pasted address either way; signing only controls the name and profile.
+Fee claiming (worker cron, hourly)
+T oken is launched from CREATOR
+_
+WALLET on a Meteora Dynamic Bonding Curve (DBC)
+launchpad configured with GME as the quote mint and a 3% total trading fee, creator
+share set so the full 3% (minus any platform cut the launchpad takes) accrues to
+CREATOR
+_
+WALLET. Code confirms the exact launchpad and its fee-share config with
+Sammy before Phase 3 (see Open risks).
+Page 10 of 23
+
+===== PAGE 11 =====
+COCKFIGHT — Build Plan
+Worker calls claim
+creator
+_
+_
+trading_
+fee on the DBC program via @meteora-
+ag/dynamic-bonding-curve-sdk while the token is on the curve; after graduation the
+DBC migrates liquidity to a Meteora DAMM v2 pool, and the worker claims from the
+locked position via @meteora-ag/cp-amm-sdk instead. Both paths sit behind one
+claimFees() with a dry-run flag; fees arrive as GME (and possibly some $COCK,
+which is swapped too).
+Claimed GME lands in CREATOR
+_
+WALLET; the worker swaps the 70% player share to
+SOL through Jupiter's swap API and sweeps to HOT
+_
+WALLET only what the next ~24 h
+of payouts plus today's leaderboard pool need (formula in Economics). Every claim and
+swap is a fee
+_
+claims row so the front page can show gross fees, player share, and
+project share.
+Payouts
+FightRoom writes a matches row with result
+hash = sha256(matchId + winner +
+_
+inputLog) and enqueues a payouts row { match
+id, kind: win, to
+address,
+_
+_
+lamports, status: pending } in the same transaction. The daily job enqueues kind:
+daily rows the same way, keyed on day + rank.
+Worker polls payouts every 5 s, builds a SystemProgram.transfer with a priority fee,
+signs with HOT
+_
+WALLET, sends via Helius with skipPreflight: false, and confirms at
+confirmed. Idempotency key = match
+_
+id for wins, day:rank for daily; a retry never
+double-pays.
+On confirmation: status = paid, tx
+_
+sig stored, client shows the tx link in the KO
+screen (Solscan) within ~10 s; daily winners get a banner on their next visit.
+Failure modes: insufficient hot balance → status deferred and an alert; RPC error →
+exponential retry up to 10 min; then failed for manual review.
+Keys and safety
+HOT
+WALLET and CREATOR
+_
+_
+WALLET keypairs exist only as Fly secrets on the worker
+app. Never in Vercel, never in the game server.
+Worker refuses any single payout above MAX
+PAYOUT
+_
+_
+LAMPORTS and any hourly total
+above MAX
+HOURLY
+_
+_
+LAMPORTS (env-configured; start at 0.5 SOL / 20 SOL).
+Page 11 of 23
+
+===== PAGE 12 =====
+COCKFIGHT — Build Plan
+Economics
+Every trade of $COCK pays a 3% fee; the project claims it, keeps 30%, and 70% goes to
+players as instant win payouts and a daily leaderboard pool. Payouts are sized from what
+was actually claimed in the last 24 h, so the game can never promise more than fees
+deliver, and a rising market cap raises payouts automatically. The front page shows the
+live numbers:
+"next win pays 0.041 SOL" and "today's leaderboard pool: 12.4 SOL"
+.
+Pool split
+Share of claimed fees Use
+50% 20% 30% Instant per-win payouts (the HOT
+_
+WALLET budget)
+Daily leaderboard pool, paid to the top 10 at 00:00
+UTC
+Project: RPC, Fly, Vercel, Supabase, priority fees,
+art, marketing, and a reserve that floors payouts on
+quiet days
+Per-win payout formula
+p = \min\left(P
+{max},\ \max\left(P
+{min},\ \frac{0.5 \cdot B
+_
+_
+_
+{\max(M
+{24h},\ M
+_
+_
+{floor})}\right)\right) \cdot q
+{24h}}
+Where B₂₄ₕ = SOL value of fees claimed over the trailing 24 h (GME swapped to SOL at
+claim time), M₂₄ₕ = matches completed in the trailing 24 h, M
+_
+floor = 200 (prevents a huge
+payout when volume is high but few people are playing yet), P
+_
+min = 0.005 SOL, P
+max =
+_
+0.5 SOL, and q = net-quality multiplier (1.0 normally, 0.5 if the winner's connection
+dropped > 15% of inputs, 0 for a forfeited match under 30 s old). Recomputed every
+minute by the worker and written to Redis; the game server reads it at match end.
+W orked example
+At $500k daily volume, 3% is $15k/day in fees, roughly 88 SOL at a $170 SOL. With 1,500
+matches/day: 0.5 × 88 / 1,500 = 0.029 SOL per win (about $5), and the daily leaderboard
+pool is 0.2 × 88 = 17.6 SOL. At $50k daily volume and 300 matches: 0.5 × 8.8 / 300 = 0.0147
+SOL per win and a 1.76 SOL daily pool. Below 0.005 SOL the floor applies and the project
+reserve covers the gap until fees recover.
+Page 12 of 23
+
+===== PAGE 13 =====
+COCKFIGHT — Build Plan
+Daily leaderboard payouts
+At 00:00 UTC the worker snapshots leaderboard
+_
+v for the day (ranked by wins, ties
+broken by ELO), takes 20% of the fees claimed that day as the pool, and pays the top 10
+by this split: 25%, 18%, 13%, 10%, 8%, 7%, 6%, 5%, 4%, 4%. Each payout is a payouts with kind = daily , so it rides the same idempotent worker path. A wallet flagged for
+abuse that day is skipped and the next rank moves up. The leaderboard page shows the
+live pool, the countdown, and what each rank would earn right now.
+row
+Hot wallet sizing
+Claimed GME lands in CREATOR
+_
+WALLET; the worker swaps the 70% player share to SOL
+through Jupiter's swap API (slippage 1%, in chunks ≤ $2k to avoid moving the GME price)
+and sends HOT
+_
+WALLET only enough to bring it to p × max(M₂₄ₕ, M
+_
+floor) × 1.5 plus
+today's accrued daily pool, never more. The 30% project share stays in CREATOR
+WALLET
+_
+as GME until Sammy moves it. A hot wallet compromise costs at most ~36 h of payouts
+plus one day's leaderboard pool.
+Caps per wallet
+Max 40 paid wins per wallet per day; wins after that still count for the leaderboard but
+pay 0.
+Max 10 paid matches per wallet per day against the same opponent wallet; pairings
+beyond that pay 0 for both.
+Both caps shown on the profile so nobody feels robbed.
+Anti-abuse
+The moment SOL is paid for wins, someone will try to farm it. Every rule below is enforced
+server-side; the client shows friendly explanations only.
+Page 13 of 23
+
+===== PAGE 14 =====
+COCKFIGHT — Build Plan
+Attack Defense
+Self-matching (two browsers, one person,
+farm wins)
+Bot / scripted inputs Modified client (speed hacks, hitbox edits) Lag switching Ragequit to deny the win Pasting someone else's address Sybil across many wallets Random pairing from a queue that only
+starts matching at ≥ 4 players; never pair two
+tickets sharing an IP /24, a browser
+fingerprint (FingerprintJS open source), or a
+session cookie; per-opponent pairing cap (10
+paid/day); 2-minute cooldown between
+rematches
+Cloudflare Turnstile on queue entry; server
+input-timing analysis (humans show
+reaction-time variance > 30 ms σ and
+occasional held-button overlap, bots don't);
+flagged accounts pay 0 and get a review
+flag; replays are stored so a human can
+check
+Client sends buttons only; server rejects
+inputs with tick numbers ahead of the server
+tick + 3; client state is never trusted
+Input-drop rate tracked per player; > 15%
+halves the winner's payout, > 30% voids it;
+three voided matches in a day = 24 h queue
+ban
+Disconnect = 10 s grace then forfeit; forfeit
+pays the winner at q = 1 if the match ran >
+30 s, else 0
+Harmless for payouts (they only receive);
+username claim requires a signed message
+so leaderboard names can't be squatted
+Per-wallet caps only bite per wallet, so tie
+the daily win cap to fingerprint + IP as well as
+wallet; a fingerprint can cash out 40
+wins/day total across all its wallets
+Page 14 of 23
+
+===== PAGE 15 =====
+COCKFIGHT — Build Plan
+Attack Defense
+Hot wallet drain Per-tx and per-hour lamport caps in the
+worker; hot balance ≤ 36 h of payouts; key
+exists only as a Fly secret; Slack/T elegram
+alert on any cap hit
+Fake fee pool / price manipulation of the
+gate
+Balance and price cached 60 s and re-
+checked at match start; gate uses the lower
+of Jupiter and the bonding-curve quote
+Review tooling
+A private /admin route (basic auth, allowlisted IPs) lists flagged matches with the replay
+viewer, wallet, fingerprint, IP , and a one-click "void payout / ban 24 h / clear flag"
+. Ship this
+in Phase 3, not later; it will be needed on day one.
+Data model
+Supabase Postgres, RLS enabled, all writes through the service role from apps/worker; the web app reads public views only.
+apps/game and
+T able Key columns Notes
+players address (PK, base58), username,
+username
+_
+sig, elo (default 1000), tier,
+first
+seen, last
+_
+_
+seen, flags (jsonb)
+balance
+checks _
+id, address, usd, tokens, source
+(jupiter/curve), checked
+at
+_
+matches id (uuid), p1, p2, region, started
+_
+at,
+ended
+at, winner, reason
+_
+(ko/ringout/timeout/forfeit), rounds (jsonb),
+input
+_
+log (bytea), result
+hash,
+_
+net
+_quality_p1, net
+_quality_p2,
+payout
+_
+lamports, flag
+One row per pasted
+address
+Audit trail for the gate
+Input log enables
+replay
+Page 15 of 23
+
+===== PAGE 16 =====
+COCKFIGHT — Build Plan
+T able Key columns Notes
+payouts id, kind (win/daily), idem
+_
+key (unique:
+match
+_
+id or day:rank), match
+_
+id,
+to
+_
+address, lamports, status
+(pending/sent/paid/deferred/failed/voided),
+tx
+_
+sig, attempts, created
+_
+at, paid
+at
+_
+daily_
+rewards day (date), rank, address, wins, elo,
+pool
+_
+lamports, share
+_
+bps, lamports,
+payout
+id
+_
+fee
+_
+claims id, stage (dbc/damm), gme
+_
+cock
+claimed, sol
+after
+claimed,
+swap,
+_
+player
+_
+project
+claimed
+_
+_
+share
+_
+lamports,
+share
+_
+_gme, claim
+_
+sig, swap_
+sig,
+at
+_
+pool
+_
+snapshots at, creator
+_
+matches
+_
+24h, payout
+balance
+_gme, hot
+_
+win,
+_per
+_
+daily_pool
+_
+lamports, market
+_
+balance,
+cap_
+usd
+abuse
+_
+events id, address, fingerprint, ip_
+hash, kind,
+match
+_
+id, details, created
+_
+at,
+resolved
+_
+by
+Idempotent on
+idem
+_
+key
+Snapshot of each
+day's top 10
+Feeds B₂₄ₕ and the
+public fee ticker
+One row per minute
+for the live chart
+Admin queue
+Indexes and views
+matches (winner, ended
+_
+at desc), matches (p1, p2, ended
+_
+at desc) for pairing
+caps, payouts (status, created
+_
+at) for the worker poll.
+leaderboard
+_
+v view: wins, matches, win rate, ELO, SOL earned per address over 7 d
+and all-time, refreshed as a materialized view every minute.
+pool
+_
+v view: latest pool
+_
+snapshots row plus 24 h totals for the front page.
+Redis keys: gate:<address> (60 s), queue:<region> (sorted set by enqueue time), fp:
+<fingerprint>:wins:<day>, pair:<a>:<b>:<day>, payout
+_per
+_
+win (current p).
+Page 16 of 23
+
+===== PAGE 17 =====
+COCKFIGHT — Build Plan
+W ebsite
+One page does the selling and the playing; the fight takes over the viewport when a match
+starts. Design language: junkyard neon, chrome and rust, big numbers, pump.fun-level
+dopamine, but with real 3D chickens idling on the landing page so the quality is obvious in
+the first second.
+Routes
+Route Purpose
+/ Hero with two idle chickens (live Three.js), live fee
+counter (gross 3% fees, 70% player share, 30%
+project share) + "next win pays X SOL" + "today's
+leaderboard pool Y SOL"
+, paste-wallet box, FIGHT
+button, how-it-works strip, top-10 leaderboard, live
+ticker of recent payouts with Solscan links, buy
+button (pump.fun / Jupiter link)
+/play Queue screen (RTT probe, tier badge, estimated
+wait) → fight view (full-viewport canvas, HUD: HP
+bars, Heat, timer, round pips) → KO screen (winner,
+payout amount, tx link, share card, rematch-
+blocked notice, requeue)
+/m/[id] Replay page for any match, deterministic playback
+from the input log; OG image = the KO frame for
+Twitter shares
+/leaderboard T oday tab (live daily pool, countdown to 00:00 UTC,
+what each rank earns right now), 7-day and all-time
+tabs, ELO, wins, SOL earned; usernames or anon-
+XXXX
+/p/[address] Player profile, tier, caps used today, match history
+/admin Flagged matches and payout controls (basic auth)
+Page 17 of 23
+
+===== PAGE 18 =====
+COCKFIGHT — Build Plan
+Queue flow
+flowchart TD
+A[Paste wallet] --> B{≥ $30 $COCK?}
+B -- no --> C[Show balance + buy link]
+B -- yes --> D[Turnstile]
+D --> E[RTT probe → region]
+E --> F[Queue]
+F --> G{Paired?}
+G -- yes --> H[Re-check both balances]
+H -- ok --> I[FightRoom]
+H -- fail --> F
+I --> J[KO screen + payout]
+J --> F
+A player who fails the gate sees exactly how far they are from $30 and a one-tap buy link;
+that screen is a conversion page, not an error page.
+Mobile
+Landscape lock prompt; portrait shows a rotate-your-phone card.
+Left half: a virtual d-pad (8-way, but only L/R/U/D matter). Right half: two buttons,
+PECK and a context button that reads SLAM when holding down, DIVE in the air.
+T ouch inputs feed the same bitmask; no separate code path.
+Share card
+KO screen has a "Share" button that generates a 1200×630 PNG (server-rendered via the
+replay page + @vercel/og or a headless Three.js snapshot) with both chickens, the
+winner's name, the payout in SOL, and the replay link. This is the growth loop.
+Build phases
+Four phases, each ending in something playable or verifiable. Code should finish a phase
+and stop for review before starting the next; each phase is one branch and one PR.
+Page 18 of 23
+
+===== PAGE 19 =====
+COCKFIGHT — Build Plan
+Phase Scope Acceptance criteria
+0 · Scaffold (day
+1)
+1 · The fighter
+(weeks 1–3)
+2 · Online
+(weeks 3–5)
+3 · Money
+(weeks 5–7)
+4 · Launch
+(week 8)
+Monorepo, packages/sim skeleton
+with moves.json, Supabase
+migrations, Fly/Vercel configs, CI
+running sim tests, placeholder
+chicken glb
+Full move set, hitboxes from rig
+helpers, rounds, Heat, super, ring-out,
+arena, HUD, hit-stop/shake/particles,
+placeholder sounds, local 2-player on
+one keyboard, a simple CPU
+opponent, Blender import pipeline +
+assets:validate
+Colyseus lobby + FightRoom,
+matchmaking by region,
+prediction/reconciliation,
+reconnect/forfeit, wallet-paste gate
+with Turnstile and tier, ELO, mobile
+controls, replay page, leaderboard
+Worker: fee claim, sweep, payout
+queue, caps; payout formula + pool
+snapshots; live pool and payout ticker;
+anti-abuse rules and /admin; share
+cards; alerts
+Mainnet keys, real mint, DNS, load
+test 200 concurrent matches,
+runbook, coin launch + site launch
+same hour
+pnpm test passes; pnpm dev
+runs web + game locally; replay
+of a recorded input log yields
+an identical state hash on two
+machines
+Two people on one keyboard
+call it fun; every move in the
+table works with listed frame
+data; hero chicken imports
+with all 21 clips and no console
+errors; 60 fps on an M1
+MacBook Air and a 3-year-old
+Android phone
+Two players in different cities
+complete a match with no
+visible warping at 80 ms RTT;
+gate blocks a wallet at $29 and
+admits one at $31; a forced
+disconnect forfeits after 10 s;
+the replay page reproduces the
+match exactly
+On devnet with a test token: a
+win produces a confirmed
+transfer within 10 s; a duplicate
+worker run never double-pays;
+hourly cap halts payouts and
+fires an alert; two browsers on
+one IP cannot be paired; a
+scripted bot gets flagged
+within 5 matches
+Launch checklist below fully
+ticked; first 100 real payouts
+confirmed with zero failed
+rows
+Page 19 of 23
+
+===== PAGE 20 =====
+COCKFIGHT — Build Plan
+Order of work inside Phase 1 (fun first)
+1. Sim + placeholder chicken + keyboard, no art: peck, walk, block, HP . Play it.
+2. Add jump, dive kick, slam, shove, dash. Play it.
+3. Hit-stop, shake, particles, placeholder sounds. Play it. This is where it starts feeling
+good.
+4. Heat and super, ring-out, rounds, timer, HUD.
+5. Import the hero chicken, swap materials by tier, arena, camera work.
+Definition of done for the whole build
+All acceptance criteria above pass and are recorded as short screen captures in the
+PR.
+README documents local setup, env vars, deploy commands, and the runbook for
+stuck payouts.
+Sim tests, gate tests, and payout idempotency tests run in CI.
+Accounts, keys and env vars
+Sammy provides the accounts; Code never asks for private keys in chat. Keys go straight
+into Fly and Vercel secrets.
+Sammy provides
+Domain: cockfight.fun (Namecheap/GoDaddy .fun), DNS pointed at Vercel
+Vercel project, Supabase project (US-East), Upstash Redis, Fly.io account with fra allowed
+iad +
+Helius API key (Developer plan or above for DAS + priority-fee estimates)
+Cloudflare Turnstile site key + secret
+Two fresh Solana keypairs generated offline: CREATOR
+WALLET (launches the token,
+_
+receives fees) and HOT
+_
+WALLET (pays winners); fund HOT
+WALLET with ~1 SOL for rent
+_
++ fees
+T elegram bot token + chat id for alerts
+Hero chicken .glb, tier textures, arena .glb, sound pack (Phase 1 uses placeholders
+until these land)
+T oken metadata: name, ticker $COCK, image, description, socials, for the launch, plus
+the launchpad choice and GME pool config
+Page 20 of 23
+
+===== PAGE 21 =====
+COCKFIGHT — Build Plan
+Env vars
+Var Where Notes
+NEXT
+PUBLIC
+GAME
+WS
+_
+_
+_
+_
+URL web Colyseus endpoint (Fly)
+NEXT
+PUBLIC
+COCK
+_
+_
+_
+MINT web, game,
+worker
+Mint address, set at launch
+NEXT
+PUBLIC
+TURNSTILE
+SITE
+_
+TURNSTILE
+_
+SECRET
+_
+_
+KEY /
+web Bot gate
+_
+HELIUS
+API
+KEY web (API
+_
+_
+routes),
+worker
+Balance + RPC
+JUPITER
+PRICE
+URL web Default
+_
+_
+https://api.jup.ag/price/v2
+GATE
+USD
+_
+_
+MIN web, game 30
+QUEUE
+JWT
+_
+_
+SECRET SUPABASE
+URL /
+_
+SUPABASE
+SERVICE
+ROLE
+KEY
+_
+_
+_
+NEXT
+PUBLIC
+SUPABASE
+_
+_
+_
+NEXT
+PUBLIC
+SUPABASE
+URL /
+ANON
+KEY
+_
+_
+_
+_
+UPSTASH
+REDIS
+URL /
+_
+_
+UPSTASH
+REDIS
+TOKEN
+_
+_
+CREATOR
+WALLET
+KEYPAIR /
+HOT
+_
+WALLET
+_
+KEYPAIR
+_
+_
+MAX
+PAYOUT
+_
+_
+MAX
+HOURLY
+LAMPORTS /
+LAMPORTS
+_
+_
+PAYOUT
+P
+MIN / PAYOUT
+P
+MAX /
+_
+_
+_
+_
+M
+FLOOR
+_
+TELEGRAM
+BOT
+_
+TOKEN /
+TELEGRAM
+_
+CHAT
+ID
+_
+_
+ADMIN
+USER / ADMIN
+PASS /
+_
+_
+ADMIN
+IP
+ALLOWLIST
+_
+_
+web, game Signs queue tokens
+game,
+worker
+Never in the browser
+web Public views only
+web, game,
+worker
+worker
+Base58 secret key, Fly secret
+only
+worker 500000000 / 20000000000 to start
+worker 0.005 SOL / 0.5 SOL / 200
+worker,
+Alerts
+game
+web /admin
+Page 21 of 23
+
+===== PAGE 22 =====
+COCKFIGHT — Build Plan
+Var Where Notes
+SOLANA
+_
+CLUSTER all devnet through Phase 3, mainnet-
+beta at launch
+QUOTE
+_
+MINT web,
+GME mint address
+worker
+DBC
+_
+POOL / DAMM
+_
+POOL worker Curve pool, then the migrated pool
+after graduation
+PLAYER
+SHARE
+BPS /
+worker DAIL Y
+_
+POOL
+_
+BPS
+_
+_
+7000 / 2000 (of claimed fees); per-
+win budget is the remainder of the
+player share
+PAYOUT
+_
+CURRENCY worker SOL (default) or GME
+Launch checklist and open risks
+Coin and site go live in the same hour; the game is what gives the coin a reason to exist, so
+the site must already be working when the pump.fun link drops.
+Launch day (T-0)
+Load test passed: 200 concurrent matches on Fly with p95 tick time < 8 ms
+Devnet end-to-end run completed with 500 real matches and zero Mainnet mint created from CREATOR
+WALLET; NEXT
+PUBLIC
+COCK
+failed MINT set
+payouts
+_
+_
+_
+_
+everywhere; gate verified against a real wallet
+HOT
+_
+WALLET funded, caps set conservatively (0.25 SOL / 10 SOL hourly for day one)
+Fee claim cron dry-run confirmed against the live DBC pool (claim + GME→SOL swap),
+then enabled; first daily leaderboard run scheduled
+/admin reachable, T elegram alerts firing on a test cap hit
+Share card renders for a real match id; OG tags verified in the Twitter card validator
+Runbook in README: stuck payout, hot wallet empty, region down, rollback
+Trailer clip (Blender render, 15 s) and three share-ready KO GIFs ready for the launch
+tweet
+Page 22 of 23
+
+===== PAGE 23 =====
+COCKFIGHT — Build Plan
+Open risks
+Risk Impact Mitigation
+Regulatory: paying SOL for game
+wins reads like a prize contest or
+gambling in some jurisdictions
+Site takedown or
+wallet freeze
+Nothing wagered, hold-to-play
+only, no entry fee; geo-block
+jurisdictions on a short list; get a
+30-minute read from a crypto-
+savvy lawyer before mainnet
+Low volume days Payout floor drains
+the reserve
+P
+_
+min small, reserve funds it,
+worker pauses the floor if the
+reserve drops under 5 SOL
+Launchpad or Meteora SDK
+changes break the claim path
+Fees stop flowing Two claim paths behind one
+function, alert if no claim
+succeeds in 3 h
+Art lands late Launch slips Placeholder chicken is playable
+from Phase 1; launch can ship
+with placeholder tiers if the hero
+model is done and tiers are not
+Bots outpace heuristics Payouts farmed Caps bound the damage per day;
+admin can pause payouts
+globally with one flag
+Three.js performance on cheap
+phones
+Mobile players
+bounce
+Budgets above, a low-quality
+toggle (no particles, half-res
+render), measured on a real mid-
+range Android in Phase 1
+Colyseus room state desync
+under packet loss
+Warping, disputes Deterministic sim + replays give
+a ground truth; disputes
+resolved from the input log
+V2 ideas (not in this build)
+Weekly bracket tournament from the reserve, a second arena, spectate mode with live
+betting-free chat, seasonal cosmetics, a Twitch overlay for streamers.
+Page 23 of 23

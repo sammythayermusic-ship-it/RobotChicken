@@ -1,0 +1,39 @@
+{
+  "name": "cockfight",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.27.1",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @cockfight/web --filter @cockfight/game run dev",
+    "build": "pnpm -r --filter \"./apps/*\" run build",
+    "lint": "eslint --max-warnings=0 .",
+    "typecheck": "pnpm -r --parallel run typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm --filter @cockfight/web run test:e2e",
+    "replay:golden": "pnpm -s --filter @cockfight/sim run replay:golden",
+    "assets:placeholder": "pnpm -s --filter @cockfight/tools run assets:placeholder",
+    "assets:validate": "CF_CWD=\"$INIT_CWD\" pnpm -s --filter @cockfight/tools run assets:validate",
+    "assets:bake": "CF_CWD=\"$INIT_CWD\" pnpm -s --filter @cockfight/tools run assets:bake",
+    "assets:inspect": "CF_CWD=\"$INIT_CWD\" pnpm -s --filter @cockfight/tools run assets:inspect",
+    "assets:import": "pnpm -s --filter @cockfight/tools run assets:import",
+    "textures": "sh tools/textures.sh",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm assets:validate && pnpm assets:bake --check && pnpm build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-next": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
+  }
+}

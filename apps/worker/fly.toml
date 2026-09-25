@@ -1,0 +1,29 @@
+# Fly.io config for the payout worker. Deploy from the REPO ROOT:
+#   fly deploy . --config apps/worker/fly.toml --dockerfile apps/worker/Dockerfile --ha=false
+# --ha=false keeps it to ONE machine: once Phase 3 signs payouts there must be
+# exactly one signer, and fly deploy otherwise adds a standby.
+#
+# No [http_service]: nothing on the internet reaches the worker. The machine
+# check below hits /health over Fly's internal network.
+
+app = "cockfight-worker"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 60
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+
+[checks.alive]
+  type = "http"
+  port = 8080
+  method = "GET"
+  path = "/health"
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

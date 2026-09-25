@@ -1,0 +1,32 @@
+{
+  "name": "@cockfight/tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "assets:placeholder": "tsx src/cli/placeholder.ts",
+    "assets:validate": "tsx src/cli/validate.ts",
+    "assets:bake": "tsx src/cli/bake.ts",
+    "assets:inspect": "tsx src/cli/inspect.ts",
+    "blender": "tsx src/cli/blender.ts"
+  },
+  "dependencies": {
+    "@cockfight/sim": "workspace:*",
+    "@electric-sql/pglite": "catalog:",
+    "@gltf-transform/core": "catalog:",
+    "@gltf-transform/extensions": "catalog:",
+    "@gltf-transform/functions": "catalog:",
+    "draco3dgltf": "catalog:",
+    "gltf-validator": "catalog:",
+    "smol-toml": "catalog:",
+    "three": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/three": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "note": "The contract every chicken .glb must satisfy. The placeholder is built from it; assets:validate checks against it. Frame counts are at 60 fps; a clip of N frames has samples 0..N, sample 0 is the pose before the move's first tick.",
+  "fps": 60,
+  "units": 1000,
+  "axes": {
+    "up": "+Y",
+    "forward": "+Z",
+    "simX": "+Z",
+    "simY": "+Y"
+  },
+  "rig": {
+    "armature": "Rig",
+    "rootBone": "root"
+  },
+  "clips": [
+    {
+      "name": "idle",
+      "frames": 60,
+      "loop": true
+    },
+    {
+      "name": "walk_fwd",
+      "frames": 32,
+      "loop": true
+    },
+    {
+      "name": "walk_back",
+      "frames": 36,
+      "loop": true
+    },
+    {
+      "name": "dash",
+      "frames": 12,
+      "loop": false
+    },
+    {
+      "name": "jump",
+      "frames": 36,
+      "loop": false
+    },
+    {
+      "name": "fall",
+      "frames": 20,
+      "loop": true
+    },
+    {
+      "name": "land",
+      "frames": 4,
+      "loop": false
+    },
+    {
+      "name": "block",
+      "frames": 6,
+      "loop": false
+    },
+    {
+      "name": "block_hit",
+      "frames": 8,
+      "loop": false
+    },
+    {
+      "name": "peck",
+      "frames": 14,
+      "loop": false,
+      "phases": [
+        4,
+        2,
+        8
+      ]
+    },
+    {
+      "name": "dive_kick",
+      "frames": 30,
+      "loop": false,
+      "phases": [
+        6,
+        10,
+        14
+      ]
+    },
+    {
+      "name": "slam",
+      "frames": 40,
+      "loop": false,
+      "phases": [
+        14,
+        4,
+        22
+      ]
+    },
+    {
+      "name": "shove",
+      "frames": 27,
+      "loop": false,
+      "phases": [
+        8,
+        3,
+        16
+      ]
+    },
+    {
+      "name": "super",
+      "frames": 46,
+      "loop": false,
+      "phases": [
+        10,
+        6,
+        30
+      ]
+    },
+    {
+      "name": "hit_light",
+      "frames": 14,
+      "loop": false
+    },
+    {
+      "name": "hit_heavy",
+      "frames": 24,
+      "loop": false
+    },
+    {
+      "name": "knockdown",
+      "frames": 40,
+      "loop": false
+    },
+    {
+      "name": "getup",
+      "frames": 20,
+      "loop": false
+    },
+    {
+      "name": "ko",
+      "frames": 60,
+      "loop": false
+    },
+    {
+      "name": "win",
+      "frames": 60,
+      "loop": true
+    },
+    {
+      "name": "entrance",
+      "frames": 90,
+      "loop": false
+    }
+  ],
+  "helpers": {
+    "hurt_body": {
+      "shape": "capsule",
+      "bone": "body",
+      "radius": 0.4,
+      "halfHeight": 0.42
+    },
+    "hit_beak": {
+      "shape": "sphere",
+      "bone": "head",
+      "radius": 0.14
+    }
+  },
+  "materials": [
+    "cf_shell",
+    "cf_trim",
+    "cf_eye",
+    "cf_beak",
+    "cf_comb"
+  ],
+  "budgets": {
+    "chickenTriangles": 15000,
+    "joints": 40,
+    "textureSize": 2048,
+    "arenaTriangles": 60000,
+    "lightmapSize": 4096,
+    "firstLoadBytes": 12582912
+  }
+}

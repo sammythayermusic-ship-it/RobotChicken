@@ -1,0 +1,33 @@
+{
+  "name": "@cockfight/game",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "build": "node build.mjs",
+    "start": "node --enable-source-maps dist/server.mjs",
+    "smoke": "node build.mjs && tsx scripts/smoke.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cockfight/shared": "workspace:*",
+    "@cockfight/sim": "workspace:*",
+    "@colyseus/core": "catalog:",
+    "@colyseus/schema": "catalog:",
+    "@colyseus/ws-transport": "catalog:",
+    "express": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "catalog:",
+    "@colyseus/testing": "catalog:",
+    "@colyseus/tools": "catalog:",
+    "@types/express": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
