@@ -91,18 +91,23 @@ top it up at any time; a top-up raises `seedOriginal` for the 1/14 rule.
 
 ## Invariants the worker enforces (tests for each)
 
-1. Player payouts booked in any 24 h ≤ 70% of fees claimed in that window + that
-   day's `seedDraw`. A payout that would break this is deferred, not dropped.
+1. Nothing is paid that fees or the seed did not bring in, by the ledger's own count:
+   the **allowance** (player share claimed + seed draws − payouts sent − sweeps to cold)
+   never goes below zero. A payout that would take it there is deferred, not dropped.
+   (Built as an allowance rather than the trailing-24 h window first written here: the
+   window stalls every payout during a claim outage, see `docs/decisions.md`.)
 2. `seedDraw` ≤ `seedOriginal / 14` per UTC day.
 3. HOT_WALLET is topped up only to `p × max(W, W_floor) × 1.5 + today's daily pool`;
    a compromise costs at most ~36 h of payouts plus one day's pool.
-4. Per-transaction, per-hour and per-day caps in the worker (`MAX_PAYOUT_USD`,
-   `MAX_HOURLY_USD`, `MAX_DAILY_USD`, converted to PUMP hourly). Any cap hit pauses payouts and pings Telegram;
+4. Per-transaction, per-hour and per-day caps in the worker (`MAX_PAYOUT_USD` per win,
+   `MAX_DAILY_REWARD_USD` per daily reward, `MAX_HOURLY_USD` on wins, `MAX_DAILY_USD` on
+   everything; converted to PUMP hourly). Any cap hit pauses payouts and pings Telegram;
    queued payouts wait as `deferred` and resume when Sammy clears the flag.
 5. Every payout is idempotent: key `win:<matchId>` or `daily:<day>:<rank>`. A retry
    never pays twice; a crash mid-send is reconciled from the chain on restart.
 6. Payouts are computed from the ledger, never from a live wallet balance; before
-   each send the worker checks the wallet can cover it, and otherwise defers.
+   each send the worker checks the wallet can cover it, and otherwise defers. The
+   ledger allowance is what the wallet should hold; a sweep takes only what is above it.
 7. If fee claiming fails for 6 h, payouts continue from what is already budgeted;
    when HOT_WALLET runs dry the site shows "pool paused" instead of a stale number.
 
@@ -170,6 +175,9 @@ gains the pool figures), `payouts_v` (Solscan links per match).
 - Share card and the replay page's OG image.
 
 ## Order of work (branch `phase-3-money`, one PR, stop for review)
+
+Status (2026-09-25): 1, 2, 4, 5 (no share card yet), 6 and 7 are built; 3 (the claim on the
+throwaway coin from the deployed worker) is the first go-live step in `docs/HANDOFF.md`.
 
 1. **Ledger and formula**: `packages/economy` with the pool maths above as pure
    functions and a simulator that runs a synthetic month (volume curves, whale

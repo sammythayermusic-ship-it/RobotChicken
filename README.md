@@ -113,11 +113,12 @@ and add the Netlify origin to the game server's `ALLOWED_ORIGINS`.
 ```
 apps/web        Next.js 16 site + plain three.js game engine (src/game)
 apps/game       Colyseus 0.18 authoritative game server (Fly.io)
-apps/worker     fee claims + payouts (Phase 3; a health stub now)
+apps/worker     the treasury: fee claims, the pool, payouts, the daily top 10, the seed (Phase 3)
 packages/sim    deterministic fighter simulation shared by server and client
 packages/net    online protocol, the server's authoritative match, the client's prediction/rollback, results + ELO
 packages/shared constants, tiers, zod env schemas
-packages/solana the wallet gate (balance + price) and chain interfaces (Phase 3)
+packages/solana the wallet gate (balance + price), transactions (PDAs, ATAs, SPL, pump.fun), JSON-RPC
+packages/economy the pool maths, the treasury engine and the synthetic-month simulator
 supabase        SQL migrations (tested on PGlite)
 tools           asset validation / hitbox bake, Blender runner, DB test harness
 art/blender     scripted Blender pipeline (placeholder chicken, export settings)
@@ -162,9 +163,15 @@ or machines need Redis and per-machine routing first (`docs/decisions.md`).
 
 ```bash
 fly deploy . --config apps/worker/fly.toml --dockerfile apps/worker/Dockerfile --ha=false
+fly secrets set SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… HELIUS_API_KEY=… PAYOUT_MINT=… COCK_MINT=… --config apps/worker/fly.toml
 ```
 
-Wallet keypairs are Fly secrets on the worker only, never in Vercel or the game server.
+With those it runs in **observer** mode: the pool is computed every minute (`/health` and
+the site show it), the daily top 10 is booked at midnight, nothing is sent. Add
+`HOT_WALLET_KEYPAIR` (and `SEED_WALLET_KEYPAIR`, `COLD_WALLET`, `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`) and `PAYOUTS_ENABLED=true` for **live**. Wallet keypairs are Fly
+secrets on the worker only, never in Vercel or the game server. `/admin` on the game
+server needs `ADMIN_PASSWORD` (and, ideally, `ADMIN_ALLOWED_IPS`).
 
 **Web (Vercel):** create a project with Root Directory `apps/web`, framework Next.js,
 Node 22, and set `ENABLE_EXPERIMENTAL_COREPACK=1` (Vercel doesn't support pnpm 11 without
@@ -174,5 +181,15 @@ it). `apps/web/vercel.json` holds the filtered install and the ignore command.
 
 ## Runbook
 
-Phase 3 fills this in (stuck payout, hot wallet empty, region down, rollback). Until then
-the worker holds no keys and `PAYOUTS_ENABLED` is ignored.
+| Symptom | What to do |
+|---|---|
+| Telegram: **payouts paused: … cap hit** | A single payout, an hour of wins or a day exceeded its USD cap. Look at the held rows in `/admin` (Held / failed payouts), raise the knob if the day is just big, then **Resume payouts**. |
+| Telegram: **fee claim failed** | Payouts go on from the allowance. Check the worker logs; RPC errors clear themselves at the next hour. "creator fees are not shared yet" means the coin's "Share creator rewards" hasn't been set. |
+| Telegram: **hot wallet SOL for fees is low** | Send 0.5 SOL to `HOT_WALLET`. Transfers and ATA rent need it; PUMP payouts stop when it hits zero. |
+| Site says **payouts paused** / **pool not updating** | The former is the pause switch (`/admin`). The latter: the worker hasn't written `pool_state` for ten minutes; `fly logs -a cockfight-worker`, `/health`. |
+| A payout is **deferred: budget** | The ledger allowance is empty (fees haven't come in). It sends itself when the next claim lands. |
+| A payout is **deferred: wallet** | The hot wallet holds less than the ledger says. Reconcile: compare `pool_v.allowance` with the wallet; a sweep that failed halfway or a manual withdrawal explains it. Top the wallet up from cold. |
+| A payout is **failed** | The transaction errored on chain (or five attempts expired). `/admin` → Retry after fixing the cause (usually SOL for fees), or Void. |
+| A **flagged match** | `/admin` → replay it. Clear & pay, or Void and, if it was a bot, Ban 24h / Flag the wallet (a flagged wallet earns nothing until cleared). |
+| The worker restarts mid-send | Safe: rows left `sent` are settled from the chain at boot (paid, or back to pending once their blockhash is dead). Never run two workers at once. |
+| Rollback | The ledger is the truth: redeploy the previous image; nothing in memory matters. A payout row is never deleted, only voided. |
