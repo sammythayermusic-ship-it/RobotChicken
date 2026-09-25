@@ -135,7 +135,7 @@ export const workerEnv = z.object({
   GUARANTEED_WIN_BUDGET_USD: usd(0),
   GUARANTEED_DAILY_POOL_USD: usd(0),
   /** Priority fee per compute unit (micro-lamports). */
-  PRIORITY_FEE_MICROLAMPORTS: z.coerce.number().int().nonnegative().default(10000),
+  PRIORITY_FEE_MICROLAMPORTS: z.coerce.number().int().nonnegative().default(100000),
   /** Minutes between creator-fee claims (each one costs ~0.000006 SOL; skipped when nothing is waiting). */
   CLAIM_EVERY_MIN: z.coerce.number().int().min(1).max(60).default(10),
 });

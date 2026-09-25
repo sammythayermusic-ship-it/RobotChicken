@@ -59,7 +59,7 @@ export class SolanaChain implements Chain {
     this.payoutMint = o.payoutMint;
     this.cockMint = o.cockMint;
     this.prices = o.prices;
-    this.priority = o.priorityMicroLamports ?? 10_000n;
+    this.priority = o.priorityMicroLamports ?? 100_000n;
     this.now = o.now ?? Date.now;
     this.pollMs = o.pollMs ?? 1500;
   }
@@ -147,6 +147,10 @@ export class SolanaChain implements Chain {
       if (st === "failed") throw new Error(`transaction failed: ${sig}`);
       if (st === "expired") throw new Error(`transaction expired unconfirmed: ${sig}`);
       if (this.now() - started > 120_000) throw new Error(`transaction still unconfirmed after 2 min: ${sig}`);
+      // Not landed yet: send the same signed bytes again (same signature, so it can
+      // only land once). Leaders drop transactions when busy; rebroadcasting until
+      // the blockhash expires is what gets them through.
+      await this.rpc.sendTransaction(base64).catch(() => undefined);
     }
   }
 
