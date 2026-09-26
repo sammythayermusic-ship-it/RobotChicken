@@ -33,7 +33,6 @@ export interface Edit {
   captions?: boolean;
 }
 
-const PHONE_BRAWL_IN = 60;
 
 /*
  * The promo is cut to Sammy's 30.4 s Suno spot "Hold Cock" (152 BPM, downbeats at
