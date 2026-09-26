@@ -10,7 +10,10 @@
     "assets:bake": "tsx src/cli/bake.ts",
     "assets:inspect": "tsx src/cli/inspect.ts",
     "assets:import": "tsx src/cli/import.ts",
-    "blender": "tsx src/cli/blender.ts"
+    "blender": "tsx src/cli/blender.ts",
+    "video:capture": "tsx video/capture.ts",
+    "video:build": "tsx video/build.ts",
+    "video:online": "tsx video/online.ts"
   },
   "dependencies": {
     "@cockfight/sim": "workspace:*",
@@ -29,6 +32,7 @@
     "@types/three": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@playwright/test": "catalog:"
   }
 }

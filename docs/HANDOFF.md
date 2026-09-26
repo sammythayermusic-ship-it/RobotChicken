@@ -13,6 +13,7 @@ then `CLAUDE.md`.
 | Phase 3: money | Done, [PR #4](https://github.com/sammythayermusic-ship-it/cockfight/pull/4) merged 2026-09-25. Plan: `docs/plan-phase3.md`; what shipped: `docs/changelog.md`; choices: `docs/decisions.md` |
 | Go-live (test coin) | **Live since 2026-09-25**, see below. Open: [PR #5](https://github.com/sammythayermusic-ship-it/cockfight/pull/5) (mainnet fly.toml env) and [PR #6](https://github.com/sammythayermusic-ship-it/cockfight/pull/6) (claim rebroadcast + quieter alerts, built on #5, already deployed) |
 | Domain / X | https://cockfightsol.fun (live, Netlify, DNS on Cloudflare) · @CockFightSol |
+| Launch videos | Cut 1 rendered on branch `launch-videos` (`tools/video`, plan `docs/plan-videos.md`); waiting on Sammy's music + notes |
 | Playtest | https://cockfight-playtest.netlify.app (static build on Sammy's Netlify account; keyboard and phones; online needs a deployed game server, see below) |
 
 - **Merging:** only Sammy merges (PRs #1–#3 were merged at his request on 2026-09-24).

@@ -1,5 +1,10 @@
 # Changelog
 
+## Launch kit: videos (branch `launch-videos`)
+
+- **`tools/video`**: a Playwright capture rig (`video:capture`) that renders choreographed fights one tick per frame at 3840×2160 on the Mac's GPU, with per-tick event and sound logs; site stills and live captures; alpha title cards; the game's 30 procedural sounds exported as WAVs (`video:capture sounds`); the online match shot on the local open-mode stack (`video:online`); and an ffmpeg edit builder (`video:build promo|explainer`) with punch-ins, slow motion, overlays, the game's sounds at their ticks, VO, ducked music, captions and −14 LUFS output.
+- **Deliverables** in `Claude outputs/video/`: `promo.mp4` (30 s, 1080p60) and `explainer.mp4` (~100 s, 1080p30, burned captions + `.srt`). Plan and beat sheets: `docs/plan-videos.md`.
+
 ## Phase 3: money
 
 - **`packages/economy`**: the pool maths as pure functions (per-win formula with tier weights, quality multiplier, daily top-10 split, seed draw, USD caps, the send decision) and a `Treasury` engine running every worker job against `Ledger` / `Chain` interfaces. A synthetic-month test drives it through a launch spike, dead days, a gold whale, a bot burst, an eight-hour claim outage, a price crash and pump, and a crash between signing and sending, and asserts the plan's invariants on the ledger it leaves.

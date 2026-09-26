@@ -1,0 +1,35 @@
+/* Shared look for the launch-video title cards: the site's palette and faces. */
+@import url("https://fonts.googleapis.com/css2?family=Bungee&family=Barlow:wght@400;600;800&display=swap");
+:root {
+  --pit: #0a0710; --ink: #140f1a; --steel: #2a2530; --rust: #b4532a; --rust-deep: #6e2c14;
+  --chrome: #dfe3ea; --ash: #a79fb3; --pink: #ff2e88; --cyan: #22e5ff; --amber: #ffa15a; --lime: #bef264;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: transparent; }
+body { font-family: "Barlow", system-ui, sans-serif; color: var(--chrome); display: grid; place-items: center; }
+body.solid { background: var(--pit); background-image: radial-gradient(60% 45% at 50% 100%, rgb(255 46 136 / 0.22), transparent 70%), radial-gradient(35% 55% at 15% 30%, rgb(255 161 90 / 0.12), transparent 70%); }
+.display { font-family: "Bungee", system-ui, sans-serif; font-weight: 400; letter-spacing: 0.02em; line-height: 0.95; }
+.chrome-text {
+  background-image: linear-gradient(180deg, #ffffff 0%, #c9ced8 38%, #6c7280 52%, #e9ecf2 64%, #9aa1ad 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 6px 0 rgb(0 0 0 / 0.55)) drop-shadow(0 0 28px rgb(255 46 136 / 0.35));
+}
+.pink { color: var(--pink); } .cyan { color: var(--cyan); } .amber { color: var(--amber); } .lime { color: var(--lime); } .ash { color: var(--ash); }
+.stack { display: flex; flex-direction: column; align-items: center; gap: 22px; text-align: center; }
+.title { font-size: 150px; }
+.title.sm { font-size: 108px; }
+.sub { font-size: 44px; font-weight: 800; letter-spacing: 0.28em; text-transform: uppercase; color: var(--ash); }
+.bar { height: 10px; width: 520px; background: linear-gradient(90deg, var(--pink), var(--amber)); border-radius: 5px; }
+
+/* Motion. Every animation is stepped by the rig, so timing is exact. */
+.slam { animation: slam 0.55s cubic-bezier(0.1, 0.9, 0.2, 1) both; }
+@keyframes slam { 0% { transform: scale(3.2); opacity: 0; } 55% { transform: scale(0.96); opacity: 1; } 75% { transform: scale(1.03); } 100% { transform: scale(1); opacity: 1; } }
+.rise { animation: rise 0.45s cubic-bezier(0.2, 0.9, 0.2, 1) both; }
+@keyframes rise { 0% { transform: translateY(60px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+.d1 { animation-delay: 0.25s; } .d2 { animation-delay: 0.45s; } .d3 { animation-delay: 0.65s; } .d4 { animation-delay: 0.85s; } .d5 { animation-delay: 1.05s; }
+.punch { animation: punch 0.35s cubic-bezier(0.1, 0.9, 0.2, 1) both; }
+@keyframes punch { 0% { transform: scale(1.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.grow { transform-origin: left center; animation: grow 0.6s cubic-bezier(0.2, 0.9, 0.2, 1) both; }
+@keyframes grow { 0% { transform: scaleX(0); } 100% { transform: scaleX(1); } }
+.shake { animation: shake 0.4s linear both; }
+@keyframes shake { 0%, 100% { transform: translate(0, 0); } 10% { transform: translate(-14px, 8px); } 25% { transform: translate(12px, -6px); } 40% { transform: translate(-8px, 4px); } 55% { transform: translate(6px, -3px); } 70% { transform: translate(-3px, 2px); } 85% { transform: translate(2px, -1px); } }

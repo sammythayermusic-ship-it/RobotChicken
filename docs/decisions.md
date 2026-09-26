@@ -287,3 +287,16 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | The result screen follows the payout to its transaction for 55 s | The room polls `payouts` every 3 s after booking; the winner sees "sending…" then the Solscan link. |
 | `/p/<address>` is the static `/p` page, like `/m/<id>` | Profile: record, earnings, rank today, the caps, payouts, the username claim. |
 | No share card / OG image yet | Needs image generation on a static site (a build-time template per match isn't possible); deferred to the launch kit. |
+
+## Launch kit: the videos (`tools/video`, plan in `docs/plan-videos.md`)
+
+| Decision | Why |
+|---|---|
+| Footage is rendered one sim tick per frame through `__cockfight.fight.stepTicks`, never screen-recorded | Exact 60 fps with no dropped frames, free slow motion (render every tick, play at 24), choreographed fights (both sides' buttons are scripted off the live state, so every beat lands), and a per-tick log of events and the sounds the director fired, which the edit uses to cut on the impact frame and lay the game's own sounds back in. Re-shooting after the art or the coin changes is one command. |
+| Fights are shot at 2× (3840×2160) on the Mac's GPU | The edit punches in up to 2.5× and stays sharp at 1080p. ~0.5 s a frame; the whole shot list is ~40 min. |
+| A virtual clock for `performance.now` and the rAF timestamp, one tick per captured frame | Shake, particles and mixers stay in step with the sim however long a screenshot takes. Timers and fetch are untouched, so loading is unaffected. |
+| Title cards are HTML with the site's faces, stepped through the Web Animations API and captured with alpha | One design language with the site; deterministic motion; overlays composite in ffmpeg. |
+| The edit is data (`edl.ts`) rendered by ffmpeg, no NLE | Sammy asked for finished MP4s and a fast revision loop; a change is a line in the EDL and a rebuild. |
+| Voice is Higgsfield Seed Audio (preset "Gideon"); music is Sammy's own track (`Claude outputs/video/music/`) | No ElevenLabs (Sammy). Higgsfield's music model is not available for standalone tracks, so the bed is supplied; the mix ducks it under the VO with a sidechain compressor and normalises to −14 LUFS. |
+| The prize on the result screen is staged (blurred amount, real-looking transaction link) and the pump.fun page is not on screen | The site runs on the throwaway test coin; live dollar amounts are hidden, mechanics shown. `video:online` re-shoots the card from a real ranked match after the live payout test. |
+| On-screen tagline is "HOLD $COCK. GET PAID." | Payouts are in PUMP, so "win SOL" would be wrong. |
