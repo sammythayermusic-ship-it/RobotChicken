@@ -10,19 +10,28 @@ then `CLAUDE.md`.
 | Phase 0: scaffold | Done. [PR #1](https://github.com/sammythayermusic-ship-it/cockfight/pull/1), branch `phase-0-scaffold`, CI green |
 | Phase 1: the local fighter (+ phone controls) | Done. [PR #2](https://github.com/sammythayermusic-ship-it/cockfight/pull/2), branch `phase-1-fighter` (stacked on PR #1), CI green |
 | Phase 2: online | Done. [PR #3](https://github.com/sammythayermusic-ship-it/cockfight/pull/3), merged 2026-09-24 |
-| Phase 3: money | Built, waiting for review. Branch `phase-3-money` (off `main`), [PR #4](https://github.com/sammythayermusic-ship-it/cockfight/pull/4). Plan: `docs/plan-phase3.md`; what shipped: `docs/changelog.md`; choices: `docs/decisions.md` (★ = Sammy's) |
-| Domain / X | cockfightsol.fun (Cloudflare) · @CockFightSol |
+| Phase 3: money | Done, [PR #4](https://github.com/sammythayermusic-ship-it/cockfight/pull/4) merged 2026-09-25. Plan: `docs/plan-phase3.md`; what shipped: `docs/changelog.md`; choices: `docs/decisions.md` |
+| Go-live (test coin) | **Live since 2026-09-25**, see below. Open: [PR #5](https://github.com/sammythayermusic-ship-it/cockfight/pull/5) (mainnet fly.toml env) and [PR #6](https://github.com/sammythayermusic-ship-it/cockfight/pull/6) (claim rebroadcast + quieter alerts, built on #5, already deployed) |
+| Domain / X | https://cockfightsol.fun (live, Netlify, DNS on Cloudflare) · @CockFightSol |
 | Playtest | https://cockfight-playtest.netlify.app (static build on Sammy's Netlify account; keyboard and phones; online needs a deployed game server, see below) |
 
 - **Merging:** only Sammy merges (PRs #1–#3 were merged at his request on 2026-09-24).
-- **Next:** review PR #4, then the go-live steps below; Phase 4 (launch) after that.
+- **Next:** merge #5 then #6; run the live payout test; funding day; then Phase 4 (launch). Idea queued by Sammy: a spectator `/watch` page streamed to the pump.fun coin page (plan first).
 
-**Phase 3 go-live, in order** (nothing moves real money until step 5):
-1. `supabase db push` (the Phase 3 migration) with the Supabase CLI logged in to the project.
-2. Deploy the game server with the new env (`.env.example`, "game"): `QUEUE_JWT_SECRET`, `ADMIN_PASSWORD` (Fly secrets), `QUEUE_MIN_PLAYERS`, and `GATE_MODE=required` with the real `NEXT_PUBLIC_COCK_MINT` once the coin exists.
-3. Deploy the worker in **observer** mode: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `HELIUS_API_KEY`, `PAYOUT_MINT` (PUMP), `COCK_MINT`, `PAYOUTS_ENABLED=false`. `/health` shows the pool; the site shows it too.
-4. Test the claim on the throwaway coin: set `COCK_MINT` to it, `HOT_WALLET_KEYPAIR` (Fly secret, entered by Sammy), `PAYOUTS_ENABLED=true`; the next claim (every 10 minutes) distributes the ~680 PUMP waiting in its vault and `fee_claims` gets its first row. Play a ranked match on it: the payout lands in seconds.
-5. Funding day: Sammy funds the seed wallet and sets `SEED_WALLET_KEYPAIR`, `GUARANTEED_WIN_BUDGET_USD`, `GUARANTEED_DAILY_POOL_USD` (or the knobs in `/admin`), `COLD_WALLET`, and switches `COCK_MINT` to the real coin after launch + "Share creator rewards" (70 hot / 30 launch).
+**What's live (on the THROWAWAY test coin `HFypaAkLk4XwKJvLK5hTvL65dhY2F61davhjo1x8pump`)**
+- Site https://cockfightsol.fun: Netlify site `cockfightsol` (also cockfightsol.netlify.app). Cloudflare DNS: `@` and `www` CNAME → `cockfightsol.netlify.app`, DNS only.
+- Game server: Fly `cockfight-game`, `GATE_MODE=required`, `GATE_USD_MIN=1` (test value; **30 at launch**).
+- Worker: Fly `cockfight-worker`, **live** (hot key set by Sammy): fee claims every 10 min (first one 2026-09-25 16:40 UTC split the vault 70/30), pool every minute, payouts every 5 s. Telegram alerts go to Sammy.
+- Supabase: both migrations pushed.
+- Wallets (public): launch `Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF` (key never on a server), hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, seed `BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX` (no key set yet).
+- Secrets: Fly secrets on each app; local copies in `.env.local` (git-ignored; `/admin` uses `ADMIN_PASSWORD` from it). Sammy enters private keys through a hidden Terminal prompt piped to `fly secrets import`, never chat.
+- Deploy: `fly deploy . --config apps/<game|worker>/fly.toml --dockerfile apps/<game|worker>/Dockerfile --ha=false --depot`. Web: `NEXT_PUBLIC_GAME_WS_URL=wss://cockfight-game.fly.dev` + the mint + keys from `.env.local`, export, deploy to site `cockfightsol`.
+
+**Still to do before the real coin**
+1. Live payout test: a second wallet with ≥$1 of the test coin, played from a different network (the queue never pairs the same IP /24 or browser; a phone on cellular works). Winner should get ~181 PUMP.
+2. Funding day: seed amount, `GUARANTEED_WIN_BUDGET_USD`, `GUARANTEED_DAILY_POOL_USD`, `COLD_WALLET`, `SEED_WALLET_KEYPAIR`.
+3. Launch day: switch `COCK_MINT` / `NEXT_PUBLIC_COCK_MINT` to the real mint (rebuild the web), `GATE_USD_MIN=30`, and "Share creator rewards" 70 hot / 30 launch on the real coin.
+4. Lawyer's read + geo-block list.
 
 **Redeploy the playtest** (see the README's "Playtest build" section):
 
