@@ -28,46 +28,60 @@ export interface Edit {
   vo: Vo[];
   /** music file (in <out>/music) if present; ducked under the VO */
   music?: { file: string; gain: number; duck: boolean };
+  /** scales every game sound and cue (under a full song the hits sit lower) */
+  sfxGain?: number;
   captions?: boolean;
 }
 
 const PHONE_BRAWL_IN = 60;
 
+/*
+ * The promo is cut to Sammy's 30.4 s Suno spot "Hold Cock" (152 BPM, downbeats at
+ * 0.44 + n·1.579 s). Structure from the timed transcript: "FIGHT" chant 0–1.4, verse 1.4–7.7
+ * ("peck, shove, slam, dive kick" at 6.2–7.5), hook 7.7–13.9 ("paid in seconds" 12.2–13.3),
+ * verse 2 13.9–20.6 ("Rooster Rocket… K.O." 17.4–19.6), instrumental outro to 30.4.
+ * Each segment's frame count is chosen so the cuts land on those words.
+ */
 export const PROMO: Edit = {
   name: "promo",
   fps: 60,
   segments: [
-    { kind: "black", dur: 0.25 },
-    { kind: "card", card: "card-logo", dur: 1.55, fade: { out: 0.08 } },
-    // three hits, cut on impact (peck hit f45 of this trim, shove f80, dash-peck f44, dive f58)
-    { kind: "clip", shot: "peck", in: 38, out: 82, zoom: { scale: 1.35, cx: 0.5, cy: 0.62 }, sfx: true, crowd: true },
-    { kind: "clip", shot: "shove", in: 62, out: 106, zoom: { scale: 1.3, cx: 0.42, cy: 0.62 }, sfx: true, crowd: true },
-    { kind: "clip", shot: "dive-kick", in: 34, out: 72, zoom: { scale: 1.25, cx: 0.55, cy: 0.55 }, sfx: true, crowd: true },
-    { kind: "clip", shot: "dash-peck", in: 2, out: 52, zoom: { scale: 1.3, cx: 0.45, cy: 0.62 }, sfx: true, crowd: true },
-    // the slam in slow motion, 1v1 title over it
-    { kind: "clip", shot: "slam", in: 62, out: 152, speed: 0.4, zoom: { scale: 1.5, cx: 0.55, cy: 0.6, to: { scale: 1.35 } }, overlays: [{ card: "card-t-1v1", at: 1.0, outFade: 0.25 }], sfx: true, crowd: true },
-    // the phone
-    { kind: "clip", shot: "phone-brawl", in: PHONE_BRAWL_IN, out: PHONE_BRAWL_IN + 180, phone: true, overlays: [{ card: "card-t-phone", at: 0.35, outFade: 0.25 }], sfx: true, crowd: true },
-    // ring-out → paid
-    { kind: "clip", shot: "ring-out", in: 165, out: 262, zoom: { scale: 1.2, cx: 0.7, cy: 0.6 }, sfx: true, crowd: true },
-    { kind: "still", file: "online/result-paid.png", dur: 2.6, zoom: { scale: 2.5, cx: 0.5, cy: 0.82, to: { scale: 2.3 } }, overlays: [{ card: "card-t-paid", at: 0.45, outFade: 0.2 }], fade: { in: 0.08 } },
-    // the site: hold to play
-    { kind: "still", file: "home/still.png", dur: 3.0, zoom: { scale: 1.75, cx: 0.5, cy: 0.2, to: { cy: 0.25 } }, cover: [{ x: 2730, y: 20, w: 320, h: 70 }], overlays: [{ card: "card-t-hold", at: 0.3, outFade: 0.2 }], fade: { in: 0.08 } },
-    // the super: heat full, rocket, KO in slow motion
-    { kind: "clip", shot: "super-ko", in: 600, out: 641, zoom: { scale: 1.25, cx: 0.75, cy: 0.6 }, sfx: true, crowd: true },
-    { kind: "clip", shot: "super-ko", in: 641, out: 700, speed: 0.35, zoom: { scale: 1.45, cx: 0.75, cy: 0.55, to: { scale: 1.2, cx: 0.7 } }, sfx: true, crowd: true, fade: { out: 0.1 } },
-    { kind: "black", dur: 0.2 },
-    { kind: "card", card: "card-end", dur: 6.0 },
+    { kind: "black", dur: 0.44 },
+    // downbeat 0.44: logo slam under the FIGHT chant, to 2.02
+    { kind: "card", card: "card-logo", dur: 1.58, fade: { out: 0.06 } },
+    // "Robot chickens in the junkyard pit" 2.02–3.60: a wide brawl (hit at +0.5 s)
+    { kind: "clip", shot: "brawl", in: 20, out: 115, zoom: { scale: 1.15, cx: 0.5, cy: 0.6 }, sfx: true, crowd: true },
+    // "Hold the coin, that's the ticket" 3.60–5.18: the phone
+    { kind: "clip", shot: "phone-brawl", in: 60, out: 155, phone: true, overlays: [{ card: "card-t-phone", at: 0.15, outFade: 0.2 }], sfx: true, crowd: true },
+    // "No buy-in, no bet, just the fight" 5.18–6.24: dash in, peck (hit at 5.91)
+    { kind: "clip", shot: "dash-peck", in: 0, out: 64, zoom: { scale: 1.3, cx: 0.45, cy: 0.62 }, sfx: true, crowd: true },
+    // "PECK / SHOVE / SLAM / DIVE KICK" 6.24–7.50: four impacts, 19 frames each, impact 8 frames in
+    { kind: "clip", shot: "peck", in: 47, out: 66, zoom: { scale: 1.4, cx: 0.5, cy: 0.62 }, sfx: true, crowd: true },
+    { kind: "clip", shot: "shove", in: 72, out: 91, zoom: { scale: 1.35, cx: 0.42, cy: 0.62 }, sfx: true, crowd: true },
+    { kind: "clip", shot: "slam", in: 76, out: 95, zoom: { scale: 1.4, cx: 0.55, cy: 0.6 }, sfx: true, crowd: true },
+    { kind: "clip", shot: "dive-kick", in: 50, out: 69, zoom: { scale: 1.3, cx: 0.55, cy: 0.55 }, sfx: true, crowd: true },
+    // "goodnight" → hook "HOLD COCK get paid" 7.50–9.92: the slam in slow motion, 1v1 title
+    { kind: "clip", shot: "slam", in: 70, out: 128, speed: 0.4, zoom: { scale: 1.5, cx: 0.55, cy: 0.6, to: { scale: 1.35 } }, overlays: [{ card: "card-t-1v1", at: 0.6, outFade: 0.2 }], sfx: true, crowd: true },
+    // hook cont. 9.92–11.50: ring-out (over the edge at 10.75)
+    { kind: "clip", shot: "ring-out", in: 170, out: 265, zoom: { scale: 1.2, cx: 0.7, cy: 0.6 }, sfx: true, crowd: true },
+    // "win the fight… paid in seconds, no delay" 11.50–13.88: the result card
+    { kind: "still", file: "online/result-paid.png", dur: 2.38, zoom: { scale: 2.5, cx: 0.5, cy: 0.82, to: { scale: 2.3 } }, overlays: [{ card: "card-t-paid", at: 0.3, outFade: 0.2 }], fade: { in: 0.06 } },
+    // "Three percent fee… Rust, Chrome, Gold" 13.88–17.36: the site
+    { kind: "still", file: "home/still.png", dur: 3.48, zoom: { scale: 1.75, cx: 0.5, cy: 0.2, to: { cy: 0.25 } }, cover: [{ x: 2730, y: 20, w: 320, h: 70 }], overlays: [{ card: "card-t-hold", at: 0.2, outFade: 0.2 }], fade: { in: 0.06 } },
+    // "Rooster Rocket when the Heat hits red" 17.36–19.00: heat full (18.5), rocket
+    { kind: "clip", shot: "super-ko", in: 543, out: 641, zoom: { scale: 1.25, cx: 0.75, cy: 0.6 }, sfx: true, crowd: true },
+    // "K.O. — check your wallet — enough said" 19.00–22.56: the hit and the KO in slow motion
+    { kind: "clip", shot: "super-ko", in: 641, out: 716, speed: 0.35, zoom: { scale: 1.45, cx: 0.75, cy: 0.55, to: { scale: 1.2, cx: 0.7 } }, sfx: true, crowd: true, fade: { out: 0.12 } },
+    // outro 22.56–30.40: end card; the tag lands on the downbeat at 24.14
+    { kind: "card", card: "card-end", dur: 7.84 },
   ],
   cues: [
-    { t: 0.55, file: "impact", gain: 1 },
-    { t: 0.55, file: "hit_slam", gain: 0.9 },
+    { t: 0.44, file: "impact", gain: 0.9 },
+    { t: 0.44, file: "hit_slam", gain: 0.8 },
   ],
-  vo: [
-    { t: 0.45, file: "vo-7.wav", gain: 1 },
-    { t: 24.6, file: "vo-8.wav", gain: 1 },
-  ],
-  music: { file: "promo", gain: 0.9, duck: false },
+  vo: [{ t: 24.14, file: "vo-8.wav", gain: 1 }],
+  music: { file: "promo", gain: 1.0, duck: false },
+  sfxGain: 0.7,
 };
 
 /* The explainer: VO drives the timing. Starts are measured from the takes. */
@@ -119,6 +133,6 @@ export const EXPLAINER: Edit = {
   ],
   cues: [{ t: 0.45, file: "impact", gain: 0.8 }],
   vo: VO.map((v) => ({ file: `vo-${v.i}.wav`, gain: 1, text: VO_TEXT[v.i] })),
-  music: { file: "explainer", gain: 0.55, duck: true },
+  music: { file: "explainer", gain: 0.16, duck: true }, // the Suno bed is mastered hot; ~-16 dB puts it ~9 dB under the voice
   captions: true,
 };

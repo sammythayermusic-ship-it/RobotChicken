@@ -3,7 +3,7 @@
 ## Launch kit: videos (branch `launch-videos`)
 
 - **`tools/video`**: a Playwright capture rig (`video:capture`) that renders choreographed fights one tick per frame at 3840×2160 on the Mac's GPU, with per-tick event and sound logs; site stills and live captures; alpha title cards; the game's 30 procedural sounds exported as WAVs (`video:capture sounds`); the online match shot on the local open-mode stack (`video:online`); and an ffmpeg edit builder (`video:build promo|explainer`) with punch-ins, slow motion, overlays, the game's sounds at their ticks, VO, ducked music, captions and −14 LUFS output.
-- **Deliverables** in `Claude outputs/video/`: `promo.mp4` (30 s, 1080p60) and `explainer.mp4` (~100 s, 1080p30, burned captions + `.srt`). Plan and beat sheets: `docs/plan-videos.md`.
+- **Deliverables** in `Claude outputs/video/` (final, signed off 2026-09-26): `promo.mp4` (30.4 s, 1080p60, cut to Sammy's Suno spot) and `explainer.mp4` (1:40, 1080p30, burned captions + `.srt`, Suno bed ducked under the VO). Plan and beat sheets: `docs/plan-videos.md`.
 
 ## Phase 3: money
 

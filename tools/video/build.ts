@@ -233,7 +233,7 @@ function buildAudio(rendered: (Rendered & { sfx: { t: number; name: string; pan:
     for (const s of r.sfx) {
       const f = join(sfxDir, s.name + ".wav");
       if (!existsSync(f) || s.name === "crowd_loop") continue;
-      add(f, r.start + s.t, GAIN[s.name] ?? 0.6, s.pan);
+      add(f, r.start + s.t, (GAIN[s.name] ?? 0.6) * (edit.sfxGain ?? 1), s.pan);
     }
     // crowd bed under fight clips
     if (r.seg.kind === "clip" && r.seg.crowd) {
@@ -241,13 +241,13 @@ function buildAudio(rendered: (Rendered & { sfx: { t: number; name: string; pan:
       if (existsSync(loop)) {
         inputs.push("-stream_loop", "-1", "-i", loop);
         const d = Math.round(r.start * 1000);
-        chains.push(`[${idx}:a]aformat=sample_rates=48000:channel_layouts=mono,atrim=duration=${fmt(r.dur)},${pan2(0)},volume=${fmt(GAIN.crowd_loop ?? 0.2)},afade=t=in:d=0.15,afade=t=out:st=${fmt(Math.max(0, r.dur - 0.2))}:d=0.2,adelay=${d}|${d}[a${idx}]`);
+        chains.push(`[${idx}:a]aformat=sample_rates=48000:channel_layouts=mono,atrim=duration=${fmt(r.dur)},${pan2(0)},volume=${fmt((GAIN.crowd_loop ?? 0.2) * (edit.sfxGain ?? 1))},afade=t=in:d=0.15,afade=t=out:st=${fmt(Math.max(0, r.dur - 0.2))}:d=0.2,adelay=${d}|${d}[a${idx}]`);
         mixIn.push(`[a${idx}]`);
         idx++;
       }
     }
   }
-  for (const c of edit.cues) add(join(sfxDir, c.file + ".wav"), c.t, (c.gain ?? 1) * (GAIN[c.file] ?? 1), c.pan ?? 0);
+  for (const c of edit.cues) add(join(sfxDir, c.file + ".wav"), c.t, (c.gain ?? 1) * (GAIN[c.file] ?? 1) * (edit.sfxGain ?? 1), c.pan ?? 0);
   // VO (each take is split: one copy into the mix, one into the music's sidechain key)
   const voStarts = voTimes(rendered);
   const voKeys: string[] = [];
@@ -264,13 +264,17 @@ function buildAudio(rendered: (Rendered & { sfx: { t: number; name: string; pan:
   // music (optional), ducked under the VO with a sidechain compressor
   const musicFile = edit.music ? findMusic(edit.music.file) : null;
   if (musicFile) {
+    const musicLen = audioDur(musicFile);
+    // A bed shorter than the picture loops (the seam falls under the end card); a longer one is faded out.
+    if (musicLen < total) inputs.push("-stream_loop", "-1");
     inputs.push("-i", musicFile);
     const m = idx++;
-    const bed = `[${m}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=duration=${fmt(total)},afade=t=out:st=${fmt(Math.max(0, total - 2.5))}:d=2.5,volume=${fmt(edit.music!.gain)}[m0]`;
+    const fadeOut = musicLen > total + 0.5 || musicLen < total ? `,afade=t=out:st=${fmt(Math.max(0, total - 2.5))}:d=2.5` : "";
+    const bed = `[${m}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad,atrim=duration=${fmt(total)}${fadeOut},volume=${fmt(edit.music!.gain)}[m0]`;
     if (edit.music!.duck && voKeys.length) {
       chains.push(`${voKeys.join("")}amix=inputs=${voKeys.length}:normalize=0,apad,atrim=duration=${fmt(total)}[vokey]`);
       chains.push(bed);
-      chains.push(`[m0][vokey]sidechaincompress=threshold=0.04:ratio=10:attack=15:release=500:level_sc=1.5:makeup=1[music]`);
+      chains.push(`[m0][vokey]sidechaincompress=threshold=0.08:ratio=4:attack=20:release=600:level_sc=1.2:makeup=1[music]`);
     } else {
       chains.push(bed.replace("[m0]", "[music]"));
       // unused keys must still be consumed

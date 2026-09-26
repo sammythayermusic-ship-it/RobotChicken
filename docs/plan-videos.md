@@ -84,12 +84,15 @@ captured at 1080p, animated in ffmpeg (punch-in, shake, xfade). Nothing is drawn
    drain faster than a fourteenth a day. Every match has a replay. Every payout is on the ledger."
 7. **CTA (80–86)** end card. "cockfightsol dot fun. Hold $COCK. Fight."
 
-## Status (2026-09-26)
+## Status (2026-09-26): final
 
-Cut 1 of both videos is rendered (`Claude outputs/video/promo.mp4`, `explainer.mp4` + `.srt`), without
-a music bed. Waiting on: Sammy's tracks in `Claude outputs/video/music/` (`promo.*`, `explainer.*`),
-his notes on cut 1, and a real ranked match for the payout card. `tools/video/README.md` has the
-commands. The leaderboard was empty on the test coin, so the `x-top10` card stands in for it.
+Both videos are signed off by Sammy (cut 3): `Claude outputs/video/promo.mp4` (30.4 s, 1080p60, cut to
+his Suno spot "Hold Cock") and `explainer.mp4` (1:40, 1080p30, captions + `.srt`, his Suno bed
+"Midrange Empty" ducked under the voice). Voice: Higgsfield's ElevenLabs engine, preset Gideon,
+with "Cockfight" spelled as a word in the spoken copy (all caps read as "cock fit"). Music and VO
+takes live in `Claude outputs/video/{music,vo}/` (git-ignored, on the Mac); the Suno prompts are in
+`Claude outputs/video/music/SUNO-PROMPTS.md`. The payout card is still the staged one: re-shoot it
+from a real ranked match after the live payout test (`video:online`) and rebuild.
 
 ## Work plan
 
