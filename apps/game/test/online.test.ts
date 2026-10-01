@@ -6,14 +6,26 @@
  */
 import { matchMaker } from "@colyseus/core";
 import { ColyseusTestServer } from "@colyseus/testing";
-import { decodeReplayLog, resultHash } from "@cockfight/net";
-import { B, Phase, RULES, Reason, runReplay, serialize, stateHash } from "@cockfight/sim";
+import { FRAMES_EVERY, decodeReplayLog, resultHash, type ServerMatch } from "@cockfight/net";
+import { B, Phase, RULES, Reason, runReplay, stateHash } from "@cockfight/sim";
 import { loadGameEnv } from "@cockfight/shared/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getContext } from "../src/context";
 import { FightRoom } from "../src/rooms/FightRoom";
 import { listen, makeServer } from "../src/server";
 import { Bot, freePort, queueUp, sleep, until } from "./helpers";
+
+/**
+ * Frames go out every FRAMES_EVERY ticks, so a client's confirmed state can
+ * trail the server by part of a batch. Check it against the server's own
+ * log replayed to the client's tick.
+ */
+function expectConfirmedMatches(server: ServerMatch, c: Parameters<typeof stateHash>[0]): void {
+  expect(c.tick).toBeLessThanOrEqual(server.tick);
+  expect(c.tick).toBeGreaterThan(server.tick - FRAMES_EVERY);
+  const at = runReplay(server.toReplay(), RULES, { every: 1 }).cps.find(([t]) => t === c.tick)?.[1];
+  expect(stateHash(c)).toBe(c.tick === server.tick ? stateHash(server.state) : at);
+}
 
 let colyseus: ColyseusTestServer;
 let base: string;
@@ -65,8 +77,7 @@ describe("online match (open mode)", () => {
     const server = room.match;
     for (const bot of [p1, p2]) {
       const c = bot.pred.confirmed!;
-      expect(c.tick).toBe(server.tick);
-      expect(Array.from(serialize(c))).toEqual(Array.from(serialize(server.state)));
+      expectConfirmedMatches(server, c);
       expect(bot.pred.stats.desyncs).toBe(0);
     }
     // Their buttons reached the server and moved the fighters.
@@ -139,8 +150,7 @@ describe("online match (open mode)", () => {
     p2.stop();
     await sleep(150);
     for (const bot of [p1, p2]) {
-      expect(bot.pred.confirmed!.tick).toBe(room.match.tick);
-      expect(stateHash(bot.pred.confirmed!)).toBe(stateHash(room.match.state));
+      expectConfirmedMatches(room.match, bot.pred.confirmed!);
     }
     expect(p2.pred.stats.adopted).toBeGreaterThanOrEqual(1);
     await p1.room.leave();

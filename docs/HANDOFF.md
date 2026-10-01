@@ -18,12 +18,12 @@ then `CLAUDE.md`.
 | Playtest | https://cockfight-playtest.netlify.app (static build on Sammy's Netlify account; keyboard and phones; online needs a deployed game server, see below) |
 
 - **Merging:** only Sammy merges (PRs #1–#3 were merged at his request on 2026-09-24).
-- **Next:** fix the worker + hot-wallet SOL and move the game server to a dedicated CPU (runbook step 0); merge #5 → #6 → #7 → Phase 4; then follow `docs/runbook-launch.md` (payout test, funding day, launch day). Legal done 2026-10-01; no geo-block. Idea queued by Sammy: a spectator `/watch` page streamed to the pump.fun coin page (plan first).
+- **Next:** fund the hot wallet and start the worker (runbook step 0); merge #5 → #6 → #7 → Phase 4; then follow `docs/runbook-launch.md` (payout test, funding day, launch day). Legal done 2026-10-01; no geo-block. Idea queued by Sammy: a spectator `/watch` page streamed to the pump.fun coin page (plan first).
 
 **What's live (on the THROWAWAY test coin `HFypaAkLk4XwKJvLK5hTvL65dhY2F61davhjo1x8pump`)**
 - Site https://cockfightsol.fun: Netlify site `cockfightsol` (also cockfightsol.netlify.app). Cloudflare DNS: `@` and `www` CNAME → `cockfightsol.netlify.app`, DNS only.
-- Game server: Fly `cockfight-game`, `GATE_MODE=required`, `GATE_USD_MIN=1` (test value; **30 at launch**).
-- Worker: Fly `cockfight-worker`, **live** (hot key set by Sammy): fee claims every 10 min (first one 2026-09-25 16:40 UTC split the vault 70/30), pool every minute, payouts every 5 s. Telegram alerts go to Sammy.
+- Game server: Fly `cockfight-game`, performance-1x (dedicated CPU, since 2026-10-01), `MAX_LIVE_MATCHES=100`, `GATE_MODE=required`, `GATE_USD_MIN=1` (test value; **30 at launch**).
+- Worker: Fly `cockfight-worker`, **scaled to zero since 2026-10-01 05:30 UTC** (start with `tools/launch/start-worker.sh` once the hot wallet has SOL; hot key set by Sammy): fee claims every 10 min (first one 2026-09-25 16:40 UTC split the vault 70/30), pool every minute, payouts every 5 s. Telegram alerts go to Sammy.
 - Supabase: both migrations pushed.
 - Wallets (public): launch `Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF` (key never on a server), hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, seed `BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX` (no key set yet).
 - Secrets: Fly secrets on each app; local copies in `.env.local` (git-ignored; `/admin` uses `ADMIN_PASSWORD` from it). Sammy enters private keys through a hidden Terminal prompt piped to `fly secrets import`, never chat.
@@ -35,7 +35,7 @@ then `CLAUDE.md`.
 3. Launch day: switch `COCK_MINT` / `NEXT_PUBLIC_COCK_MINT` to the real mint (rebuild the web), `GATE_USD_MIN=30`, and "Share creator rewards" 70 hot / 30 launch on the real coin.
 4. ~~Lawyer's read + geo-block list.~~ Done (Sammy, 2026-10-01): no geo-block.
 
-**Found 2026-10-01:** the worker app has no machine (stopped around 05:30 UTC) and the hot wallet holds 0.0009 SOL. See the runbook, step 0.
+**Found 2026-10-01:** the worker app is scaled to zero (since ~05:30 UTC) and the hot wallet holds 0.0009 SOL (moved out by hand, not spent by the game). Fund it, then `tools/launch/start-worker.sh` (runbook step 0).
 
 **Redeploy the playtest** (see the README's "Playtest build" section):
 

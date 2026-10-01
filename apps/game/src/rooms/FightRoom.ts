@@ -25,7 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { logger, Room, type AuthContext, type Client, type RoomException, type RoomMethodName } from "@colyseus/core";
 import {
-  Msg, SYNC_EVERY, ServerMatch, decodeInputs, encodeFrames, encodeReplayLog, encodeSync, forfeitRound, outcome, resultHash, roundEnded,
+  FrameBatcher, Msg, SYNC_EVERY, ServerMatch, decodeInputs, encodeReplayLog, encodeSync, forfeitRound, outcome, resultHash, roundEnded,
   type RoundRecord,
 } from "@cockfight/net";
 import { lowerTier, qualityBps } from "@cockfight/economy";
@@ -66,6 +66,8 @@ export class FightRoom extends Room<{ state: FightState }> {
   #players: [PlayerInfo | null, PlayerInfo | null] = [null, null];
   #adhoc = false;
   #clients: [Client | null, Client | null] = [null, null];
+  /** Frames go out every FRAMES_EVERY ticks (see packages/net/src/batch.ts). */
+  #frames!: FrameBatcher;
   /** Sides whose player dropped and may still come back: when their grace ends (ms). */
   #away = new Map<0 | 1, number>();
   #dropAt: [number, number] = [0, 0];
@@ -104,6 +106,7 @@ export class FightRoom extends Room<{ state: FightState }> {
 
   override onCreate(options: Partial<FightOptions> = {}): void {
     const ctx = getContext();
+    this.#frames = new FrameBatcher(ctx.env.FRAMES_EVERY);
     const seated = options.key === ROOM_KEY && !!options.players && typeof options.matchId === "string";
     if (!seated) {
       if (ctx.env.NODE_ENV === "production" || ctx.env.GATE_MODE === "required") {
@@ -283,11 +286,7 @@ export class FightRoom extends Room<{ state: FightState }> {
     const round = roundEnded(prev, next);
     if (round) this.#rounds.push(round);
     this.#mirror(next);
-    for (const side of [0, 1] as const) {
-      const c = this.#clients[side];
-      const margin = this.#sm.takeMargin(side);
-      c?.sendBytes(Msg.frames, encodeFrames({ first: out.tick, b1: [out.b1], b2: [out.b2], margin }));
-    }
+    if (this.#frames.push(out) || this.#sm.over) this.#flushFrames();
     if (out.tick % SYNC_EVERY === 0) this.#broadcastSync();
     if (this.#sm.over) void this.#finish();
   }
@@ -486,17 +485,35 @@ export class FightRoom extends Room<{ state: FightState }> {
     return encodeSync(this.#sm.tick, serialize(this.#sm.state));
   }
 
+  #flushFrames(): void {
+    if (!this.#frames.pending) return;
+    for (const side of [0, 1] as const) {
+      const margin = this.#sm.takeMargin(side);
+      this.#clients[side]?.sendBytes(Msg.frames, this.#frames.encode(margin));
+    }
+    this.#frames.clear();
+  }
+
   #broadcastSync(): void {
+    // Frames before the sync, so a client never sees a sync ahead of the frames it had pending.
+    this.#flushFrames();
     const bytes = this.#syncBytes();
     for (const c of this.#clients) c?.sendBytes(Msg.sync, bytes);
   }
 
+  /**
+   * The sim's clock in the room state (for /dev/net and the room list). Only
+   * twice a second and on a phase change: a field that changes every tick
+   * would make Colyseus write a patch to both sockets 20 times a second.
+   */
   #mirror(s: MatchState): void {
     const st = this.state;
-    st.tick = s.tick;
+    if (s.tick % SYNC_EVERY === 0 || s.phase !== st.phase || s.round !== st.round) {
+      st.tick = s.tick;
+      st.timer = s.timer;
+    }
     st.phase = s.phase;
     st.round = s.round;
-    st.timer = s.timer;
   }
 }
 

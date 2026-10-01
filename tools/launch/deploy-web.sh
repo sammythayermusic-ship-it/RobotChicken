@@ -24,10 +24,10 @@ echo "Building the site for $mint ..."
 pnpm --filter @cockfight/web export
 grep -rqs "$mint" apps/web/out/_next/static || { echo "the build doesn't contain the mint; stopping"; exit 1; }
 
-# Deploy from a copy outside the repo (the Netlify CLI asks which monorepo project otherwise).
+# Deploy from a copy outside the repo, run from there (inside the repo the Netlify CLI asks which monorepo project).
 tmp=$(mktemp -d)
 cp -R apps/web/out "$tmp/site"
 echo "Deploying to cockfightsol ..."
-npx -y netlify-cli deploy --dir "$tmp/site" --prod --no-build --site cockfightsol
+(cd "$tmp" && npx -y netlify-cli deploy --dir site --prod --no-build --site cockfightsol)
 rm -rf "$tmp"
 echo "Done: https://cockfightsol.fun"

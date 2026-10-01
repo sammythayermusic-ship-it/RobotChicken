@@ -5,7 +5,8 @@
 - **Gate**: pump.fun bonding-curve quote as the second price source (`CurvePrice`); the gate takes the lower of it and Jupiter.
 - **Sharing**: site-wide link card (`og.png`, Open Graph + X large card) and a "Share on X" button on a ranked win linking the replay.
 - **Load**: `/health` reports event-loop delay, memory and connections; `tools/loadtest` runs N concurrent bot matches (real clients with the browser's predictor) against a throwaway open-mode copy of the game server, with a Fly load-generator image.
-- **Launch tooling** (`tools/launch`): a read-only preflight (game, worker, on-chain pairing and 70/30 creator-reward split, both prices, SOL for fees, the site), `fund.sh` (guarantees, cold wallet, the seed key by hidden prompt), `switch-mint.sh` (the real coin on game, worker and site in one go), `deploy-web.sh`; `docs/runbook-launch.md`.
+- **Launch tooling** (`tools/launch`): a read-only preflight (game, worker, on-chain pairing and 70/30 creator-reward split, both prices, SOL for fees, the site), `fund.sh` (guarantees, cold wallet, the seed key by hidden prompt), `switch-mint.sh` (the real coin on game, worker and site in one go), `deploy-web.sh`, `start-worker.sh` (refuses under 0.05 SOL); `docs/runbook-launch.md`.
+- **Capacity**: frames batched every 2 ticks (halves the socket writes, the biggest per-match cost); `MAX_LIVE_MATCHES` cap with a "every pit is busy" line in the queue; the game server on a dedicated CPU.
 - **Builds**: `Claude outputs` (1.2 GB of video) left out of the Docker context; the production site export is indexable.
 
 ## Launch kit: videos (branch `launch-videos`)

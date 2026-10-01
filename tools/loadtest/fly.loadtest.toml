@@ -28,6 +28,8 @@ kill_timeout = 300
 [env]
   NODE_ENV = "production"
   GATE_MODE = "open"
+  # No cap: the load test measures what one machine can do.
+  MAX_LIVE_MATCHES = "1000"
   PORT = "2567"
   # The web app's origin(s), comma-separated: only these may use the gate and matchmaking.
   ALLOWED_ORIGINS = "https://cockfightsol.fun,https://www.cockfightsol.fun,https://cockfightsol.netlify.app"

@@ -53,6 +53,10 @@ export const gameEnv = z.object({
   ANTI_ABUSE_SALT: z.string().min(16).optional(),
   /** Ranked pairing waits for this many tickets (spec: 4, so two colluding wallets can't be sure to meet). */
   QUEUE_MIN_PLAYERS: z.coerce.number().int().min(2).default(2),
+  /** Live matches one game server runs at once; the queue holds everyone else ("server full"). Load test 2026-10-01: ~100 per dedicated CPU. */
+  MAX_LIVE_MATCHES: z.coerce.number().int().min(1).default(100),
+  /** Ticks per frames message to each client (packages/net FRAMES_EVERY); must divide 30. 1 = every tick. */
+  FRAMES_EVERY: z.coerce.number().int().refine((n) => [1, 2, 3, 5].includes(n), "FRAMES_EVERY must be 1, 2, 3 or 5").default(2),
   /** Two wallets are not paired again within this long (spec: 2 minutes). */
   REMATCH_COOLDOWN_S: z.coerce.number().int().nonnegative().default(120),
   /** /admin: off unless set (Fly secret). Basic auth, any username. */

@@ -15,13 +15,15 @@ It checks the game server (health, gate mode, coin, $ gate, secrets), the worker
 
 ## 0. Before anything (Sammy)
 
-- [ ] **The worker is down and the hot wallet is out of SOL** (found 2026-10-01: `cockfight-worker`
-      has no machine; the hot wallet holds 0.0009 SOL, down from ~0.3 on 9/25, and its last
-      transaction was 05:30 UTC). Claims every 10 min plus payouts at a 100k µlamports/CU
-      priority fee spent it. Decide the SOL float (and whether to lower `PRIORITY_FEE_MICROLAMPORTS`),
-      top up the hot wallet, then redeploy the worker
-      (`fly deploy . --config apps/worker/fly.toml --dockerfile apps/worker/Dockerfile --ha=false --depot`).
-- [ ] Move the game server to a dedicated CPU (see the load test at the end).
+- [ ] **Fund the hot wallet, then start the worker.** On 2026-10-01 the worker app was scaled to
+      zero (~05:30 UTC) and the hot wallet held 0.0009 SOL. The game didn't spend it: 191 fee
+      claims over six days cost 0.004 SOL in total. The SOL left in hand-signed transfers to
+      `5EmJ88B74PQvWKFezpwLt4wFv5ZW84m5wRbWo2fXpbSk` (nine, the last 0.397 SOL at 05:25 UTC) and a swap.
+      **Keep the hot wallet for the worker only**: anything else signing with it moves the float
+      the payouts rely on. Float: claims cost ~0.0007 SOL a day; each first-time winner's PUMP
+      account costs ~0.002 SOL of rent, so 0.5 SOL covers ~200 new winners. The worker alerts on
+      Telegram when it runs low. Then: `tools/launch/start-worker.sh`.
+- [x] Game server on a dedicated CPU with a live-match cap (done 2026-10-01, see the load test at the end).
 
 - [ ] Merge PRs in order: #5 (go-live) → #6 (claim alerts) → #7 (launch videos) → the Phase 4 PR.
 - [ ] Get a Jupiter API key (portal.jup.ag) and set it on both apps yourself:
@@ -116,7 +118,13 @@ Results (event-loop delay = how late the 60 Hz tick runs; a tick is 16.7 ms):
 | performance-1x | 200 matches steady | 60–70 / 100–130 ms | Saturated: the sim runs several frames behind. |
 | performance-1x | 200 matches, heavy churn (~3.5 new matches/s) | 15–50 / 50–110 ms | 1,692 matches in 7 min; 0 snaps, 0 desyncs; 5% of seats lost to "seat reservation expired". |
 
-So: **one dedicated CPU holds ~100 concurrent matches (200 players) comfortably.** Before
-launch, move the game server to `performance-1x` (`[[vm]]` in `apps/game/fly.toml`). Past
-~100 matches it needs a second machine (Redis + per-machine routing, Phase 5) or a
-cheaper per-tick server loop.
+Then the server got cheaper per match: frames go out every 2 ticks and the room state's
+clock is mirrored twice a second instead of every tick (socket writes were the biggest cost
+in a CPU profile). Same 100 steady matches on the Mac: 32.7% → 25.0% of a core. On Fly
+performance-1x after the change: 100 matches p50 3–5 / p99 15–33 ms; 130 matches p50 6–9 /
+p99 26–46 ms.
+
+So: **one dedicated CPU runs 100 concurrent matches (200 players) well.** Production is now
+`performance-1x` with `MAX_LIVE_MATCHES=100`: past that, players wait in the queue ("every pit
+is busy") and keep their place, so nobody's match lags. More than ~100 at once needs a second
+machine (Redis + per-machine routing).

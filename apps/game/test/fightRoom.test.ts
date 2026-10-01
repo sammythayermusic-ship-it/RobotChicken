@@ -101,13 +101,14 @@ describe("FightRoom", () => {
     const deadline = Date.now() + 3000;
     while (room.status !== "live" && Date.now() < deadline) await room.waitForNextTimestep();
     expect(room.status).toBe("live");
-    for (let i = 0; i < 6; i++) await room.waitForNextTimestep();
+    // The state mirrors the clock every 30 ticks: wait past the first mirror.
+    while (room.state.tick < 30 && Date.now() < deadline + 3000) await room.waitForNextTimestep();
 
     // No inputs sent: the room runs exactly the no-input sim.
+    const sim = room.sim!;
+    expect(sim.tick).toBeGreaterThanOrEqual(30);
+    expect(sim).toEqual(replay(room.roomId, sim.tick));
     const tick = room.state.tick;
-    const sim = room.sim;
-    expect(tick).toBeGreaterThanOrEqual(6);
-    expect(sim).toEqual(replay(room.roomId, tick));
     expect(clock(room.state)).toEqual(clock(replay(room.roomId, tick)));
 
     await p1.waitForNextPatch();

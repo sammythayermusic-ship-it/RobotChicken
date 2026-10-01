@@ -6,7 +6,8 @@
  */
 import { CPU_LEVELS, Rng, cpuThink, createCpu, serialize, type CpuLevel, type MatchState, type SimEvent } from "@cockfight/sim";
 import { ClientPredictor } from "../src/client";
-import { Msg, SYNC_EVERY, decodeFrames, decodeInputs, decodeSync, encodeFrames, encodeSync } from "../src/protocol";
+import { Msg, SYNC_EVERY, decodeFrames, decodeInputs, decodeSync, encodeSync } from "../src/protocol";
+import { FrameBatcher } from "../src/batch";
 import { ServerMatch } from "../src/server";
 
 interface Packet {
@@ -58,6 +59,8 @@ export interface SimOptions {
   delay?: number;
   /** Keep every event each client showed. */
   collectEvents?: boolean;
+  /** Ticks per frames message (the game server's FRAMES_EVERY by default). */
+  framesEvery?: number;
 }
 
 export interface SimResult {
@@ -98,6 +101,7 @@ export function simulate(o: SimOptions): SimResult {
   const bots = (o.bots ?? ["hard", "hard"]).map((b, i) => makeBot(b, matchId, i as 0 | 1, seed));
   const hz = o.hz ?? [60, 60];
   const serverStep = 1000 / 60;
+  const batch = new FrameBatcher(o.framesEvery);
   let nextServer = 0;
   const nextClient = [3.1, 7.7];
   const endMs = o.seconds * 1000;
@@ -119,8 +123,11 @@ export function simulate(o: SimOptions): SimResult {
     }
     while (nextServer <= now && !server.over) {
       const out = server.step();
+      if (batch.push(out) || server.over) {
+        for (const side of [0, 1] as const) down[side]!.send(now, Msg.frames, batch.encode(server.takeMargin(side)));
+        batch.clear();
+      }
       for (const side of [0, 1] as const) {
-        down[side]!.send(now, Msg.frames, encodeFrames({ first: out.tick, b1: [out.b1], b2: [out.b2], margin: server.takeMargin(side) }));
         if (out.tick % SYNC_EVERY === 0) down[side]!.send(now, Msg.sync, encodeSync(out.tick, serialize(server.state)));
       }
       nextServer += serverStep;
@@ -144,6 +151,11 @@ export function simulate(o: SimOptions): SimResult {
         nextClient[side] = (nextClient[side] as number) + 1000 / (hz[side] as number);
       }
     }
+  }
+  // The server would send its last partial batch on the next tick; send it now.
+  if (batch.pending) {
+    for (const side of [0, 1] as const) down[side]!.send(endMs, Msg.frames, batch.encode(server.takeMargin(side)));
+    batch.clear();
   }
   // Deliver everything still in flight.
   for (const side of [0, 1] as const) {
