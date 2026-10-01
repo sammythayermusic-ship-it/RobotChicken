@@ -278,7 +278,11 @@ describe("a synthetic month never runs dry", () => {
     expect(outageHours.length).toBe(8);
     const during = ledger.payouts.filter((p) => sentOrPaid(p) && outageHours.some((h) => (p.sentAt ?? 0) >= T0 + h * HOUR_MS && (p.sentAt ?? 0) < T0 + (h + 1) * HOUR_MS));
     expect(during.length).toBeGreaterThan(50);
-    expect(alerts.sent.filter((a) => a.kind === "claim_failed").length).toBe(8);
+    // One alert on the third failure in a row (single drops are routine), and one when claims recover.
+    const failed = alerts.sent.filter((a) => a.kind === "claim_failed");
+    expect(failed.length).toBe(1);
+    expect(failed[0]?.message).toMatch(/^3 fee claims in a row failed/);
+    expect(alerts.sent.some((a) => a.kind === "info" && /working again after 8 failed/.test(a.message))).toBe(true);
     // Nothing was claimed in those hours, and the vault was caught up afterwards.
     expect(ledger.claims.some((c) => outageHours.some((h) => c.at >= T0 + h * HOUR_MS && c.at < T0 + (h + 1) * HOUR_MS))).toBe(false);
     expect(run.chain.vault).toBe(0n);

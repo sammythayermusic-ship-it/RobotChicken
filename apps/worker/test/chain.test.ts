@@ -179,6 +179,31 @@ describe("SolanaChain", () => {
     expect(rpc.sent).toHaveLength(1);
   });
 
+  it("rebroadcasts a claim the network dropped (same bytes, same signature) until it lands", async () => {
+    let t = 0;
+    const { rpc, chain } = make({ cock: true, now: () => (t += 2000) });
+    const cfg = pumpPda.sharingConfig(COCK);
+    const vault = pumpPda.creatorVault(cfg);
+    const key = (s: string) => Buffer.from(bs58.decode(s));
+    rpc.accounts.set(
+      pumpPda.bondingCurve(COCK),
+      Buffer.concat([Buffer.alloc(8), Buffer.from(u64le(1n)), Buffer.from(u64le(1n)), Buffer.from(u64le(1n)), Buffer.from(u64le(1n)), Buffer.from(u64le(1n)), Buffer.from([0]), key(cfg), Buffer.from([0, 0]), key(PUMP), Buffer.from(u64le(300n)), Buffer.from([1, 0])]),
+    );
+    rpc.accounts.set(cfg, Buffer.concat([Buffer.alloc(8), Buffer.from([255, 2, 1]), key(COCK), key(launch), Buffer.from([1]), Buffer.from([2, 0, 0, 0]), key(hot.publicKey), Buffer.from([0x58, 0x1b]), key(launch), Buffer.from([0xb8, 0x0b])]));
+    rpc.balances.set(associatedTokenAddress(vault, PUMP, TOKEN_2022_PROGRAM), 1_000_000n);
+    rpc.balances.set(chain.hotAta, 0n);
+    // The first two broadcasts are dropped; the third lands.
+    let sends = 0;
+    rpc.onSend = (sig) => {
+      if (++sends < 3) return;
+      rpc.statuses.set(sig, { err: null, confirmationStatus: "confirmed" });
+      rpc.balances.set(chain.hotAta, 700_000n);
+    };
+    expect(await chain.claim()).toMatchObject({ received: 700_000n });
+    expect(rpc.sent).toHaveLength(3);
+    expect(new Set(rpc.sent.map((s) => s.base64)).size).toBe(1);
+  });
+
   it("claims nothing until pump.fun's creator fee sharing points at the hot wallet", async () => {
     const { rpc, chain } = make({ cock: true });
     const key = (s: string) => Buffer.from(bs58.decode(s));

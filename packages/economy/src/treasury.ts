@@ -18,6 +18,10 @@ import type { Alerts, Chain, Ledger } from "./ledger";
 
 export const DAY_MS = 86_400_000;
 export const HOUR_MS = 3_600_000;
+/** A single dropped claim is routine on a busy network; alert when this many in a row fail. */
+export const CLAIM_ALERT_AFTER = 3;
+/** While claims keep failing, repeat the alert every this many more (36 × 10 min = 6 h). */
+export const CLAIM_REMIND_EVERY = 36;
 
 /** UTC day of a timestamp as YYYY-MM-DD. */
 export function utcDay(ms: number): string {
@@ -83,6 +87,8 @@ export class Treasury {
   /** In-flight sends by row id: a pass never double-sends a row it is already sending. */
   readonly #inflight = new Set<string>();
   #lowSolAlerted = false;
+  /** Claim ticks that failed in a row (price or claim); reset by the next good one. */
+  claimFailStreak = 0;
 
   constructor(o: TreasuryOptions) {
     validateParams(o.params);
@@ -138,7 +144,7 @@ export class Treasury {
     try {
       price = await this.refreshPrice();
     } catch (e) {
-      await this.alerts.alert("claim_failed", `price unavailable: ${msg(e)}`);
+      await this.#claimFailed(`price unavailable: ${msg(e)}`);
       return;
     }
     try {
@@ -155,13 +161,27 @@ export class Treasury {
           priceUsd: price.usd,
         });
       }
+      if (this.claimFailStreak >= CLAIM_ALERT_AFTER) {
+        await this.alerts.alert("info", `fee claims are working again after ${this.claimFailStreak} failed in a row`);
+      }
+      this.claimFailStreak = 0;
     } catch (e) {
       // Invariant 7: payouts go on from what is already booked; the site keeps its real numbers.
-      await this.alerts.alert("claim_failed", `fee claim failed: ${msg(e)}`);
+      // The fees stay in the vault, so the next tick collects them.
+      await this.#claimFailed(`fee claim failed: ${msg(e)}`);
     }
     await this.recompute(now);
     await this.#sweep(now);
     await this.#checkSol();
+  }
+
+  /** Count a failed claim tick; alert on the CLAIM_ALERT_AFTER-th in a row, then every CLAIM_REMIND_EVERY more. */
+  async #claimFailed(why: string): Promise<void> {
+    const n = ++this.claimFailStreak;
+    console.warn(`[treasury] claim tick failed (${n} in a row): ${why}`);
+    if (n === CLAIM_ALERT_AFTER || (n > CLAIM_ALERT_AFTER && (n - CLAIM_ALERT_AFTER) % CLAIM_REMIND_EVERY === 0)) {
+      await this.alerts.alert("claim_failed", `${n} fee claims in a row failed (fees wait in the vault meanwhile). Last: ${why}`);
+    }
   }
 
   /** Invariant 3: the hot wallet keeps its target plus what is already booked; the rest goes to cold. */

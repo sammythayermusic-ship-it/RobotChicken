@@ -255,8 +255,8 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Fees are claimed with the permissionless `distribute_creator_fees_v2` from the hot wallet | Verified on the throwaway coin: after "Share creator rewards" the bonding curve's creator is the sharing config, the vault is `pda(["creator-vault", sharing_config])`, and anyone may pay the distribution to the shareholders' ATAs. The launch wallet's key is never on a server. After graduation `transfer_creator_fees_to_pump_v2` sweeps the AMM side first. The claim refuses to run until the sharing config lists the hot wallet. |
 | A winner's PUMP ATA is created in the payout transaction (idempotent), rent paid by the hot wallet | About 0.002 SOL per first-time winner; the hot wallet's SOL has a low-balance alert. |
 | The claim's "received" is the hot ATA's balance delta | Independent of pump.fun's fee accounting; gross = received / 0.70. |
-| Fees are claimed every 10 minutes (`CLAIM_EVERY_MIN`) | Sammy's call (2026-09-25), up from the plan's hourly. Prizes are sized from claimed fees, so on launch day they catch up with trading within 10 minutes instead of an hour. A claim costs about 0.000006 SOL (about 0.001 SOL a day) and is skipped, with no transaction, when nothing is waiting. The price is refreshed and the sweep checked at the same time. |
-| Priority fee 10,000 µlamports / CU, compute limit 80k | Enough to land during normal congestion; `PRIORITY_FEE_MICROLAMPORTS` tunes it. |
+| Fees are claimed every 10 minutes (`CLAIM_EVERY_MIN`) | Sammy's call (2026-09-25), up from the plan's hourly. Prizes are sized from claimed fees, so on launch day they catch up with trading within 10 minutes instead of an hour. A claim costs about 0.000013 SOL with the priority fee (under 0.002 SOL a day) and is skipped, with no transaction, when nothing is waiting. The price is refreshed and the sweep checked at the same time. |
+| Priority fee 100,000 µlamports / CU, compute limit 80k | Was 10,000; two claims were dropped on the first live afternoon. 100k is 0.000008 SOL a transaction, still well under a cent. `PRIORITY_FEE_MICROLAMPORTS` tunes it. |
 
 ### Worker
 
@@ -266,6 +266,7 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Pool state is recomputed every minute and written to `pool_state`; `record_match` books from it | The game server never does pool maths: it passes the paid tier and q, the SQL picks the tier's amount. What the site shows is exactly what the next win gets. |
 | `/admin` knobs live in `settings`; env holds the defaults | The worker merges them every minute; an invalid set is ignored with a log line. The pause switch is a settings row too, so the game server and the site read it the same way. |
 | Telegram alerts dedupe identical messages for ten minutes | A stuck condition pages once, not every five seconds. |
+| A failed fee claim alerts on the 3rd in a row (then every 36 more, ~6 h), plus a "working again" note | Live on the test coin, 2 of the first 16 claims were dropped by the network and the next claim collected the fees anyway. Alerting on every drop was noise; three in a row (30 min) is a real outage. Claims (and the seed draw and sweeps) now rebroadcast the same signed transaction while they wait, and the priority fee went from 10k to 100k micro-lamports per CU (80k CU ≈ 0.000008 SOL a transaction). |
 
 ### Game server
 
