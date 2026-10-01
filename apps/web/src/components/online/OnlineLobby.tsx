@@ -57,6 +57,7 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
   const [tsKey, setTsKey] = useState(0);
   const [tsFailed, setTsFailed] = useState(false);
   const [size, setSize] = useState(0);
+  const [full, setFull] = useState(false);
   const [rtt, setRtt] = useState<number | null>(null);
   const [me, setMe] = useState<{ tier: Tier; usd: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -104,6 +105,7 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
         }
         queue.current = q;
         q.onSize(setSize);
+        q.onFull(setFull);
         const session = await q.matched;
         if (!live()) {
           await session.leave();
@@ -370,6 +372,11 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
       {phase.kind === "queue" ? (
         <div className="flex flex-col items-center gap-4 rounded-xl border border-zinc-700 bg-black/40 p-6 text-center" data-testid="queue">
           <p className="animate-pulse font-display text-3xl text-white">FINDING AN OPPONENT</p>
+          {full ? (
+            <p className="text-sm text-amber-300" data-testid="queue-full">
+              Every pit is busy. You keep your place in line; a fight starts as soon as one ends.
+            </p>
+          ) : null}
           <p className="font-mono text-4xl text-amber-300" aria-live="off">
             {Math.max(0, Math.floor((now - phase.since) / 1000))}s
           </p>

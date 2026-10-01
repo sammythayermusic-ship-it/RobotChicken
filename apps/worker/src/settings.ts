@@ -22,6 +22,9 @@ export function paramsFromEnv(env: WorkerEnv): EconomyParams {
     maxDailyRewardUsd: env.MAX_DAILY_REWARD_USD,
     maxHourlyUsd: env.MAX_HOURLY_USD,
     maxDailyUsd: env.MAX_DAILY_USD,
+    winPctBps: { rust: Math.round(env.WIN_PCT[0] * 100), chrome: Math.round(env.WIN_PCT[1] * 100), gold: Math.round(env.WIN_PCT[2] * 100) },
+    reserveUsd: env.RESERVE_USD,
+    reserveArmUsd: env.RESERVE_ARM_USD,
   };
   validateParams(p);
   return p;
@@ -38,6 +41,8 @@ export const SETTING_KEYS: Record<string, keyof EconomyParams> = {
   max_hourly_usd: "maxHourlyUsd",
   max_daily_usd: "maxDailyUsd",
   w_floor: "wFloorMilli",
+  reserve_usd: "reserveUsd",
+  reserve_arm_usd: "reserveArmUsd",
 };
 
 /** Apply the settings rows over the env params. Returns the merged params, or the base when the result is invalid. */

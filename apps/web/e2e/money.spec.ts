@@ -26,11 +26,12 @@ test("/how-it-works reads the economy in plain words", async ({ page }) => {
   expect(res?.status()).toBe(200);
   const main = page.getByTestId("how-it-works");
   await expect(main.getByRole("heading", { level: 1 })).toHaveText("HOW IT WORKS");
-  for (const h of ["Where the money comes from", "How a win gets paid", "Tiers", "The daily top 10", "The seed, and why the pool can't run dry", "Fair play"]) {
+  for (const h of ["Where the money comes from", "How a win gets paid", "Tiers", "The daily top 10", "Why the pot can't run dry", "Fair play"]) {
     await expect(main.getByRole("heading", { level: 2, name: h })).toBeVisible();
   }
   await expect(main).toContainText("3% creator fee");
   await expect(main).toContainText("70% of every fee goes to players");
+  await expect(main).toContainText("5% of it for Rust, 8% for Chrome, 12% for Gold");
   expect(problems.errors).toEqual([]);
   expect(await problems.cspViolations()).toEqual([]);
 });

@@ -7,6 +7,7 @@ import bs58 from "bs58";
 import { ed25519 } from "@noble/curves/ed25519.js";
 
 export * from "./gate";
+export * from "./curve-price";
 export * from "./tx";
 export * from "./rpc";
 import type { Tier } from "@cockfight/shared";

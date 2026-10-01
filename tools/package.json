@@ -13,10 +13,16 @@
     "blender": "tsx src/cli/blender.ts",
     "video:capture": "tsx video/capture.ts",
     "video:build": "tsx video/build.ts",
-    "video:online": "tsx video/online.ts"
+    "video:online": "tsx video/online.ts",
+    "og": "tsx og/render.ts",
+    "loadtest": "tsx loadtest/run.ts",
+    "launch:preflight": "tsx launch/preflight.ts"
   },
   "dependencies": {
+    "@cockfight/net": "workspace:*",
     "@cockfight/sim": "workspace:*",
+    "@cockfight/solana": "workspace:*",
+    "@colyseus/sdk": "catalog:",
     "@electric-sql/pglite": "catalog:",
     "@gltf-transform/core": "catalog:",
     "@gltf-transform/extensions": "catalog:",
@@ -27,7 +33,6 @@
     "three": "catalog:"
   },
   "devDependencies": {
-    "@cockfight/net": "workspace:*",
     "@types/node": "catalog:",
     "@types/three": "catalog:",
     "tsx": "catalog:",

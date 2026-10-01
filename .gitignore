@@ -42,3 +42,7 @@ docs/*.aiff
 
 # launch-video renders (tools/video)
 Claude outputs/video/
+
+# Local launch-script logs
+.golive-*
+.fund.log

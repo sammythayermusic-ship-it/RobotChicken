@@ -46,13 +46,22 @@ export interface EconomyParams {
   maxPaidVsSameOpponentPerDay: number;
   /** Hot wallet target: this many days of the per-win budget plus today's daily pool. */
   hotDays: number;
+  /**
+   * The pot (Sammy, 2026-10-01): each win pays this share of the prize pot
+   * available above the reserve, per tier, basis points (Rust 5%, Chrome 8%,
+   * Gold 12%). Every win shrinks the pot; every fee claim refills it.
+   */
+  winPctBps: Record<PayTier, number>;
+  /** Once the pot has reached reserveArmUsd, wins never take it below reserveUsd. */
+  reserveUsd: number;
+  reserveArmUsd: number;
 }
 
 export const DAILY_SPLIT_BPS: readonly number[] = [2500, 1800, 1300, 1000, 800, 700, 600, 500, 400, 400];
 
 export const DEFAULT_PARAMS: EconomyParams = {
   playerShareBps: 7000,
-  dailyPoolBps: 2000,
+  dailyPoolBps: 1000,
   tierWeightsMilli: { rust: 1000, chrome: 2500, gold: 6000 },
   wFloorMilli: 200_000,
   pMinUsd: 0.75,
@@ -68,6 +77,9 @@ export const DEFAULT_PARAMS: EconomyParams = {
   maxPaidWinsPerDay: 40,
   maxPaidVsSameOpponentPerDay: 10,
   hotDays: 1.5,
+  winPctBps: { rust: 500, chrome: 800, gold: 1200 },
+  reserveUsd: 100,
+  reserveArmUsd: 500,
 };
 
 /** Throws on a parameter set that can't be solvent or can't be paid. */
@@ -90,6 +102,9 @@ export function validateParams(p: EconomyParams): void {
   if (sum !== 10000 || p.dailySplitBps.some((b) => b < 0)) bad("dailySplitBps must be >= 0 and sum to 10000");
   if (!(p.maxPaidWinsPerDay > 0 && p.maxPaidVsSameOpponentPerDay > 0)) bad("per-wallet caps must be positive");
   if (!(p.hotDays > 0)) bad("hotDays must be positive");
+  for (const t of PAY_TIERS) if (!(p.winPctBps[t] > 0 && p.winPctBps[t] <= 5000)) bad(`winPctBps.${t} must be in (0, 5000]`);
+  if (p.winPctBps.rust > p.winPctBps.chrome || p.winPctBps.chrome > p.winPctBps.gold) bad("winPctBps must not decrease by tier");
+  if (!(p.reserveUsd >= 0 && p.reserveArmUsd >= p.reserveUsd)) bad("0 <= reserveUsd <= reserveArmUsd");
 }
 
 /** Which paying tier a holding tier maps to (diamond pays as gold). */

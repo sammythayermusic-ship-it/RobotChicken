@@ -286,7 +286,7 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Every pool number comes from `pool_v` / `payouts_v` / `daily_rewards_v` | No estimates on the page: the tiers' next win, today's pool and its countdown (from the server's clock), fees claimed, paid to players, the seed left, the last payouts with their transactions. Without a pool row the panel says payouts start with the coin; a pool older than ten minutes says so. |
 | The result screen follows the payout to its transaction for 55 s | The room polls `payouts` every 3 s after booking; the winner sees "sending…" then the Solscan link. |
 | `/p/<address>` is the static `/p` page, like `/m/<id>` | Profile: record, earnings, rank today, the caps, payouts, the username claim. |
-| No share card / OG image yet | Needs image generation on a static site (a build-time template per match isn't possible); deferred to the launch kit. |
+| One site-wide link card, no per-match card | The site is a static export: a crawler only sees the HTML, which is the same for every `/m/<id>`. Phase 4 adds the site-wide card and a "Share on X" button (see Phase 4). |
 
 ## Launch kit: the videos (`tools/video`, plan in `docs/plan-videos.md`)
 
@@ -301,3 +301,34 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Music is Sammy's own Suno tracks (`Claude outputs/video/music/`): a 30.4 s rap spot for the promo, a bed for the explainer | Higgsfield's music model is not available for standalone tracks. The promo is cut to the spot's grid (152 BPM: the four hits on "peck / shove / slam / dive kick", the KO on "K.O.", the tag on the downbeat of the outro). Suno masters around −16 LUFS, so the explainer bed sits at gain 0.16 (~9 dB under the voice) with a gentle sidechain duck; a bed shorter than the picture loops under the end card. |
 | The prize on the result screen is staged (blurred amount, real-looking transaction link) and the pump.fun page is not on screen | The site runs on the throwaway test coin; live dollar amounts are hidden, mechanics shown. `video:online` re-shoots the card from a real ranked match after the live payout test. |
 | On-screen tagline is "HOLD $COCK. GET PAID." | Payouts are in PUMP, so "win SOL" would be wrong. |
+
+## Phase 4: launch (plan in `docs/plan-phase4.md`, runbook in `docs/runbook-launch.md`)
+
+Agreed with Sammy (2026-10-01): legal is done; **no geo-block**; production stays on **Netlify**; funding numbers are his to set on the day (`tools/launch/fund.sh`); the load test runs on a temporary Fly copy.
+
+| Decision | Why |
+|---|---|
+| The gate's second price source is pump.fun's bonding curve: virtual quote reserves ÷ virtual token reserves × the quote token's (PUMP's) Jupiter price; none once the curve has graduated | The spec's "lower of Jupiter and the bonding-curve quote". On the curve, Jupiter's quote can lag or be thin; after graduation the curve's reserves are frozen, so Jupiter (which then quotes the AMM pool) prices it alone. Both share the 20 s price cache, so it's two extra RPC reads every 20 s at most. |
+| One link card (`apps/web/public/og.png`, rendered from `tools/og/og.html`) and a "Share on X" button on a recorded ranked win | A tweet intent can't attach an image, and a static site can't make per-match cards; the intent links the replay, whose preview is the site card. A per-match image needs a server (the game server or an edge function); later if wanted. |
+| `/health` reports the event-loop delay, memory and connections | Every fight room steps its sim on the one event loop, so a loaded machine shows up there first. The load test reads it; so can an uptime monitor. |
+| The load generator runs on a Fly machine in iad, not the Mac | 400 bots of 60 Hz traffic from a home connection dropped sockets (1006) while the server sat idle; the bots belong next to the server. |
+| Production game server on a dedicated CPU (performance-1x), ~100 concurrent matches per machine | Load test 2026-10-01: shared-cpu-1x is throttled once its burst budget is spent (50 matches lagged ~300 ms); one dedicated CPU runs 100 matches with tick delay p99 15–33 ms and saturates at 200. Switched 2026-10-01 when Sammy asked for everything launch needs (~$30/month vs ~$6). |
+| Frames go out every 2 ticks (`FRAMES_EVERY`, env-tunable 1/2/3/5), not every tick | A CPU profile of 100 matches put socket writes ahead of the sim itself. Batching halves the writes for at most one tick (~17 ms) more before a confirmed input reaches the other player; prediction covers it, and every netcode test in the harness (80–300 ms RTT, jitter, a 600 ms stall) passes batched. Frames always go out before a sync, so a batch never straddles one. |
+| `MAX_LIVE_MATCHES` (100) caps live matches per server; the queue holds the rest and says "every pit is busy" | Past one CPU's capacity every match would lag; a short wait in line is better than 200 laggy fights. Players keep their place. |
+| The hot wallet is the worker's alone | 2026-10-01: its SOL had been moved out by hand (claims cost 0.004 SOL in six days), which would have stalled payouts after launch. `tools/launch/start-worker.sh` refuses to start the worker under 0.05 SOL. |
+| Production `EXPORT_INDEXABLE=1` | The playtest build stays `noindex`; the real site should be findable. |
+
+## The pot (Sammy, 2026-10-01): bigger wins from the first match
+
+Replaces Phase 3's "24 h of fees ÷ 24 h of matches" (which, with W_floor = 200, paid a launch-day win cents). Sammy's calls: 5% per win (Rust), tiers 5 / 8 / 12%, $100 reserve once the pot has reached $500, daily top 10 cut from 20% to 10%, start the pot with $30 straight into the hot wallet, fee claims every minute.
+
+| Decision | Why |
+|---|---|
+| A win pays its tier's share of the pot available above the reserve, and comes off it at once (`takeWin` / `record_match` with the `pool_state` row locked) | Wins are big from the first match and always affordable: ten wins in one minute pay 5% of what each one leaves, never 50% of the same pot. The worker recomputes the pot from the ledger every minute (allowance − outstanding − today's daily pool − reserve). |
+| Rust 5% / Chrome 8% / Gold 12%, not 1× / 2.5× / 6× | 6× of 5% would hand a single Gold win 30% of the pot. Floors scale the same way (Rust $0.75 → Gold $1.80); caps stay $75 / $187.50 / $450. |
+| Reserve $100 once the pot has ever been worth $500 (`pool_state.detail.peakUsd`) | Sammy: the pot never empties after it gets going, but wins pay from the very first match. |
+| Daily top 10 = 10% of the day's fees, held out of the pot until midnight | Sammy: more to per-win prizes. |
+| Nothing is swept to cold (hot target = the allowance) | The pot is the player money: sweeping it would shrink every prize. The project's 30% goes straight to the launch wallet through pump.fun's sharing, so there's nothing else to sweep. Trade-off: a hot-key compromise exposes the whole pot (a few hundred dollars early on). |
+| `/admin` "Add to prize pool" (pot_topups) replaces the seed wallet | Sammy funds the pot directly: one wallet, no second key on the worker. `seed_topup` now inserts into `pot_topups`, which counts toward the allowance. |
+| Fee claims every minute (`CLAIM_EVERY_MIN=1`) | The pot refills as fast as people trade. A claim costs ~0.00002 SOL and is skipped when the vault is empty. |
+| Before the coin exists the worker finds nothing to claim (no bonding curve → null) and the gate says $COCK isn't trading yet | So the stack can be switched to a known mint address before launch and be live the moment the coin is created. |

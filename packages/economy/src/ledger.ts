@@ -44,8 +44,10 @@ export interface LedgerWindow {
   grossToday: bigint;
   playerShare24h: bigint;
   weighted24hMilli: bigint;
-  /** Claimed player share + seed draws − payouts sent − sweeps, all time (see BudgetView). */
+  /** Claimed player share + seed draws + pot top-ups − payouts sent − sweeps, all time (see BudgetView). */
   allowance: bigint;
+  /** The most the prize pot has been worth, USD (pool_state.detail.peakUsd): once ≥ reserveArmUsd the reserve holds. */
+  potPeakUsd: number;
   /** Wins sent in the trailing hour (the midnight top-10 batch is exempt from the hourly cap). */
   sentLastHour: bigint;
   sentToday: bigint;

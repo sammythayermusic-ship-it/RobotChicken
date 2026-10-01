@@ -74,14 +74,19 @@ export class SupabaseLedger implements Ledger {
   }
 
   async window(now: number): Promise<LedgerWindow> {
-    const [w] = await this.rpc<Record<string, string>[]>("treasury_window", { p_now: iso(now) });
+    const [[w], ps] = await Promise.all([
+      this.rpc<Record<string, string>[]>("treasury_window", { p_now: iso(now) }),
+      this.req<{ detail?: { peakUsd?: unknown } }[]>("GET", "pool_state?select=detail"),
+    ]);
     if (!w) throw new Error("treasury_window returned no row");
+    const peak = Number((Array.isArray(ps) ? ps[0] : undefined)?.detail?.peakUsd ?? 0);
     return {
       gross24h: big(w.gross_24h),
       grossToday: big(w.gross_today),
       playerShare24h: big(w.player_share_24h),
       weighted24hMilli: big(w.weighted_24h_milli),
       allowance: big(w.allowance),
+      potPeakUsd: Number.isFinite(peak) ? peak : 0,
       sentLastHour: big(w.sent_last_hour),
       sentToday: big(w.sent_today),
       outstanding: big(w.outstanding),
@@ -110,7 +115,20 @@ export class SupabaseLedger implements Ledger {
         gross_today: w.grossToday,
         allowance: w.allowance,
         outstanding: w.outstanding,
+        win_available: s.perWinBudget,
+        pct_rust: s.winPctBps.rust,
+        pct_chrome: s.winPctBps.chrome,
+        pct_gold: s.winPctBps.gold,
+        floor_rust: s.perWinMin.rust,
+        floor_chrome: s.perWinMin.chrome,
+        floor_gold: s.perWinMin.gold,
+        cap_rust: s.perWinMax.rust,
+        cap_chrome: s.perWinMax.chrome,
+        cap_gold: s.perWinMax.gold,
         detail: {
+          pot: s.pot.toString(),
+          reserve: s.reserve.toString(),
+          peakUsd: s.peakUsd,
           min: { rust: s.perWinMin.rust.toString(), chrome: s.perWinMin.chrome.toString(), gold: s.perWinMin.gold.toString() },
           max: { rust: s.perWinMax.rust.toString(), chrome: s.perWinMax.chrome.toString(), gold: s.perWinMax.gold.toString() },
           base: s.base.toString(),

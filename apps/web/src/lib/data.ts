@@ -239,6 +239,8 @@ export interface PoolView {
   paidCount24h: number;
   seedOriginal: string;
   seedRemaining: string;
+  /** The prize pot (raw), before the reserve. */
+  pot: string;
   paused: boolean;
   /** The server's clock, for the countdown. */
   now: string;
@@ -282,7 +284,7 @@ export async function fetchPool(): Promise<PoolView | null> {
   const [r] = (await res.json()) as Record<string, unknown>[];
   if (!r || r.computed_at === null) return null;
   const str = (k: string) => String(r[k] ?? "0");
-  const detail = (r.detail ?? {}) as { min?: Record<string, string>; max?: Record<string, string> };
+  const detail = (r.detail ?? {}) as { min?: Record<string, string>; max?: Record<string, string>; pot?: string };
   const tiers = (d: Record<string, string> | undefined) => (d ? { rust: String(d.rust ?? "0"), chrome: String(d.chrome ?? "0"), gold: String(d.gold ?? "0") } : null);
   return {
     computedAt: r.computed_at as string,
@@ -306,6 +308,7 @@ export async function fetchPool(): Promise<PoolView | null> {
     paidCount24h: Number(r.paid_count_24h ?? 0),
     seedOriginal: str("seed_original"),
     seedRemaining: str("seed_remaining"),
+    pot: typeof detail.pot === "string" && /^\d+$/.test(detail.pot) ? detail.pot : "0",
     paused: !!r.paused,
     now: String(r.now ?? new Date().toISOString()),
   };

@@ -441,9 +441,18 @@ importers:
 
   tools:
     dependencies:
+      '@cockfight/net':
+        specifier: workspace:*
+        version: link:../packages/net
       '@cockfight/sim':
         specifier: workspace:*
         version: link:../packages/sim
+      '@cockfight/solana':
+        specifier: workspace:*
+        version: link:../packages/solana
+      '@colyseus/sdk':
+        specifier: 'catalog:'
+        version: 0.18.3(@colyseus/core@0.18.15)(bufferutil@4.1.0)(typescript@6.0.3)(utf-8-validate@6.0.6)(zod@4.6.5)
       '@electric-sql/pglite':
         specifier: 'catalog:'
         version: 0.5.8
@@ -469,9 +478,6 @@ importers:
         specifier: 'catalog:'
         version: 0.186.0
     devDependencies:
-      '@cockfight/net':
-        specifier: workspace:*
-        version: link:../packages/net
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.62.1

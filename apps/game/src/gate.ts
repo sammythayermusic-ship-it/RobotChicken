@@ -7,7 +7,7 @@
  * Helius key sits in one place, the match-start re-check needs no extra hop,
  * and the web app can stay a static site (docs/decisions.md).
  */
-import { BalanceGate, FixedPrice, JupiterPrice, RpcBalanceReader, isWalletAddress, type GateCheck, type PriceReader } from "@cockfight/solana";
+import { BalanceGate, CurvePrice, FixedPrice, JupiterPrice, RpcBalanceReader, SolanaRpc, isWalletAddress, type GateCheck, type PriceReader } from "@cockfight/solana";
 import type { GameEnv } from "@cockfight/shared/env";
 import type { Tier } from "@cockfight/shared";
 import { QueueTokens } from "./token";
@@ -81,7 +81,10 @@ export class GateService {
     try {
       check = await this.balance.check(address);
     } catch (e) {
-      console.warn("[gate] balance check failed:", e instanceof Error ? e.message : e);
+      const m = e instanceof Error ? e.message : String(e);
+      console.warn("[gate] balance check failed:", m);
+      // Switched to the coin's address before the coin exists (launch day): no market yet.
+      if (/no price for the mint/.test(m)) return fail(503, "no_price", "$COCK isn't trading yet. Try again in a moment.");
       return fail(502, "chain", "Couldn't read the wallet right now. Try again in a moment.");
     }
     const elo = await this.audit(check);
@@ -157,8 +160,13 @@ export function buildBalanceGate(env: GameEnv, f: typeof fetch = fetch): Balance
   if (!mint || !rpc) return null;
   const prices: PriceReader[] = [];
   if (env.SOLANA_CLUSTER !== "mainnet-beta" && env.GATE_FIXED_PRICE_USD) prices.push(new FixedPrice(env.GATE_FIXED_PRICE_USD));
-  else prices.push(new JupiterPrice(env.JUPITER_PRICE_URL, env.JUPITER_API_KEY, f));
-  // Phase 3 adds the launchpad's bonding-curve quote here (the gate takes the lower price).
+  else {
+    const jupiter = new JupiterPrice(env.JUPITER_PRICE_URL, env.JUPITER_API_KEY, f);
+    prices.push(jupiter);
+    // pump.fun's bonding-curve quote, its quote token (PUMP) priced by Jupiter.
+    // Null after graduation, so Jupiter alone prices the coin then. The gate takes the lower.
+    prices.push(new CurvePrice(new SolanaRpc(rpc, { fetch: f, timeoutMs: 5000 }), jupiter));
+  }
   return new BalanceGate({ mint, balances: new RpcBalanceReader(rpc, f), prices, gateUsd: env.GATE_USD_MIN });
 }
 

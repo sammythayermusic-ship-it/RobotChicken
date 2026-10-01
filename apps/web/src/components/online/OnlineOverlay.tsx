@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import type { NetSession } from "@/game/net/session";
 import { formatRaw, formatUsd, txUrl } from "@/lib/data";
+import { winShareUrl } from "@/lib/share";
 
 const PAYOUT_DECIMALS = 6;
 const NO_PAY: Record<string, string> = {
@@ -114,6 +115,17 @@ export function OnlineOverlay({ session, loading, onRequeue }: { session: NetSes
               <Link href={`/m/${session.matchId}`} className="rounded-lg border border-zinc-500 px-5 py-3 font-display text-lg" data-testid="replay-link">
                 REPLAY
               </Link>
+            ) : null}
+            {!cancelled && won && s.ranked && s.recorded ? (
+              <a
+                href={winShareUrl({ origin: window.location.origin, matchId: session.matchId, opponent: opp, usd: s.payout.usd })}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-lg border border-cyan-400 px-5 py-3 font-display text-lg text-cyan-300"
+                data-testid="share-win"
+              >
+                SHARE ON X
+              </a>
             ) : null}
             <Link href="/" className="rounded-lg border border-zinc-700 px-5 py-3 font-display text-lg text-zinc-300">
               HOME

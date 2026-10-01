@@ -49,7 +49,7 @@ export const FightState = schema(
     payoutTier: t.string().default(""),
     /** The payout's transaction signature once the worker has sent it. */
     payoutSig: t.string().default(""),
-    /** Sim tick (60 Hz), mirrored for /dev/net and the room list. */
+    /** Sim tick (60 Hz), mirrored for /dev/net and the room list every 30 ticks and on phase changes. */
     tick: t.uint32().default(0),
     /** Sim `Phase`: 0 countdown, 1 fighting, 2 roundEnd, 3 matchEnd. */
     phase: t.uint8().default(0),

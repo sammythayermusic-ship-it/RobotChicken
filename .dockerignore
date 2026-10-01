@@ -28,6 +28,9 @@
 
 # Not used by the server builds: art sources, docs and captures, database migrations
 art
+# Rendered videos and other local outputs (over a gigabyte)
+Claude outputs
+tools/loadtest/results
 docs
 supabase
 
@@ -37,3 +40,6 @@ apps/web/*
 !apps/web/package.json
 tools/*
 !tools/package.json
+!tools/tsconfig.json
+!tools/loadtest
+tools/loadtest/results

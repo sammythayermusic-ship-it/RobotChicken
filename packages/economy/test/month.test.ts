@@ -188,13 +188,11 @@ describe("a synthetic month never runs dry", () => {
     expect(ledger.seedDraws.get("2026-10-14")?.draw.total ?? 0n).toBeGreaterThan(0n);
   });
 
-  it("invariant 3: after each hourly sweep the hot wallet holds 36 h of the per-win budget, today's pool and what is booked; the rest went cold", () => {
-    const { chain, hours, dust, params } = run;
-    expect(chain.sweeps.length).toBeGreaterThan(5);
-    expect(chain.cold).toBeGreaterThan(0n);
-    const floor = usdToRaw(50, { usd: 0.001, decimals: DECIMALS });
-    for (const h of hours) expect(h.hotAfterSweep, new Date(h.at).toISOString()).toBeLessThanOrEqual(h.keep + floor + dust);
-    expect(params.hotDays).toBe(1.5);
+  it("invariant 3 (pot model): player money stays in the hot wallet: nothing is swept, and the wallet covers the allowance", () => {
+    const { chain, hours } = run;
+    expect(chain.sweeps.length).toBe(0);
+    expect(chain.cold).toBe(0n);
+    for (const h of hours) expect(h.hot, new Date(h.at).toISOString()).toBeGreaterThanOrEqual(h.allowance);
   });
 
   it("invariant 4: the USD caps hold per payout, hour and day, and a cap hit paused payouts with an alert", () => {
@@ -273,11 +271,11 @@ describe("a synthetic month never runs dry", () => {
     expect(run.ledger.payouts.filter((p) => p.lastError?.startsWith("send error"))).toEqual([]);
   });
 
-  it("invariant 7: payouts went on through the eight-hour claim outage from what was already budgeted", () => {
+  it("invariant 7: payouts went on through the eight-hour claim outage from what was already in the pot", () => {
     const { ledger, outageHours, alerts } = run;
     expect(outageHours.length).toBe(8);
     const during = ledger.payouts.filter((p) => sentOrPaid(p) && outageHours.some((h) => (p.sentAt ?? 0) >= T0 + h * HOUR_MS && (p.sentAt ?? 0) < T0 + (h + 1) * HOUR_MS));
-    expect(during.length).toBeGreaterThan(50);
+    expect(during.length).toBeGreaterThan(5);
     // One alert on the third failure in a row (single drops are routine), and one when claims recover.
     const failed = alerts.sent.filter((a) => a.kind === "claim_failed");
     expect(failed.length).toBe(1);
@@ -330,42 +328,58 @@ describe("a synthetic month never runs dry", () => {
     }
   });
 
-  it("tiers pay in proportion (Chrome 2.5×, Gold 6× Rust) and cross-tier matches paid the lower tier", () => {
-    const { ledger } = run;
+  it("tiers pay their share of the pot (Rust 5%, Chrome 8%, Gold 12%) and cross-tier matches paid the lower tier", () => {
+    const { ledger, params } = run;
     for (const { state } of ledger.states) {
-      if (state.perWin.rust === state.perWinMin.rust || state.perWin.rust === state.perWinMax.rust) continue;
-      const ratio = (t: PayTier) => Number(state.perWin[t]) / Number(state.perWin.rust);
-      expect(ratio("chrome")).toBeCloseTo(2.5, 2);
-      expect(ratio("gold")).toBeCloseTo(6, 2);
-      expect(state.perWin.rust).toBeGreaterThanOrEqual(state.perWinMin.rust);
-      expect(state.perWin.gold).toBeLessThanOrEqual(state.perWinMax.gold);
+      for (const t of ["rust", "chrome", "gold"] as PayTier[]) {
+        const share = (state.perWinBudget * BigInt(params.winPctBps[t])) / 10_000n; // after the last booking (takeWin keeps perWin in step)
+        if (share > state.perWinMin[t] && share < state.perWinMax[t]) expect(state.perWin[t]).toBe(share);
+        expect(state.perWin[t]).toBeLessThanOrEqual(state.perWinBudget);
+        expect(state.perWin[t]).toBeLessThanOrEqual(state.perWinMax[t]);
+      }
     }
     const cross = ledger.matches.filter((m) => m.winner.startsWith("gold") && m.loser.startsWith("rust") && m.booked > 0n);
     expect(cross.length).toBeGreaterThan(0);
     expect(cross.every((m) => m.tier === "rust")).toBe(true);
   });
 
-  it("prizes track fees: the launch spike pays more per win than the quiet weeks, and dead days fall to the floor", () => {
+  it("the reserve holds: once the pot has been worth $500, wins never take it below $100", () => {
+    const { ledger, params } = run;
+    let armed = false;
+    for (const { state, available } of ledger.states) {
+      armed ||= state.peakUsd >= params.reserveArmUsd;
+      if (!armed) continue;
+      expect(state.reserve).toBe(usdToRaw(params.reserveUsd, state.price));
+      expect(available).toBe(state.pot > state.reserve ? state.pot - state.reserve : 0n);
+    }
+    expect(armed).toBe(true);
+    // The wins booked against one pool state never exceed what it had available above the reserve.
+    for (const { at, available } of ledger.states) {
+      const booked = sum(ledger.matches.filter((m) => m.bookedAt === at).map((m) => m.booked));
+      expect(booked).toBeLessThanOrEqual(available);
+    }
+  });
+
+  it("prizes track fees: the launch spike pays more per win than the quiet weeks", () => {
     const { ledger } = run;
     const at = (day: number, hour: number) => ledger.states.filter((s) => s.at >= T0 + day * DAY_MS + hour * HOUR_MS).map((s) => s.state)[0];
     const spike = at(2, 20) as { perWin: Record<PayTier, bigint>; price: Price };
     const quiet = at(18, 20) as { perWin: Record<PayTier, bigint>; price: Price };
-    const dead = at(13, 20) as { perWin: Record<PayTier, bigint>; perWinMin: Record<PayTier, bigint> };
     expect(rawToUsd(spike.perWin.rust, spike.price)).toBeGreaterThan(rawToUsd(quiet.perWin.rust, quiet.price));
-    expect(dead.perWin.rust).toBe(dead.perWinMin.rust);
   });
+
 });
 
 describe("a month with no seed and no guarantees still never overpays", () => {
-  it("pays only from fees and defers the floor prizes it cannot cover", async () => {
+  it("pays only from fees, from the first day, and never fails a payout", async () => {
     const run = await runMonth({ seedUsd: 0, gWinUsd: 0, gDailyUsd: 0, seed: 11 });
     const paid = sum(run.ledger.payouts.filter(sentOrPaid).map((p) => p.amount));
     expect(paid).toBeLessThanOrEqual(sum(run.ledger.claims.map((c) => c.playerShare)));
     for (const h of run.hours) expect(h.hot).toBeGreaterThanOrEqual(0n);
     expect(run.ledger.seedDraws.size).toBe(DAYS);
     for (const s of run.ledger.seedDraws.values()) expect(s.draw.total).toBe(0n);
-    // Dead days booked floor prizes the budget could not cover: they waited rather than paid.
-    expect(run.ledger.payouts.some((p) => p.lastError === "budget")).toBe(true);
+    expect(run.ledger.payouts.some((p) => p.kind === "win" && sentOrPaid(p) && (p.sentAt ?? Infinity) < T0 + DAY_MS)).toBe(true);
     expect(run.ledger.payouts.filter((p) => p.status === "failed")).toEqual([]);
   }, 120_000);
+
 });

@@ -46,7 +46,7 @@ export const ANY_TIER_AFTER_MS = 60_000;
 
 export const QUEUE_ROOM = "queue";
 
-export const QueueState = schema({ size: t.uint16().default(0), mode: t.string().default("open") }, "QueueState");
+export const QueueState = schema({ size: t.uint16().default(0), mode: t.string().default("open"), full: t.boolean().default(false) }, "QueueState");
 export type QueueState = SchemaType<typeof QueueState>;
 
 export interface Ticket {
@@ -104,6 +104,13 @@ export class QueueRoom extends Room<{ state: QueueState }> {
   /** Tickets by session id. */
   readonly tickets = new Map<string, Ticket>();
   #pairing = false;
+  /** Pairs between pairing and their fight room existing (counted against MAX_LIVE_MATCHES). */
+  #starting = 0;
+
+  /** Fight rooms on this process: every room but this queue. */
+  protected liveMatches(): number {
+    return Math.max(0, matchMaker.stats.local.roomCount - 1);
+  }
 
   /**
    * Runs at the HTTP matchmaking step, before a seat is reserved: ranked
@@ -183,7 +190,11 @@ export class QueueRoom extends Room<{ state: QueueState }> {
       }
       const taken = new Set<Ticket>();
       const pairs: [Ticket, Ticket][] = [];
+      // The cap: past MAX_LIVE_MATCHES everyone waits in line instead of every match lagging.
+      const free = ctx.env.MAX_LIVE_MATCHES - this.liveMatches() - this.#starting;
+      this.state.full = free <= 0 && waiting.length >= 2;
       for (const a of waiting) {
+        if (pairs.length >= free) break;
         if (taken.has(a)) continue;
         const b = waiting.find((x) => x !== a && !taken.has(x) && rttAllows(a, x, now) && this.canPair(a, x, now));
         if (!b) continue;
@@ -199,7 +210,16 @@ export class QueueRoom extends Room<{ state: QueueState }> {
     }
   }
 
-  async #start([a, b]: [Ticket, Ticket]): Promise<void> {
+  async #start(pair: [Ticket, Ticket]): Promise<void> {
+    this.#starting++;
+    try {
+      await this.#startPair(pair);
+    } finally {
+      this.#starting--;
+    }
+  }
+
+  async #startPair([a, b]: [Ticket, Ticket]): Promise<void> {
     const ctx = getContext();
     const ranked = ctx.env.GATE_MODE === "required";
     if (ranked) {

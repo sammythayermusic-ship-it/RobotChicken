@@ -75,6 +75,8 @@ export interface QueueOptions {
 export interface QueueHandle {
   /** Players waiting in this region's queue (updates live). */
   onSize(cb: (n: number) => void): void;
+  /** True while the server is at its live-match cap and everyone waits in line. */
+  onFull(cb: (full: boolean) => void): void;
   /** Resolves with the fight room when matched; rejects on a kick or a lost connection. */
   readonly matched: Promise<NetSession>;
   leave(): Promise<void>;
@@ -111,8 +113,10 @@ export async function joinQueue(opts: QueueOptions, me: { name: string; tier: Ti
   // rules: the server refuses a client whose sim differs from its own (a stale cached page).
   const queue = await client.join("queue", { ...opts, rules: RULES.hash });
   const sizeCbs: ((n: number) => void)[] = [];
-  queue.onStateChange((s: { size?: number }) => {
+  const fullCbs: ((full: boolean) => void)[] = [];
+  queue.onStateChange((s: { size?: number; full?: boolean }) => {
     if (typeof s.size === "number") for (const cb of sizeCbs) cb(s.size);
+    if (typeof s.full === "boolean") for (const cb of fullCbs) cb(s.full);
   });
   let left = false;
   const offs: (() => void)[] = [];
@@ -148,6 +152,7 @@ export async function joinQueue(opts: QueueOptions, me: { name: string; tier: Ti
   void matched.finally(() => clearInterval(ping)).catch(() => {});
   return {
     onSize: (cb) => sizeCbs.push(cb),
+    onFull: (cb) => fullCbs.push(cb),
     matched,
     leave: async () => {
       left = true;
