@@ -56,11 +56,18 @@ async function recordMatch(db: PGliteInterface, r: Rec) {
   );
 }
 
+/**
+ * A pool state that pays fixed amounts per tier: a pot far bigger than any win,
+ * so every win is its tier's cap (the pot maths themselves are tested below).
+ */
 async function setPool(db: PGliteInterface, rust = 580_000_000, chrome = 1_450_000_000, gold = 3_480_000_000): Promise<void> {
   await db.query(
-    `insert into public.pool_state (price_usd, decimals, win_rust, win_chrome, win_gold, per_win_budget, weighted_milli, daily_pool, hot_target, gross_24h, gross_today, allowance, outstanding)
-     values (0.005, 6, $1, $2, $3, 1500000000000, 2600000, 600000000000, 2850000000000, 3000000000000, 3000000000000, 2000000000000, 0)
-     on conflict (id) do update set win_rust = excluded.win_rust, win_chrome = excluded.win_chrome, win_gold = excluded.win_gold, computed_at = now()`,
+    `insert into public.pool_state (price_usd, decimals, win_rust, win_chrome, win_gold, per_win_budget, weighted_milli, daily_pool, hot_target, gross_24h, gross_today, allowance, outstanding,
+                                    win_available, cap_rust, cap_chrome, cap_gold)
+     values (0.005, 6, $1, $2, $3, 1500000000000, 2600000, 600000000000, 2850000000000, 3000000000000, 3000000000000, 2000000000000, 0,
+             1000000000000000, $1, $2, $3)
+     on conflict (id) do update set win_rust = excluded.win_rust, win_chrome = excluded.win_chrome, win_gold = excluded.win_gold,
+       cap_rust = excluded.cap_rust, cap_chrome = excluded.cap_chrome, cap_gold = excluded.cap_gold, win_available = excluded.win_available, computed_at = now()`,
     [rust, chrome, gold],
   );
 }
@@ -106,6 +113,35 @@ describe.each(GRANT_MODES)("Phase 3 functions on a %s-grants project", (mode) =>
       const again = await recordMatch(c, { id, tierPaid: "chrome" });
       expect(again.map((x) => [x.address, x.payout, x.payout_reason])).toEqual([[ROOSTER, "1450000000", "paid"], [HEN, "0", "paid"]]);
       expect(await rows(c, "select count(*)::int as n from public.payouts")).toEqual([{ n: 2 }]);
+    });
+  });
+
+  it("record_match pays the tier's share of the pot and takes it off at once (the pot, 2026-10-01)", async () => {
+    await scratch(async (c) => {
+      // $30 pot at $0.005: 6,000 PUMP available; floors $0.75 / $1.20 / $1.80, caps $75 / $187.50 / $450.
+      await c.query(
+        `insert into public.pool_state (price_usd, decimals, win_rust, win_chrome, win_gold, per_win_budget, weighted_milli, daily_pool, hot_target, gross_24h, gross_today, allowance, outstanding,
+                                        win_available, floor_rust, floor_chrome, floor_gold, cap_rust, cap_chrome, cap_gold)
+         values (0.005, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6000000000, 0, 6000000000, 150000000, 240000000, 360000000, 15000000000, 37500000000, 90000000000)`,
+      );
+      const first = await recordMatch(c, { tierPaid: "rust" });
+      expect(first[0]).toMatchObject({ payout: "300000000", payout_reason: "paid" }); // 5% of 6,000 = 300 PUMP = $1.50
+      const gold = await recordMatch(c, { tierPaid: "gold", winner: HEN });
+      expect(gold.find((x) => x.address === HEN)?.payout).toBe("684000000"); // 12% of the 5,700 left
+      expect(await rows(c, "select win_available::text as a, win_rust::text as r from public.pool_state")).toEqual([{ a: "5016000000", r: "250800000" }]);
+      // A pot down to a few PUMP pays what is there, never more.
+      await c.query("update public.pool_state set win_available = 100000000");
+      expect((await recordMatch(c, { tierPaid: "gold" }))[0]).toMatchObject({ payout: "100000000", payout_reason: "paid" });
+      expect(await rows(c, "select win_available::text as a from public.pool_state")).toEqual([{ a: "0" }]);
+      expect((await recordMatch(c, { tierPaid: "rust" }))[0]).toMatchObject({ payout: "0", payout_reason: "no_pool" });
+    });
+  });
+
+  it("pot top-ups from /admin count toward the allowance", async () => {
+    await scratch(async (c) => {
+      await c.query("select public.seed_topup(7500000000)");
+      expect(await rows(c, "select amount::text as amount, note from public.pot_topups")).toEqual([{ amount: "7500000000", note: "admin" }]);
+      expect(await rows(c, "select allowance::text as a from public.treasury_window(now())")).toEqual([{ a: "7500000000" }]);
     });
   });
 
@@ -205,10 +241,11 @@ describe.each(GRANT_MODES)("Phase 3 functions on a %s-grants project", (mode) =>
         seed_total: "100",
       });
       expect(await rows(c, "select remaining::text as r from public.seed")).toEqual([{ r: "1300" }]);
-      // A second draw for the day is refused; a top-up raises both figures.
+      // A second draw for the day is refused; a top-up now goes to the pot, not the retired seed.
       expect(await rows(c, "select public.book_seed_draw((now() at time zone 'UTC')::date, 1, 1, 1, null) as ok")).toEqual([{ ok: false }]);
       await c.query("select public.seed_topup(100)");
-      expect(await rows(c, "select original::text as o, remaining::text as r from public.seed")).toEqual([{ o: "1500", r: "1400" }]);
+      expect(await rows(c, "select original::text as o, remaining::text as r from public.seed")).toEqual([{ o: "1400", r: "1300" }]);
+      expect(await rows(c, "select sum(amount)::text as s from public.pot_topups")).toEqual([{ s: "100" }]);
     });
   });
 

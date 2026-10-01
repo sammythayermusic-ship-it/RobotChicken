@@ -17,8 +17,8 @@ const SECTIONS: { title: string; body: React.ReactNode }[] = [
           whole prize economy: no tickets, no wagers, nothing is ever taken from a player.
         </p>
         <p>
-          <strong>70% of every fee goes to players.</strong> 50% of all fees is the pool for winning matches, 20% is the daily pool for the
-          top 10. The remaining 30% runs the game: servers, art, marketing, a reserve.
+          <strong>70% of every fee goes to players.</strong> 60% of all fees goes into the prize pot for winning matches, 10% is the
+          daily pool for the top 10. The remaining 30% runs the game: servers, art, marketing.
         </p>
       </>
     ),
@@ -28,13 +28,14 @@ const SECTIONS: { title: string; body: React.ReactNode }[] = [
     body: (
       <>
         <p>
-          Prizes are never a fixed number. Every minute the treasury takes what was claimed in the last 24 hours, and divides it by the
-          matches played in that time. That is what the next win pays. More players, smaller prizes; more fees, bigger prizes. The
-          game can never promise more than the fees actually brought in.
+          Every win pays a slice of the prize pot: <strong>5% of it for Rust, 8% for Chrome, 12% for Gold</strong>. Fees are claimed
+          into the pot every minute, so the busier the coin trades, the bigger the pot and the bigger every win. Each win comes off
+          the pot right away, so the next one pays a slice of what is left: the pot can never pay out more than it holds.
         </p>
         <p>
-          The money lands in the winner&apos;s wallet within seconds of the knockout, with a link to the transaction on the result
-          screen. A prize has a floor ($0.75 for Rust) and a cap ($75 for Rust).
+          Once the pot has reached $500, the last $100 always stays in it, so there is always a prize waiting. The money lands in the
+          winner&apos;s wallet within seconds of the knockout, with a link to the transaction on the result screen. A Rust prize is at
+          least $0.75 while the pot has it, and at most $75.
         </p>
       </>
     ),
@@ -46,18 +47,17 @@ const SECTIONS: { title: string; body: React.ReactNode }[] = [
         <p>Holding more $COCK makes each win bigger. The tiers are by the dollar value of what the wallet holds:</p>
         <ul>
           <li>
-            <strong>Rust</strong>, $30 and up: the minimum to play. A win pays the base prize.
+            <strong>Rust</strong>, $30 and up: the minimum to play. A win pays 5% of the pot.
           </li>
           <li>
-            <strong>Chrome</strong>, $250 and up: 2.5× the base prize.
+            <strong>Chrome</strong>, $250 and up: a win pays 8% of the pot.
           </li>
           <li>
-            <strong>Gold</strong>, $1,000 and up: 6× the base prize.
+            <strong>Gold</strong>, $1,000 and up: a win pays 12% of the pot.
           </li>
         </ul>
         <p>
-          Everyone draws from one pool, so a whale can&apos;t drain it by grinding: the more Gold matches happen, the thinner the pool
-          spreads. Matchmaking pairs you with your own tier first; after a minute you can be matched with anyone, and that fight
+          Everyone draws from one pot, and every win shrinks it, so a whale can&apos;t drain it by grinding. Matchmaking pairs you with your own tier first; after a minute you can be matched with anyone, and that fight
           pays the <em>lower</em> tier&apos;s rate, so nobody farms smaller wallets for bigger prizes.
         </p>
       </>
@@ -67,23 +67,22 @@ const SECTIONS: { title: string; body: React.ReactNode }[] = [
     title: "The daily top 10",
     body: (
       <p>
-        At midnight UTC, 20% of the day&apos;s fees is split among the 10 players with the most wins that day: 25%, 18%, 13%, 10%,
+        At midnight UTC, 10% of the day&apos;s fees is split among the 10 players with the most wins that day: 25%, 18%, 13%, 10%,
         8%, 7%, 6%, 5%, 4%, 4%. The leaderboard shows the pool growing all day, the countdown, and what each rank would earn
         right now.
       </p>
     ),
   },
   {
-    title: "The seed, and why the pool can't run dry",
+    title: "Why the pot can't run dry",
     body: (
       <>
         <p>
-          A seed wallet lifts quiet days: when fees don&apos;t cover the minimum prizes, it tops them up. It can never drain faster
-          than one fourteenth per day, so whatever happens it lasts at least two weeks, and it is only drawn on when needed. When it
-          is gone, the site simply shows the real numbers.
+          Every win is a share of what is in the pot, never a fixed amount, so the pot shrinks slower the smaller it gets, and every
+          minute&apos;s fees refill it. Once it has held $500, $100 always stays in. The team can add to the pot at any time.
         </p>
         <p>
-          The hot wallet that pays players holds only about a day and a half of payouts. There are caps per payment, per hour and
+          There are caps per payment, per hour and
           per day; if one trips, payouts pause and the team is paged. Every payout has one unique key, so no crash or retry can ever
           pay twice. Everything on this site is read straight from the ledger.
         </p>

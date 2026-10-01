@@ -53,17 +53,25 @@ describe("SupabaseLedger", () => {
     const now = Date.parse("2026-10-01T12:34:56.789Z");
     const w = await ledger.window(now);
     expect(w).toEqual({
-      gross24h: 1000n, grossToday: 500n, playerShare24h: 700n, weighted24hMilli: 2_600_000n, allowance: 650n, sentLastHour: 10n, sentToday: 20n, outstanding: 30n,
+      gross24h: 1000n, grossToday: 500n, playerShare24h: 700n, weighted24hMilli: 2_600_000n, allowance: 650n, potPeakUsd: 0, sentLastHour: 10n, sentToday: 20n, outstanding: 30n,
       seedToday: { win: 5n, daily: 2n, total: 7n, shortfall: 0n },
     });
-    expect(api.calls[0]).toMatchObject({ method: "POST", path: "rpc/treasury_window", body: { p_now: "2026-10-01T12:34:56.789Z" } });
+    expect(api.calls.find((c) => c.path.startsWith("rpc/treasury_window"))).toMatchObject({ method: "POST", path: "rpc/treasury_window", body: { p_now: "2026-10-01T12:34:56.789Z" } });
+    // The pot's peak survives restarts in pool_state.detail.
+    api.replies.set("GET pool_state?select=detail", [{ detail: { peakUsd: 612.5 } }]);
+    expect((await ledger.window(now)).potPeakUsd).toBe(612.5);
 
-    const state = computePoolState({ gross24h: 1000n, grossToday: 500n, seedWinTopUp: 5n, seedDailyTopUp: 2n, weighted24hMilli: 2_600_000n, price }, DEFAULT_PARAMS);
+    const state = computePoolState(
+      { gross24h: 1000n, grossToday: 500n, seedWinTopUp: 5n, seedDailyTopUp: 2n, weighted24hMilli: 2_600_000n, allowance: 650n, outstanding: 30n, peakUsd: 0, price },
+      DEFAULT_PARAMS,
+    );
     await ledger.writePoolState(state, now);
-    const upsert = api.calls.find((c) => c.path.startsWith("pool_state"));
+    const upsert = api.calls.find((c) => c.method === "POST" && c.path.startsWith("pool_state"));
     expect(upsert).toMatchObject({ method: "POST", path: "pool_state?on_conflict=id", prefer: "resolution=merge-duplicates,return=minimal" });
     expect(upsert?.body).toMatchObject({ id: true, computed_at: "2026-10-01T12:34:56.789Z", price_usd: 0.005, decimals: 6, win_rust: state.perWin.rust.toString(), allowance: "650", outstanding: "30" });
     expect((upsert?.body as { detail: { min: { rust: string } } }).detail.min.rust).toBe(state.perWinMin.rust.toString());
+    expect(upsert?.body).toMatchObject({ win_available: state.perWinBudget.toString(), pct_rust: 500, pct_chrome: 800, pct_gold: 1200, floor_gold: state.perWinMin.gold.toString() });
+    expect((upsert?.body as { detail: { peakUsd: number } }).detail.peakUsd).toBe(state.peakUsd);
     const snap = api.calls.find((c) => c.path.startsWith("pool_snapshots"));
     expect(snap?.body).toMatchObject({ at: "2026-10-01T12:34:00.000Z", win_rust: state.perWin.rust.toString() });
   });

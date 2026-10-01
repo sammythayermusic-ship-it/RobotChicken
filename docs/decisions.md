@@ -317,3 +317,18 @@ Agreed with Sammy (2026-10-01): legal is done; **no geo-block**; production stay
 | `MAX_LIVE_MATCHES` (100) caps live matches per server; the queue holds the rest and says "every pit is busy" | Past one CPU's capacity every match would lag; a short wait in line is better than 200 laggy fights. Players keep their place. |
 | The hot wallet is the worker's alone | 2026-10-01: its SOL had been moved out by hand (claims cost 0.004 SOL in six days), which would have stalled payouts after launch. `tools/launch/start-worker.sh` refuses to start the worker under 0.05 SOL. |
 | Production `EXPORT_INDEXABLE=1` | The playtest build stays `noindex`; the real site should be findable. |
+
+## The pot (Sammy, 2026-10-01): bigger wins from the first match
+
+Replaces Phase 3's "24 h of fees ÷ 24 h of matches" (which, with W_floor = 200, paid a launch-day win cents). Sammy's calls: 5% per win (Rust), tiers 5 / 8 / 12%, $100 reserve once the pot has reached $500, daily top 10 cut from 20% to 10%, start the pot with $30 straight into the hot wallet, fee claims every minute.
+
+| Decision | Why |
+|---|---|
+| A win pays its tier's share of the pot available above the reserve, and comes off it at once (`takeWin` / `record_match` with the `pool_state` row locked) | Wins are big from the first match and always affordable: ten wins in one minute pay 5% of what each one leaves, never 50% of the same pot. The worker recomputes the pot from the ledger every minute (allowance − outstanding − today's daily pool − reserve). |
+| Rust 5% / Chrome 8% / Gold 12%, not 1× / 2.5× / 6× | 6× of 5% would hand a single Gold win 30% of the pot. Floors scale the same way (Rust $0.75 → Gold $1.80); caps stay $75 / $187.50 / $450. |
+| Reserve $100 once the pot has ever been worth $500 (`pool_state.detail.peakUsd`) | Sammy: the pot never empties after it gets going, but wins pay from the very first match. |
+| Daily top 10 = 10% of the day's fees, held out of the pot until midnight | Sammy: more to per-win prizes. |
+| Nothing is swept to cold (hot target = the allowance) | The pot is the player money: sweeping it would shrink every prize. The project's 30% goes straight to the launch wallet through pump.fun's sharing, so there's nothing else to sweep. Trade-off: a hot-key compromise exposes the whole pot (a few hundred dollars early on). |
+| `/admin` "Add to prize pool" (pot_topups) replaces the seed wallet | Sammy funds the pot directly: one wallet, no second key on the worker. `seed_topup` now inserts into `pot_topups`, which counts toward the allowance. |
+| Fee claims every minute (`CLAIM_EVERY_MIN=1`) | The pot refills as fast as people trade. A claim costs ~0.00002 SOL and is skipped when the vault is empty. |
+| Before the coin exists the worker finds nothing to claim (no bonding curve → null) and the gate says $COCK isn't trading yet | So the stack can be switched to a known mint address before launch and be live the moment the coin is created. |

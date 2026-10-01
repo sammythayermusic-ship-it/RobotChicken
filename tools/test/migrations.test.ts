@@ -31,6 +31,7 @@ const TABLES = [
   "players",
   "pool_snapshots",
   "pool_state",
+  "pot_topups",
   "seed",
   "seed_draws",
   "settings",
@@ -224,6 +225,7 @@ describe("migration files and the harness", () => {
       "20260923000100_cron.sql",
       "20260924000000_phase2_results.sql",
       "20260925000000_phase3_money.sql",
+      "20261001000000_pot.sql",
     ]);
   });
 
@@ -310,7 +312,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
     }
   }
 
-  it("creates exactly the 14 tables and 5 views, owned by postgres", async () => {
+  it("creates exactly the 15 tables and 5 views, owned by postgres", async () => {
     const rels = await rows(
       db,
       `select c.relname, c.relkind, pg_get_userbyid(c.relowner) as owner from pg_class c
@@ -354,7 +356,8 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       payouts_v: `id uuid, kind text, match_id uuid, day date, rank smallint, to_address sol_address, display_name text, amount numeric(40,0), usd numeric(14,4), status text, tx_sig sol_signature, created_at ${ts}, paid_at ${ts}`,
       players: `address sol_address!, username text, username_sig sol_signature, elo integer!, tier text, first_seen ${ts}!, last_seen ${ts}!, flags jsonb!, flagged boolean!, banned_until ${ts}`,
       pool_snapshots: `at ${ts}!, price_usd numeric(20,10)!, win_rust numeric(40,0)!, daily_pool numeric(40,0)!, gross_24h numeric(40,0)!, weighted_milli numeric(40,0)!`,
-      pool_state: `id boolean!, computed_at ${ts}!, price_usd numeric(20,10)!, decimals smallint!, win_rust numeric(40,0)!, win_chrome numeric(40,0)!, win_gold numeric(40,0)!, per_win_budget numeric(40,0)!, weighted_milli numeric(40,0)!, daily_pool numeric(40,0)!, hot_target numeric(40,0)!, gross_24h numeric(40,0)!, gross_today numeric(40,0)!, allowance numeric(40,0)!, outstanding numeric(40,0)!, detail jsonb!`,
+      pool_state: `id boolean!, computed_at ${ts}!, price_usd numeric(20,10)!, decimals smallint!, win_rust numeric(40,0)!, win_chrome numeric(40,0)!, win_gold numeric(40,0)!, per_win_budget numeric(40,0)!, weighted_milli numeric(40,0)!, daily_pool numeric(40,0)!, hot_target numeric(40,0)!, gross_24h numeric(40,0)!, gross_today numeric(40,0)!, allowance numeric(40,0)!, outstanding numeric(40,0)!, detail jsonb!, win_available numeric(40,0)!, pct_rust integer!, pct_chrome integer!, pct_gold integer!, floor_rust numeric(40,0)!, floor_chrome numeric(40,0)!, floor_gold numeric(40,0)!, cap_rust numeric(40,0)!, cap_chrome numeric(40,0)!, cap_gold numeric(40,0)!`,
+      pot_topups: `id uuid!, at ${ts}!, amount numeric(40,0)!, note text`,
       pool_v: `computed_at ${ts}, price_usd numeric(20,10), decimals smallint, win_rust numeric(40,0), win_chrome numeric(40,0), win_gold numeric(40,0), per_win_budget numeric(40,0), weighted_milli numeric(40,0), daily_pool numeric(40,0), gross_24h numeric(40,0), gross_today numeric(40,0), outstanding numeric(40,0), detail jsonb, gross_all numeric(40,0), player_share_all numeric(40,0), claims_all integer, last_claim_at ${ts}, paid_all numeric(40,0), paid_usd_all numeric(14,4), paid_count_all integer, paid_24h numeric(40,0), paid_count_24h integer, seed_original numeric(40,0), seed_remaining numeric(40,0), paused boolean, now ${ts}`,
       seed: `id boolean!, original numeric(40,0)!, remaining numeric(40,0)!, updated_at ${ts}!`,
       seed_draws: `day date!, win numeric(40,0)!, daily numeric(40,0)!, total numeric(40,0)!, shortfall numeric(40,0)!, sig sol_signature, at ${ts}!`,
@@ -386,6 +389,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
       players: { anon: [], authenticated: [], service_role: readWrite },
       pool_snapshots: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
       pool_state: { anon: [], authenticated: [], service_role: readWrite },
+      pot_topups: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
       seed: { anon: [], authenticated: [], service_role: ["SELECT", "UPDATE"] },
       seed_draws: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT"] },
       settings: { anon: [], authenticated: [], service_role: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
@@ -600,6 +604,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         await c.query("update public.seed set original = 1000000000000, remaining = 1000000000000");
         await c.query("insert into public.seed_draws (day, win, daily, total, shortfall, sig) values ('2026-09-23', 50000000000, 20000000000, 70000000000, 90000000000, $1)", [sig("8")]);
         await c.query("insert into public.sweeps (sig, amount) values ($1, 100000000000)", [sig("A")]);
+        await c.query("insert into public.pot_topups (amount, note) values (7500000000, 'admin')");
         await c.query(`insert into public.settings (key, value, updated_by) values ('payouts_paused', '{"paused": false}', 'sammy')`);
         await c.query(
           "insert into public.abuse_events (address, fingerprint, ip_hash, kind, match_id, details) values ($1, 'fp', 'ih', 'self_match', $2, $3)",
@@ -619,6 +624,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
           players: 2,
           pool_snapshots: 1,
           pool_state: 1,
+          pot_topups: 1,
           seed: 1,
           seed_draws: 1,
           settings: 1,
@@ -633,6 +639,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         // A recorded seed draw or sweep is final.
         await expect(c.query("update public.seed_draws set total = 0")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("delete from public.sweeps")).rejects.toMatchObject({ code: "42501" });
+        await expect(c.query("delete from public.pot_topups")).rejects.toMatchObject({ code: "42501" });
         await expect(c.query("delete from public.seed")).rejects.toMatchObject({ code: "42501" });
         // MAINTAIN lets the worker refresh the leaderboard itself.
         await c.exec("refresh materialized view concurrently public.leaderboard_v");

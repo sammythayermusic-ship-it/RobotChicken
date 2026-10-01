@@ -2,6 +2,8 @@
 
 ## Phase 4: launch prep (branch `phase-4-launch`)
 
+- **The pot** (Sammy, 2026-10-01): a win pays Rust 5% / Chrome 8% / Gold 12% of the prize pot above the reserve, taken off at once; $100 reserve once the pot has reached $500; daily top 10 at 10% of fees; pot top-ups in `/admin` (`pot_topups`, migration `20261001000000_pot.sql`); fee claims every minute; nothing swept. The month simulation and the SQL tests prove the pot is never overspent.
+
 - **Gate**: pump.fun bonding-curve quote as the second price source (`CurvePrice`); the gate takes the lower of it and Jupiter.
 - **Sharing**: site-wide link card (`og.png`, Open Graph + X large card) and a "Share on X" button on a ranked win linking the replay.
 - **Load**: `/health` reports event-loop delay, memory and connections; `tools/loadtest` runs N concurrent bot matches (real clients with the browser's predictor) against a throwaway open-mode copy of the game server, with a Fly load-generator image.

@@ -40,30 +40,35 @@ It checks the game server (health, gate mode, coin, $ gate, secrets), the worker
 5. Claude checks the `payouts` row, the transaction, and that `fee_claims` rows are landing.
 6. Re-shoot the promo's payout card from that real result (`pnpm --filter @cockfight/tools video:online`, then swap the staged shot).
 
-## 2. Funding day (Sammy decides the numbers)
+## 2. Fill the prize pot (Sammy)
 
-1. Put ~0.05 SOL in the seed wallet `BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX` for fees.
-2. Run `tools/launch/fund.sh`. It asks for the per-win budget, the daily top-10 pool, the cold
-   wallet, then the seed wallet's private key (hidden; piped straight to Fly).
-3. After the real coin exists and its fees are flowing in PUMP, send the seed PUMP to the seed wallet.
-4. `/admin` → Seed → enter the raw amount → Record top-up (only once the tokens have landed).
-   The worker may draw at most 1/14 of the seed a day.
+Wins pay from a pot: Rust 5%, Chrome 8%, Gold 12% of what is in it, each win taken off at
+once. Fees are claimed into it every minute. Once it has been worth $500, $100 always stays in.
 
-Funding can happen before or after the launch switch; until the seed is recorded the
-guarantees just stay off and the site shows the real pool.
+1. Send the starting PUMP (e.g. $30 worth) to the **hot wallet** `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`.
+2. `/admin` → Prize pot → type the number of PUMP → Add. Only after it has landed.
+   Within a minute the site shows the pot and the next win: a $30 pot pays a Rust win $1.50,
+   Chrome $2.40, Gold $3.60.
+
+Top it up the same way any time. (The seed wallet and its 1/14-a-day drip are retired.)
 
 ## 3. Launch day
 
-**Sammy, on pump.fun:**
-1. Create $COCK from the launch wallet `Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF`, paired to PUMP.
-2. Turn on **Share creator rewards**: 70% hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, 30% launch.
-3. Copy the mint address.
-
-**Then (Sammy runs it; Claude can drive it):**
+**Live the second the coin drops.** If the mint address is known before the coin is created
+(a pre-generated mint keypair), switch everything to it beforehand:
 ```bash
-pnpm --filter @cockfight/tools launch:preflight -- <mint>      # the chain checks should pass now
-tools/launch/switch-mint.sh <mint>                             # type LAUNCH to confirm
+tools/launch/switch-mint.sh <mint>     # type LAUNCH; the preflight's chain checks fail until the coin exists, that's expected
 ```
+Until the coin exists the site is up on the real address, the gate tells players there's no
+price yet, and the worker quietly finds nothing to claim. The moment the coin is created:
+
+**Sammy, on pump.fun:**
+1. Create $COCK from the **new** launch wallet (its address goes in `LAUNCH_WALLET` in `apps/worker/fly.toml` first; Claude does that when you send it), paired to PUMP, with that mint.
+2. Turn on **Share creator rewards**: 70% hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, 30% the launch wallet.
+3. Run `pnpm --filter @cockfight/tools launch:preflight -- <mint> --launch`: everything green.
+
+(If the mint isn't known in advance: create the coin, then run `switch-mint.sh <mint>`.)
+
 `switch-mint.sh` sets `NEXT_PUBLIC_COCK_MINT` + `GATE_USD_MIN=30` + `GATE_MODE=required` on the game server
 (the last one closes free play: since 2026-10-01 the test-coin server runs `GATE_MODE=open` so anyone can
 play online with just a name and nothing pays),
@@ -72,7 +77,7 @@ deploys it to cockfightsol.fun, then runs the launch preflight. Fly restarts bot
 (a live match finishes first; there are none yet on launch day).
 
 **Watch for the first hour:**
-- Telegram: the first fee claim within 10 minutes of the first trades (it alerts only on 3 failures in a row).
+- Telegram: fees are claimed every minute (it alerts only on 3 failed claims in a row). `/admin` shows the pot filling.
 - `/admin`: the pool, payouts, held payouts, flags.
 - `https://cockfight-game.fly.dev/health`: `load.loopP99Ms` under ~10 ms is healthy (see the load test below).
 - Play one ranked match yourself (two devices, two networks) and check the payout lands.

@@ -81,7 +81,10 @@ export class GateService {
     try {
       check = await this.balance.check(address);
     } catch (e) {
-      console.warn("[gate] balance check failed:", e instanceof Error ? e.message : e);
+      const m = e instanceof Error ? e.message : String(e);
+      console.warn("[gate] balance check failed:", m);
+      // Switched to the coin's address before the coin exists (launch day): no market yet.
+      if (/no price for the mint/.test(m)) return fail(503, "no_price", "$COCK isn't trading yet. Try again in a moment.");
       return fail(502, "chain", "Couldn't read the wallet right now. Try again in a moment.");
     }
     const elo = await this.audit(check);

@@ -18,9 +18,11 @@ const repo = resolve(import.meta.dirname, "../..");
 const GAME = "https://cockfight-game.fly.dev";
 const SITE = "https://cockfightsol.fun";
 const PUMP = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn";
-const HOT = "HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1";
-const LAUNCH = "Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF";
-const SEED = "BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX";
+// The wallets are whatever the worker is deployed with (apps/worker/fly.toml [env]).
+const workerToml = readFileSync(resolve(repo, "apps/worker/fly.toml"), "utf8");
+const tomlEnv = (k: string) => new RegExp(`^\\s*${k}\\s*=\\s*"([^"]+)"`, "m").exec(workerToml)?.[1] ?? "";
+const HOT = tomlEnv("HOT_WALLET");
+const LAUNCH = tomlEnv("LAUNCH_WALLET");
 const TEST_COIN = "HFypaAkLk4XwKJvLK5hTvL65dhY2F61davhjo1x8pump";
 
 const args = process.argv.slice(2).filter((a) => a !== "--");
@@ -89,12 +91,11 @@ console.log("\nWorker");
 const workerSecrets = flySecrets("cockfight-worker");
 for (const k of ["COCK_MINT", "PAYOUTS_ENABLED", "HOT_WALLET_KEYPAIR", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "HELIUS_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"])
   check(workerSecrets.has(k), `worker secret ${k}`);
-for (const k of ["SEED_WALLET_KEYPAIR", "COLD_WALLET", "GUARANTEED_WIN_BUDGET_USD", "GUARANTEED_DAILY_POOL_USD", "JUPITER_API_KEY"])
-  check(workerSecrets.has(k), `worker secret ${k}`, "funding day", !launch);
+check(workerSecrets.has("JUPITER_API_KEY"), "worker secret JUPITER_API_KEY", "keyless Jupiter is rate-limited", !launch);
 try {
   const st = JSON.parse(execFileSync("fly", ["status", "-a", "cockfight-worker", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })) as { Machines?: { state?: string }[] };
   const states = (st.Machines ?? []).map((m) => m.state);
-  check(states.length === 1 && states[0] === "started", "worker machine running", states.join(",") || "none");
+  check(states.length === 1 && states[0] === "started", "worker machine running", states.join(",") || "none (tools/launch/start-worker.sh)");
 } catch {
   fail("worker machine running", "fly status failed");
 }
@@ -128,8 +129,6 @@ if (!rpcUrl || !mint) {
   const sol = async (a: string) => Number(await rpc.getBalance(a)) / 1e9;
   const hotSol = await sol(HOT).catch(() => -1);
   check(hotSol >= 0.1, "hot wallet SOL for fees", `${hotSol.toFixed(3)} SOL (keep ≥ 0.1)`, hotSol >= 0.03);
-  const seedSol = await sol(SEED).catch(() => -1);
-  check(seedSol >= 0.01, "seed wallet SOL for fees", `${seedSol.toFixed(3)} SOL`, !launch);
 }
 
 // 4. Site

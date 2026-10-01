@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PARAMS, capHit, computePoolState, dailyRewards, decideSend, lowerTier, payTier, qualityBps, rawToUsd, seedDraw,
-  usdToRaw, validateParams, winAmount, type Price,
+  takeWin, usdToRaw, validateParams, type Price,
 } from "../src";
 
 const price: Price = { usd: 0.005, decimals: 6 };
@@ -18,38 +18,75 @@ describe("money", () => {
   });
 });
 
-describe("the per-win formula", () => {
-  it("matches the plan's worked example: $15k of fees, 1,500 matches → Rust $2.90, Chrome $7.20, Gold $17.30", () => {
-    // 1,000 Rust + 400 Chrome + 100 Gold = 1,000 + 1,000 + 600 = 2,600 weighted matches.
-    const s = computePoolState(
-      { gross24h: usd(15_000), grossToday: usd(15_000), seedWinTopUp: 0n, seedDailyTopUp: 0n, weighted24hMilli: 2_600_000n, price },
-      P,
-    );
-    expect(rawToUsd(s.perWinBudget, price)).toBeCloseTo(7500, 2);
-    expect(rawToUsd(s.perWin.rust, price)).toBeCloseTo(2.88, 1);
-    expect(rawToUsd(s.perWin.chrome, price)).toBeCloseTo(7.21, 1);
-    expect(rawToUsd(s.perWin.gold, price)).toBeCloseTo(17.3, 1);
-    expect(rawToUsd(s.dailyPool, price)).toBeCloseTo(3000, 2);
-    expect(rawToUsd(s.hotTarget, price)).toBeCloseTo(7500 * 1.5 + 3000, 2);
+describe("the pot (Sammy, 2026-10-01)", () => {
+  const inp = (o: { allowance?: number; outstanding?: number; grossToday?: number; peakUsd?: number }) => ({
+    gross24h: 0n,
+    grossToday: usd(o.grossToday ?? 0),
+    seedWinTopUp: 0n,
+    seedDailyTopUp: 0n,
+    weighted24hMilli: 0n,
+    allowance: usd(o.allowance ?? 0),
+    outstanding: usd(o.outstanding ?? 0),
+    peakUsd: o.peakUsd ?? 0,
+    price,
   });
 
-  it("divides by at least W_floor so a thin day can't mint huge prizes, and clamps to the floor and cap", () => {
-    const thin = computePoolState({ gross24h: usd(15_000), grossToday: 0n, seedWinTopUp: 0n, seedDailyTopUp: 0n, weighted24hMilli: 10_000n, price }, P);
-    expect(thin.weightedMilli).toBe(200_000n);
-    expect(rawToUsd(thin.perWin.rust, price)).toBeCloseTo(37.5, 2); // 7500 / 200
-    const rich = computePoolState({ gross24h: usd(500_000), grossToday: 0n, seedWinTopUp: 0n, seedDailyTopUp: 0n, weighted24hMilli: 10_000n, price }, P);
-    expect(rich.perWin.rust).toBe(rich.perWinMax.rust);
-    expect(rawToUsd(rich.perWin.gold, price)).toBeCloseTo(450, 2);
-    const dead = computePoolState({ gross24h: 0n, grossToday: 0n, seedWinTopUp: 0n, seedDailyTopUp: 0n, weighted24hMilli: 500_000n, price }, P);
-    expect(dead.perWin.rust).toBe(dead.perWinMin.rust);
-    expect(rawToUsd(dead.perWin.rust, price)).toBeCloseTo(0.75, 2);
-    expect(rawToUsd(dead.perWin.gold, price)).toBeCloseTo(4.5, 2);
+  it("a $30 starting pot pays a Rust win $1.50, Chrome $2.40, Gold $3.60 at once", () => {
+    const s = computePoolState(inp({ allowance: 30 }), P);
+    expect(rawToUsd(s.perWin.rust, price)).toBeCloseTo(1.5, 6);
+    expect(rawToUsd(s.perWin.chrome, price)).toBeCloseTo(2.4, 6);
+    expect(rawToUsd(s.perWin.gold, price)).toBeCloseTo(3.6, 6);
+    expect(s.reserve).toBe(0n);
   });
 
-  it("the seed top-up lifts a quiet day's budget", () => {
-    const s = computePoolState({ gross24h: 0n, grossToday: 0n, seedWinTopUp: usd(500), seedDailyTopUp: usd(200), weighted24hMilli: 200_000n, price }, P);
-    expect(rawToUsd(s.perWin.rust, price)).toBeCloseTo(2.5, 2);
-    expect(rawToUsd(s.dailyPool, price)).toBeCloseTo(200, 2);
+  it("holds $100 back once the pot has been worth $500: $500 → $400 available → Rust $20, Chrome $32, Gold $48", () => {
+    const s = computePoolState(inp({ allowance: 500 }), P);
+    expect(s.peakUsd).toBeCloseTo(500, 6);
+    expect(rawToUsd(s.reserve, price)).toBeCloseTo(100, 6);
+    expect(rawToUsd(s.perWinBudget, price)).toBeCloseTo(400, 6);
+    expect(rawToUsd(s.perWin.rust, price)).toBeCloseTo(20, 6);
+    expect(rawToUsd(s.perWin.chrome, price)).toBeCloseTo(32, 6);
+    expect(rawToUsd(s.perWin.gold, price)).toBeCloseTo(48, 6);
+    // Later the pot falls to $120: only $20 is available, and it never pays into the $100.
+    const low = computePoolState(inp({ allowance: 120, peakUsd: s.peakUsd }), P);
+    expect(rawToUsd(low.perWinBudget, price)).toBeCloseTo(20, 6);
+    const below = computePoolState(inp({ allowance: 90, peakUsd: s.peakUsd }), P);
+    expect(below.perWinBudget).toBe(0n);
+    expect(below.perWin.gold).toBe(0n);
+  });
+
+  it("keeps today's daily top-10 pool and booked payouts out of the pot", () => {
+    // $1,000 of fees today → $100 daily pool (10%); $50 booked, not yet sent.
+    const s = computePoolState(inp({ allowance: 400, outstanding: 50, grossToday: 1000 }), P);
+    expect(rawToUsd(s.dailyPool, price)).toBeCloseTo(100, 6);
+    expect(rawToUsd(s.pot, price)).toBeCloseTo(250, 6);
+  });
+
+  it("each booked win comes off the pot at once, so a burst of wins can never overspend it", () => {
+    const s = computePoolState(inp({ allowance: 30 }), P);
+    let total = 0n;
+    const first = takeWin(s, "rust", 10000);
+    expect(rawToUsd(first, price)).toBeCloseTo(1.5, 6);
+    total += first;
+    const second = takeWin(s, "rust", 10000);
+    expect(rawToUsd(second, price)).toBeCloseTo(1.425, 6); // 5% of $28.50
+    total += second;
+    for (let i = 0; i < 500; i++) total += takeWin(s, "gold", 10000);
+    expect(total).toBeLessThanOrEqual(usd(30));
+    expect(s.perWinBudget).toBeGreaterThanOrEqual(0n);
+  });
+
+  it("clamps to the floor while there is that much, and to the cap", () => {
+    // $10 available: 5% would be $0.50, the floor lifts it to $0.75.
+    const s = computePoolState(inp({ allowance: 10 }), P);
+    expect(rawToUsd(s.perWin.rust, price)).toBeCloseTo(0.75, 6);
+    // $0.40 left: the win pays what is there, never more.
+    const tiny = computePoolState(inp({ allowance: 0.4 }), P);
+    expect(rawToUsd(tiny.perWin.rust, price)).toBeCloseTo(0.4, 6);
+    // $100k available: Rust caps at $75, Gold at $450.
+    const rich = computePoolState(inp({ allowance: 100_100, peakUsd: 1000 }), P);
+    expect(rawToUsd(rich.perWin.rust, price)).toBeCloseTo(75, 6);
+    expect(rawToUsd(rich.perWin.gold, price)).toBeCloseTo(450, 6);
   });
 
   it("applies the quality multiplier", () => {
@@ -59,9 +96,10 @@ describe("the per-win formula", () => {
     expect(qualityBps({ dropRate: 0, reason: "forfeit", durationS: 20 })).toBe(0);
     expect(qualityBps({ dropRate: 0, reason: "forfeit", durationS: 45 })).toBe(10000);
     expect(qualityBps({ dropRate: NaN, reason: "ko", durationS: 45 })).toBe(0);
-    const s = computePoolState({ gross24h: usd(15_000), grossToday: 0n, seedWinTopUp: 0n, seedDailyTopUp: 0n, weighted24hMilli: 2_600_000n, price }, P);
-    expect(winAmount(s, "rust", 5000)).toBe(s.perWin.rust / 2n);
-    expect(winAmount(s, "gold", 0)).toBe(0n);
+    const s = computePoolState({ gross24h: 0n, grossToday: 0n, seedWinTopUp: 0n, seedDailyTopUp: 0n, weighted24hMilli: 0n, allowance: usd(300), outstanding: 0n, peakUsd: 0, price }, P);
+    const full = s.perWin.rust;
+    expect(takeWin(s, "rust", 5000)).toBe(full / 2n);
+    expect(takeWin(s, "gold", 0)).toBe(0n);
   });
 
   it("maps holding tiers to paying tiers and pays a cross-tier match at the lower one", () => {

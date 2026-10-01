@@ -5,7 +5,7 @@
  * idempotency keys, signed-then-sent transfers, balances that can run dry.
  */
 import {
-  DAY_MS, HOUR_MS, bps, dayStart, matchWeightMilli, utcDay, winAmount,
+  DAY_MS, HOUR_MS, bps, dayStart, matchWeightMilli, takeWin, utcDay,
   type Alerts, type Chain, type ClaimRecord, type ClaimResult, type DailyPoolBooking, type DailyReward, type EconomyParams, type Ledger,
   type LedgerWindow, type PauseState, type PayoutRow, type PoolState, type PreparedTransfer, type Price, type RankedPlayer,
   type SeedBalance, type SeedDraw, type TxStatus, type WinBooking,
@@ -15,6 +15,8 @@ export interface SimMatch extends WinBooking {
   weightMilli: bigint;
   /** What the win booked (0 when capped, flagged or q = 0). */
   booked: bigint;
+  /** The pool state (its `at`) the win was booked against. */
+  bookedAt?: number;
 }
 
 export interface SimPayout extends PayoutRow {
@@ -45,7 +47,7 @@ export class MemoryLedger implements Ledger {
   state: PoolState | null = null;
   stateAt = 0;
   /** Every pool state written, for the tests. */
-  readonly states: { at: number; state: PoolState }[] = [];
+  readonly states: { at: number; state: PoolState; available: bigint }[] = [];
   priceNow: () => Price;
 
   constructor(params: EconomyParams, priceNow: () => Price) {
@@ -90,18 +92,23 @@ export class MemoryLedger implements Ledger {
     let outstanding = 0n;
     for (const p of this.#open) outstanding += p.amount;
     const seedToday = this.seedDraws.get(utcDay(now))?.draw ?? { win: 0n, daily: 0n, total: 0n, shortfall: 0n };
-    return { gross24h, grossToday, playerShare24h, weighted24hMilli, allowance: this.allowance, sentLastHour, sentToday, outstanding, seedToday };
+    return { gross24h, grossToday, playerShare24h, weighted24hMilli, allowance: this.allowance, potPeakUsd: this.state?.peakUsd ?? 0, sentLastHour, sentToday, outstanding, seedToday };
   }
 
   async writePoolState(state: PoolState, now: number): Promise<void> {
     this.state = state;
     this.stateAt = now;
-    this.states.push({ at: now, state });
+    this.states.push({ at: now, state, available: state.perWinBudget });
   }
 
   /** The ledger's own count of what the hot wallet should hold (see BudgetView). */
   allowance = 0n;
   readonly sweeps: { amount: bigint; sig: string; at: number }[] = [];
+
+  /** Sammy adds to the prize pot by hand (/admin "Add to prize pool"): pot_topups in SQL. */
+  topUp(amount: bigint): void {
+    this.allowance += amount;
+  }
 
   async recordClaim(c: ClaimRecord): Promise<void> {
     if (this.claims.some((x) => x.sig === c.sig)) throw new Error("duplicate claim signature");
@@ -259,9 +266,9 @@ export class MemoryLedger implements Ledger {
     const vsSame = pairs.get(pairKey) ?? 0;
     let amount = 0n;
     if (this.state && w.qualityBps > 0 && !this.flagged.has(w.winner) && paidWins < this.params.maxPaidWinsPerDay && vsSame < this.params.maxPaidVsSameOpponentPerDay) {
-      amount = winAmount(this.state, w.tier, w.qualityBps);
+      amount = takeWin(this.state, w.tier, w.qualityBps);
     }
-    const m: SimMatch = { ...w, weightMilli: matchWeightMilli(w.tier, this.params), booked: amount };
+    const m: SimMatch = { ...w, weightMilli: matchWeightMilli(w.tier, this.params), booked: amount, bookedAt: this.stateAt };
     this.matches.push(m);
     const h = Math.floor(w.endedAt / HOUR_MS);
     let b = this.#matchesByHour.get(h);

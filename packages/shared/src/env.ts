@@ -122,7 +122,22 @@ export const workerEnv = z.object({
   PAYOUT_P_MAX_USD: usd(75),
   PAYOUT_W_FLOOR: z.coerce.number().positive().default(200),
   PLAYER_SHARE_BPS: z.coerce.number().int().min(1).max(10000).default(7000),
-  DAILY_POOL_BPS: z.coerce.number().int().min(0).max(10000).default(2000),
+  DAILY_POOL_BPS: z.coerce.number().int().min(0).max(10000).default(1000),
+  /** The pot: Rust, Chrome, Gold share of the available pot per win, percent. */
+  WIN_PCT: z
+    .string()
+    .default("5,8,12")
+    .transform((s, ctx) => {
+      const w = s.split(",").map((x) => Number(x.trim()));
+      if (w.length !== 3 || w.some((x) => !Number.isFinite(x) || x <= 0 || x > 50)) {
+        ctx.addIssue({ code: "custom", message: "WIN_PCT must be three percentages in (0, 50]: rust,chrome,gold" });
+        return z.NEVER;
+      }
+      return w as [number, number, number];
+    }),
+  /** Once the pot has been worth RESERVE_ARM_USD, wins never take it below RESERVE_USD. */
+  RESERVE_USD: usd(100),
+  RESERVE_ARM_USD: usd(500),
   /** Rust, Chrome, Gold multipliers. */
   TIER_WEIGHTS: z
     .string()
@@ -140,8 +155,8 @@ export const workerEnv = z.object({
   GUARANTEED_DAILY_POOL_USD: usd(0),
   /** Priority fee per compute unit (micro-lamports). */
   PRIORITY_FEE_MICROLAMPORTS: z.coerce.number().int().nonnegative().default(100000),
-  /** Minutes between creator-fee claims (each one costs ~0.000006 SOL; skipped when nothing is waiting). */
-  CLAIM_EVERY_MIN: z.coerce.number().int().min(1).max(60).default(10),
+  /** Minutes between creator-fee claims (each costs ~0.00002 SOL with the priority fee; skipped when nothing is waiting). The pot refills as fast as this. */
+  CLAIM_EVERY_MIN: z.coerce.number().int().min(1).max(60).default(1),
 });
 export type WorkerEnv = z.infer<typeof workerEnv>;
 

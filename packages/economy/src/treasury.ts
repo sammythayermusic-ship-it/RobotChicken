@@ -5,7 +5,7 @@
  *
  *   every minute  recompute()   pool state from the ledger → pool_state row
  *   every 5 s     payPass()     send due payouts (allowance, caps, wallet cover), confirm sent ones
- *   every 10 min  claimTick()   price, distribute creator fees to the hot wallet, sweep the excess
+ *   every minute  claimTick()   price, distribute creator fees to the hot wallet (the pot keeps all of it)
  *   00:00 UTC     midnight()    pay yesterday's top 10, book today's seed draw
  *   at boot       reconcile()   settle rows left `sent` by a crash, run a missed midnight
  */
@@ -129,6 +129,10 @@ export class Treasury {
         seedWinTopUp: w.seedToday.win,
         seedDailyTopUp: w.seedToday.daily,
         weighted24hMilli: w.weighted24hMilli,
+        allowance: w.allowance,
+        outstanding: w.outstanding,
+        // The peak survives restarts in pool_state; this process may know a newer one.
+        peakUsd: Math.max(w.potPeakUsd, this.state?.peakUsd ?? 0),
         price,
       },
       this.params,

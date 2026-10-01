@@ -1,18 +1,25 @@
 /**
- * The pool maths from docs/plan-phase3.md, as pure functions.
+ * The pool maths, as pure functions. Since 2026-10-01 a win pays from a pot
+ * (Sammy: bigger wins from the first match, the pool kept above $100):
  *
- *   B24   = gross creator fees claimed in the trailing 24 h
- *   D     = winShare × B24 + seedWinTopUp        (winShare = playerShare − dailyPool)
- *   W     = Σ weight(tier) over matches in the trailing 24 h
- *   base  = D / max(W, W_floor)
- *   p(t)  = clamp(base × w_t, P_min × w_t, P_max × w_t) × q
+ *   pot        = allowance − outstanding − today's daily pool
+ *                (every player share claimed and every top-up, minus what is
+ *                paid or already promised)
+ *   reserve    = $100 once the pot has ever reached $500 (reserveUsd / reserveArmUsd), else 0
+ *   available  = max(0, pot − reserve)
+ *   win(t)     = clamp(available × pct_t, min(P_min × pct_t / pct_rust, available), P_max × w_t) × q
+ *                pct = 5% Rust, 8% Chrome, 12% Gold
+ *
+ * Each booked win comes off `available` at once (takeWin here, record_match
+ * in SQL), so ten wins in one minute pay 5% of what each one leaves, never
+ * 50% of the same pot. Fee claims (every minute) refill it. The daily top-10
+ * pool is today's claims × dailyPoolBps (10%), held out of the pot until midnight.
  *
  * Everything here is a function of ledger figures the worker reads from the
  * database; nothing reads a wallet balance (invariant 6). The worker
- * recomputes `PoolState` every minute and writes it to `pool_state`; the game
- * server books a win from that row at match end.
+ * recomputes `PoolState` every minute and writes it to `pool_state`.
  */
-import { bps, clampRaw, maxRaw, minRaw, usdToRaw, type Price } from "./money";
+import { bps, clampRaw, maxRaw, minRaw, rawToUsd, usdToRaw, type Price } from "./money";
 import { PAY_TIERS, type EconomyParams, type PayTier } from "./params";
 
 export interface PoolInputs {
@@ -23,26 +30,37 @@ export interface PoolInputs {
   /** Today's seed draw, split as seedDraw() decided (raw). */
   seedWinTopUp: bigint;
   seedDailyTopUp: bigint;
-  /** Σ tier weights (thousandths) of matches in the trailing 24 h. */
+  /** Σ tier weights (thousandths) of matches in the trailing 24 h (shown on the site). */
   weighted24hMilli: bigint;
+  /** The ledger's allowance (see BudgetView) and what is booked but not sent. */
+  allowance: bigint;
+  outstanding: bigint;
+  /** The most the pot has ever been worth, USD (from the previous pool state): arms the reserve. */
+  peakUsd: number;
   price: Price;
 }
 
 export interface PoolState {
-  /** D: today's per-win budget (raw). */
+  /** Available for wins right now (raw): the pot above the reserve. Shrinks with every booked win. */
   perWinBudget: bigint;
-  /** max(W, W_floor), thousandths. */
+  /** Σ weights of the last 24 h's matches, thousandths (display only). */
   weightedMilli: bigint;
-  /** Raw per 1.000 of weight before the clamp. */
+  /** Same as perWinBudget (kept for the pool_state row). */
   base: bigint;
   /** What the next win pays per tier (raw, q = 1). */
   perWin: Record<PayTier, bigint>;
   /** Floor and cap per tier at this price (raw): the site can show the range. */
   perWinMin: Record<PayTier, bigint>;
   perWinMax: Record<PayTier, bigint>;
+  /** Share of the available pot per win, basis points. */
+  winPctBps: Record<PayTier, number>;
   /** Today's daily top-10 pool so far (raw). */
   dailyPool: bigint;
-  /** Invariant 3: what the hot wallet should hold; the rest is swept to cold. */
+  /** The pot before the reserve (raw), the reserve held back, and whether it is armed. */
+  pot: bigint;
+  reserve: bigint;
+  peakUsd: number;
+  /** Invariant 3: what the hot wallet should hold. In the pot model all of it: nothing is swept. */
   hotTarget: bigint;
   price: Price;
 }
@@ -51,24 +69,56 @@ export function winShareBps(p: EconomyParams): number {
   return p.playerShareBps - p.dailyPoolBps;
 }
 
+/** One tier's win from what is available: its share, at least the floor (if there is that much), at most the cap. */
+export function winFrom(available: bigint, pctBps: number, lo: bigint, hi: bigint): bigint {
+  if (available <= 0n) return 0n;
+  return minRaw(clampRaw(bps(available, pctBps), minRaw(lo, available), hi), available);
+}
+
 export function computePoolState(inp: PoolInputs, p: EconomyParams): PoolState {
-  const perWinBudget = bps(inp.gross24h, winShareBps(p)) + inp.seedWinTopUp;
-  const weightedMilli = maxRaw(inp.weighted24hMilli, BigInt(p.wFloorMilli));
-  const base = (perWinBudget * 1000n) / weightedMilli;
+  const dailyPool = bps(inp.grossToday, p.dailyPoolBps) + inp.seedDailyTopUp;
+  const pot = maxRaw(inp.allowance - inp.outstanding - dailyPool, 0n);
+  const peakUsd = Math.max(inp.peakUsd, rawToUsd(pot, inp.price));
+  const reserve = peakUsd >= p.reserveArmUsd ? usdToRaw(p.reserveUsd, inp.price) : 0n;
+  const available = maxRaw(pot - reserve, 0n);
   const perWin = {} as Record<PayTier, bigint>;
   const perWinMin = {} as Record<PayTier, bigint>;
   const perWinMax = {} as Record<PayTier, bigint>;
   for (const t of PAY_TIERS) {
     const w = p.tierWeightsMilli[t];
-    const lo = usdToRaw((p.pMinUsd * w) / 1000, inp.price);
-    const hi = usdToRaw((p.pMaxUsd * w) / 1000, inp.price);
-    perWinMin[t] = lo;
-    perWinMax[t] = hi;
-    perWin[t] = clampRaw((base * BigInt(w)) / 1000n, lo, hi);
+    // Floors scale with the tier's share (Gold's $0.75 × 12/5 = $1.80), so a small pot still pays Gold its 12%.
+    perWinMin[t] = usdToRaw((p.pMinUsd * p.winPctBps[t]) / p.winPctBps.rust, inp.price);
+    perWinMax[t] = usdToRaw((p.pMaxUsd * w) / 1000, inp.price);
+    perWin[t] = winFrom(available, p.winPctBps[t], perWinMin[t], perWinMax[t]);
   }
-  const dailyPool = bps(inp.grossToday, p.dailyPoolBps) + inp.seedDailyTopUp;
-  const hotTarget = (perWinBudget * BigInt(Math.round(p.hotDays * 1000))) / 1000n + dailyPool;
-  return { perWinBudget, weightedMilli, base, perWin, perWinMin, perWinMax, dailyPool, hotTarget, price: inp.price };
+  return {
+    perWinBudget: available,
+    weightedMilli: inp.weighted24hMilli,
+    base: available,
+    perWin,
+    perWinMin,
+    perWinMax,
+    winPctBps: { ...p.winPctBps },
+    dailyPool,
+    pot,
+    reserve,
+    peakUsd,
+    hotTarget: maxRaw(inp.allowance, 0n),
+    price: inp.price,
+  };
+}
+
+/**
+ * Book one win against the pool state, as record_match does in SQL: the
+ * tier's win from what is available now, times the quality multiplier, taken
+ * off `available` so the next win pays from what is left.
+ */
+export function takeWin(state: PoolState, tier: PayTier, quality: number): bigint {
+  const amount = bps(winFrom(state.perWinBudget, state.winPctBps[tier], state.perWinMin[tier], state.perWinMax[tier]), quality);
+  state.perWinBudget -= amount;
+  state.base = state.perWinBudget;
+  for (const t of PAY_TIERS) state.perWin[t] = winFrom(state.perWinBudget, state.winPctBps[t], state.perWinMin[t], state.perWinMax[t]);
+  return amount;
 }
 
 /** The net-quality multiplier in basis points (spec): 1, 0.5 above 15% dropped inputs, 0 above 30% or for a forfeit under 30 s. */
@@ -79,7 +129,7 @@ export function qualityBps(q: { dropRate: number; reason: string; durationS: num
   return 10000;
 }
 
-/** What one win pays: the tier's current amount times the quality multiplier. */
+/** What one win would pay now, without booking it: the tier's current amount times the quality multiplier. */
 export function winAmount(state: PoolState, tier: PayTier, quality: number): bigint {
   return bps(state.perWin[tier], quality);
 }

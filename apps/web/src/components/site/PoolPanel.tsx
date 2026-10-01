@@ -24,7 +24,7 @@ type State = { pool: PoolView | null; payouts: PayoutRowView[]; readAt: number; 
 
 /**
  * The live pool: what the next win pays per tier, today's top-10 pool with
- * its countdown, all-time fees and payouts, the seed left, the last payouts
+ * its countdown, all-time fees and payouts, the prize pot, the last payouts
  * with their transactions. Every number comes from the ledger through
  * pool_v / payouts_v; nothing here is estimated.
  */
@@ -116,9 +116,9 @@ export function PoolPanel({ compact = false }: { compact?: boolean }) {
           </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-widest text-ash">Seed left</dt>
-          <dd className="font-display text-lg text-chrome">{usd(pool.seedRemaining)}</dd>
-          <dd className="font-mono text-xs text-ash">of {formatRaw(pool.seedOriginal, d)}</dd>
+          <dt className="text-xs uppercase tracking-widest text-ash">Prize pot</dt>
+          <dd className="font-display text-lg text-chrome" data-testid="pool-pot">{usd(pool.pot)}</dd>
+          <dd className="font-mono text-xs text-ash">{formatRaw(pool.pot, d)}</dd>
         </div>
       </dl>
 
@@ -164,7 +164,7 @@ export function PoolPanel({ compact = false }: { compact?: boolean }) {
       ) : null}
 
       <p className="mt-4 text-xs text-ash">
-        3% of every $COCK trade on pump.fun is the creator fee; 70% of it is the players&apos;. Prizes are sized so a day never pays out more than the day brought in.{" "}
+        3% of every $COCK trade on pump.fun is the creator fee; 70% of it is the players&apos;. Every win pays a share of the pot (Rust 5%, Chrome 8%, Gold 12%), so it can never pay out more than it holds.{" "}
         <Link href="/how-it-works" className="text-neon-cyan">
           How it works →
         </Link>

@@ -22,7 +22,7 @@ export interface AdminDeps {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const KNOBS = ["p_min_usd", "p_max_usd", "g_win_usd", "g_daily_usd", "max_payout_usd", "max_daily_reward_usd", "max_hourly_usd", "max_daily_usd", "w_floor"] as const;
+const KNOBS = ["p_min_usd", "p_max_usd", "g_win_usd", "g_daily_usd", "max_payout_usd", "max_daily_reward_usd", "max_hourly_usd", "max_daily_usd", "w_floor", "reserve_usd", "reserve_arm_usd"] as const;
 type Knob = (typeof KNOBS)[number];
 
 export type AdminResult = { status: number; body: unknown; html?: string };
@@ -112,9 +112,17 @@ export class AdminService {
     return { status: 200, body: { ok: true, paused } };
   }
 
+  /** Add PUMP Sammy already sent to the hot wallet to the prize pot (whole tokens, 6 decimals, or raw units). */
   async seedTopup(body: unknown): Promise<AdminResult> {
-    const raw = String(obj(body).amount ?? "");
-    if (!/^\d{1,30}$/.test(raw) || raw === "0") return { status: 400, body: { error: "amount: raw units (a positive integer)" } };
+    const b = obj(body);
+    let raw = String(b.amount ?? "");
+    const tokens = String(b.tokens ?? "").trim();
+    if (tokens) {
+      const m = /^(\d{1,24})(?:\.(\d{1,6}))?$/.exec(tokens);
+      if (!m) return { status: 400, body: { error: "tokens: a number of PUMP, up to 6 decimals" } };
+      raw = (BigInt(m[1] as string) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0") || "0")).toString();
+    }
+    if (!/^\d{1,30}$/.test(raw) || BigInt(raw) === 0n) return { status: 400, body: { error: "amount: raw units (a positive integer)" } };
     await this.db("POST", "rpc/seed_topup", { p_amount: raw });
     return { status: 200, body: { ok: true, amount: raw } };
   }
@@ -201,9 +209,9 @@ a{color:#5cd6ff}#msg{position:fixed;right:16px;bottom:16px;background:#222;paddi
 <button id="pauseBtn"></button> <span class="muted">A cap hit pauses on its own; clear it here once you've looked.</span>
 <p id="counts" class="muted"></p></section>
 <section><h2>Knobs <span class="muted">(USD; blank = the env default; the worker reads them within a minute)</span></h2><div class="grid" id="knobs"></div></section>
-<section><h2>Seed</h2><p id="seedLine"></p>
-<label>top up (raw units) <input id="topup" placeholder="e.g. 1000000000"></label> <button id="topupBtn">Add</button>
-<span class="muted">Only after the tokens have actually landed in the seed wallet.</span></section>
+<section><h2>Prize pot</h2><p id="seedLine"></p>
+<label>add to prize pool (PUMP tokens) <input id="topup" placeholder="e.g. 7500"></label> <button id="topupBtn">Add</button>
+<span class="muted">Only after the PUMP has actually landed in the HOT wallet. Wins pay from it within a minute.</span></section>
 <section><h2>Flagged matches (payout held)</h2><table id="flagged"></table></section>
 <section><h2>Held / failed payouts</h2><table id="held"></table></section>
 <section><h2>Flagged and banned wallets</h2>
@@ -224,7 +232,7 @@ $("#pauseLine").innerHTML=paused.paused?"<span class=bad>PAUSED</span> — "+esc
 $("#pauseBtn").textContent=paused.paused?"Resume payouts":"Pause payouts";$("#pauseBtn").className=paused.paused?"":"danger";
 $("#counts").textContent="payouts: "+S.payouts.map(r=>r.status+" "+r.count).join(" · ");
 $("#knobs").innerHTML=S.knobs.map(k=>{const s=S.settings.find(x=>x.key===k);return "<div><div class=muted>"+k+"</div><input data-k='"+k+"' value='"+esc(s?s.value:"")+"'> <button data-set='"+k+"'>Set</button> <button data-clr='"+k+"'>Default</button></div>"}).join("");
-const sd=S.seed;$("#seedLine").textContent=sd?"original "+sd.original+" · remaining "+sd.remaining+" raw units ("+usd(sd.remaining,p)+")":"—";
+const pd=(S.pool&&S.pool.detail)||{};$("#seedLine").textContent=S.pool?"pot "+usd(pd.pot||"0",p)+" · reserve "+usd(pd.reserve||"0",p)+" · available for wins "+usd(S.pool.win_available||"0",p)+" · next Rust win "+usd(S.pool.win_rust||"0",p):"—";
 $("#flagged").innerHTML="<tr><th>ended</th><th>match</th><th>winner</th><th>flag</th><th>tier / q</th><th>net q</th><th>payout</th><th>hashes</th><th></th></tr>"+(S.flagged.length?S.flagged.map(m=>"<tr><td>"+esc(m.ended_at)+"</td><td><a href='"+esc(S.webOrigin)+"/m/"+m.id+"' target=_blank>replay</a> <span class=muted>"+m.id.slice(0,8)+"</span></td><td><a href='"+esc(S.webOrigin)+"/p/"+esc(m.winner)+"' target=_blank>"+esc(m.winner)+"</a></td><td class=bad>"+esc(m.flag)+"</td><td>"+esc(m.tier_paid)+" / "+esc(m.quality_bps)+"</td><td>"+esc(m.net_quality_p1)+" / "+esc(m.net_quality_p2)+"</td><td>"+esc(m.payout)+"</td><td class=muted>"+esc((m.winner===m.p1?m.p1_ip_hash:m.p2_ip_hash)||"-")+"<br>"+esc((m.winner===m.p1?m.p1_fp:m.p2_fp)||"-")+"</td><td><button data-m='clear' data-id='"+m.id+"'>Clear &amp; pay</button> <button data-m='void' data-id='"+m.id+"' class=danger>Void</button> <button data-p='ban' data-addr='"+esc(m.winner)+"' class=danger>Ban 24h</button></td></tr>").join(""):"<tr><td colspan=9 class=muted>none</td></tr>");
 $("#held").innerHTML="<tr><th>created</th><th>key</th><th>to</th><th>amount</th><th>status</th><th>why</th><th>tries</th><th></th></tr>"+(S.held.length?S.held.map(x=>"<tr><td>"+esc(x.created_at)+"</td><td>"+esc(x.idem_key)+"</td><td>"+esc(x.to_address)+"</td><td>"+esc(x.amount)+" ("+esc(x.usd)+")</td><td>"+esc(x.status)+"</td><td>"+esc(x.last_error)+"</td><td>"+esc(x.attempts)+"</td><td><button data-po='retry' data-id='"+x.id+"'>Retry</button> <button data-po='void' data-id='"+x.id+"' class=danger>Void</button></td></tr>").join(""):"<tr><td colspan=8 class=muted>none</td></tr>");
 $("#players").innerHTML="<tr><th>address</th><th>name</th><th>tier</th><th>flagged</th><th>banned until</th><th>last seen</th></tr>"+(S.players.length?S.players.map(x=>"<tr><td>"+esc(x.address)+"</td><td>"+esc(x.username)+"</td><td>"+esc(x.tier)+"</td><td>"+(x.flagged?"<span class=bad>yes</span>":"")+"</td><td>"+esc(x.banned_until||"")+"</td><td>"+esc(x.last_seen)+"</td></tr>").join(""):"<tr><td colspan=6 class=muted>none</td></tr>");
@@ -234,7 +242,7 @@ document.addEventListener("click",async e=>{const b=e.target.closest("button");i
 if(b.id==="pauseBtn"){const paused=!((S.settings.find(s=>s.key==="payouts_paused")||{}).value||{}).paused;await api("pause",{paused,reason:paused?prompt("Reason?")||"paused from /admin":null})}
 else if(b.dataset.set){await api("knob",{key:b.dataset.set,value:$("input[data-k='"+b.dataset.set+"']").value})}
 else if(b.dataset.clr){await api("knob/clear",{key:b.dataset.clr})}
-else if(b.id==="topupBtn"){await api("seed/topup",{amount:$("#topup").value.trim()})}
+else if(b.id==="topupBtn"){await api("seed/topup",{tokens:$("#topup").value.trim()})}
 else if(b.dataset.m){if(b.dataset.m==="void"&&!confirm("Void this payout?"))return;await api("match",{id:b.dataset.id,action:b.dataset.m})}
 else if(b.dataset.po){if(b.dataset.po==="void"&&!confirm("Void this payout?"))return;await api("payout",{id:b.dataset.id,action:b.dataset.po})}
 else if(b.dataset.p){const address=b.dataset.addr||$("#pAddr").value.trim();if(!address)return toast("address?",true);if(b.dataset.p==="ban"&&!confirm("Ban "+address+" for 24 h?"))return;await api("player",{address,action:b.dataset.p,hours:24})}

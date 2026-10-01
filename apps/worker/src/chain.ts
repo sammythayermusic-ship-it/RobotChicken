@@ -164,7 +164,9 @@ export class SolanaChain implements Chain {
     if (!this.cockMint) return null;
     if (this.decimals < 0) await this.init();
     const curveAcc = await this.rpc.getAccountInfo(pumpPda.bondingCurve(this.cockMint));
-    if (!curveAcc) throw new Error("bonding curve account not found: is COCK_MINT a pump.fun coin?");
+    // No curve yet: the stack was switched to the coin's address before the coin was created
+    // (launch day). Nothing to claim; the preflight is what catches a wrong address.
+    if (!curveAcc) return null;
     const curve = decodeBondingCurve(curveAcc.data);
     if (curve.quoteMint !== this.payoutMint) throw new Error(`the coin's quote mint ${curve.quoteMint} is not PAYOUT_MINT`);
     const sharingConfig = pumpPda.sharingConfig(this.cockMint);
