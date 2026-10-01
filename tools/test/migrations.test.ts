@@ -1021,7 +1021,7 @@ describe.each(GRANT_MODES)("migrations on a %s-grants project", (mode: GrantMode
         seed_remaining: "650",
         paused: true,
       });
-      const paid = await as(c, "anon", () => rows<Row>(c, "select kind, display_name, amount::text as amount, status, tx_sig from public.payouts_v order by created_at"));
+      const paid = await as(c, "anon", () => rows<Row>(c, "select kind, display_name, amount::text as amount, status, tx_sig from public.payouts_v order by created_at, status"));
       expect(paid).toEqual([
         { kind: "win", display_name: `anon-${ROOSTER.slice(-4)}`, amount: "41000000", status: "paid", tx_sig: sig("A") },
         { kind: "daily", display_name: `anon-${HEN.slice(-4)}`, amount: "999", status: "paid", tx_sig: sig("B") },

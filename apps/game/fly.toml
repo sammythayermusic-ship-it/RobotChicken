@@ -28,9 +28,13 @@ kill_timeout = 300
 [env]
   NODE_ENV = "production"
   PORT = "2567"
-  # The web app's origin(s), comma-separated. The default (http://localhost:3000)
-  # only suits local dev; the server logs a warning if it is left in production.
-  # ALLOWED_ORIGINS = "https://<web domain>"
+  # The web app's origin(s), comma-separated: only these may use the gate and matchmaking.
+  ALLOWED_ORIGINS = "https://cockfightsol.fun,https://www.cockfightsol.fun,https://cockfightsol.netlify.app"
+  SOLANA_CLUSTER = "mainnet-beta"
+  QUEUE_MIN_PLAYERS = "2"
+  # Per-launch values live in Fly secrets, not here: NEXT_PUBLIC_COCK_MINT (the coin),
+  # GATE_USD_MIN (30 at launch). Keys too: HELIUS_API_KEY, SUPABASE_URL,
+  # SUPABASE_SERVICE_ROLE_KEY, TURNSTILE_SECRET_KEY, QUEUE_JWT_SECRET, ADMIN_PASSWORD.
 
 [http_service]
   internal_port = 2567
