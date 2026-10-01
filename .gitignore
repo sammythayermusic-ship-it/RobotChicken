@@ -39,3 +39,6 @@ __pycache__/
 # Spoken walkthroughs rendered locally with `say`
 docs/*.m4a
 docs/*.aiff
+
+# launch-video renders (tools/video)
+Claude outputs/video/
