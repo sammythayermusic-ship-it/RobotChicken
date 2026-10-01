@@ -286,7 +286,7 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Every pool number comes from `pool_v` / `payouts_v` / `daily_rewards_v` | No estimates on the page: the tiers' next win, today's pool and its countdown (from the server's clock), fees claimed, paid to players, the seed left, the last payouts with their transactions. Without a pool row the panel says payouts start with the coin; a pool older than ten minutes says so. |
 | The result screen follows the payout to its transaction for 55 s | The room polls `payouts` every 3 s after booking; the winner sees "sending…" then the Solscan link. |
 | `/p/<address>` is the static `/p` page, like `/m/<id>` | Profile: record, earnings, rank today, the caps, payouts, the username claim. |
-| No share card / OG image yet | Needs image generation on a static site (a build-time template per match isn't possible); deferred to the launch kit. |
+| One site-wide link card, no per-match card | The site is a static export: a crawler only sees the HTML, which is the same for every `/m/<id>`. Phase 4 adds the site-wide card and a "Share on X" button (see Phase 4). |
 
 ## Launch kit: the videos (`tools/video`, plan in `docs/plan-videos.md`)
 
@@ -301,3 +301,16 @@ top 10 by wins. ★ = Sammy's call; ✓ = confirmed by Sammy at the Phase 3 revi
 | Music is Sammy's own Suno tracks (`Claude outputs/video/music/`): a 30.4 s rap spot for the promo, a bed for the explainer | Higgsfield's music model is not available for standalone tracks. The promo is cut to the spot's grid (152 BPM: the four hits on "peck / shove / slam / dive kick", the KO on "K.O.", the tag on the downbeat of the outro). Suno masters around −16 LUFS, so the explainer bed sits at gain 0.16 (~9 dB under the voice) with a gentle sidechain duck; a bed shorter than the picture loops under the end card. |
 | The prize on the result screen is staged (blurred amount, real-looking transaction link) and the pump.fun page is not on screen | The site runs on the throwaway test coin; live dollar amounts are hidden, mechanics shown. `video:online` re-shoots the card from a real ranked match after the live payout test. |
 | On-screen tagline is "HOLD $COCK. GET PAID." | Payouts are in PUMP, so "win SOL" would be wrong. |
+
+## Phase 4: launch (plan in `docs/plan-phase4.md`, runbook in `docs/runbook-launch.md`)
+
+Agreed with Sammy (2026-10-01): legal is done; **no geo-block**; production stays on **Netlify**; funding numbers are his to set on the day (`tools/launch/fund.sh`); the load test runs on a temporary Fly copy.
+
+| Decision | Why |
+|---|---|
+| The gate's second price source is pump.fun's bonding curve: virtual quote reserves ÷ virtual token reserves × the quote token's (PUMP's) Jupiter price; none once the curve has graduated | The spec's "lower of Jupiter and the bonding-curve quote". On the curve, Jupiter's quote can lag or be thin; after graduation the curve's reserves are frozen, so Jupiter (which then quotes the AMM pool) prices it alone. Both share the 20 s price cache, so it's two extra RPC reads every 20 s at most. |
+| One link card (`apps/web/public/og.png`, rendered from `tools/og/og.html`) and a "Share on X" button on a recorded ranked win | A tweet intent can't attach an image, and a static site can't make per-match cards; the intent links the replay, whose preview is the site card. A per-match image needs a server (the game server or an edge function); later if wanted. |
+| `/health` reports the event-loop delay, memory and connections | Every fight room steps its sim on the one event loop, so a loaded machine shows up there first. The load test reads it; so can an uptime monitor. |
+| The load generator runs on a Fly machine in iad, not the Mac | 400 bots of 60 Hz traffic from a home connection dropped sockets (1006) while the server sat idle; the bots belong next to the server. |
+| Production game server on a dedicated CPU (performance-1x), ~100 concurrent matches per machine | Load test 2026-10-01: shared-cpu-1x is throttled once its burst budget is spent (50 matches lagged ~300 ms); one dedicated CPU runs 100 matches with tick delay p99 15–33 ms and saturates at 200. ★ Sammy: the cost (~$30/month vs ~$6). |
+| Production `EXPORT_INDEXABLE=1` | The playtest build stays `noindex`; the real site should be findable. |

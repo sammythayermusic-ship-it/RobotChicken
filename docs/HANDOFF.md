@@ -3,7 +3,7 @@
 This file is the entry point for picking up COCKFIGHT in a new session or project. Read it first,
 then `CLAUDE.md`.
 
-## Where things stand (2026-09-25)
+## Where things stand (2026-10-01)
 
 | | |
 |---|---|
@@ -14,10 +14,11 @@ then `CLAUDE.md`.
 | Go-live (test coin) | **Live since 2026-09-25**, see below. Open: [PR #5](https://github.com/sammythayermusic-ship-it/cockfight/pull/5) (mainnet fly.toml env) and [PR #6](https://github.com/sammythayermusic-ship-it/cockfight/pull/6) (claim rebroadcast + quieter alerts, built on #5, already deployed) |
 | Domain / X | https://cockfightsol.fun (live, Netlify, DNS on Cloudflare) · @CockFightSol |
 | Launch videos | **Done** (cut 3 signed off): `Claude outputs/video/promo.mp4` + `explainer.mp4`; rig in `tools/video` on [PR #7](https://github.com/sammythayermusic-ship-it/cockfight/pull/7); plan `docs/plan-videos.md`. Re-shoot the payout card after the live payout test |
+| Phase 4: launch prep | Built on branch `phase-4-launch` (PR on base `launch-videos`): curve price source, link card + Share on X, `/health` load stats, load test, launch scripts (`tools/launch`), **`docs/runbook-launch.md` (start there for launch)** |
 | Playtest | https://cockfight-playtest.netlify.app (static build on Sammy's Netlify account; keyboard and phones; online needs a deployed game server, see below) |
 
 - **Merging:** only Sammy merges (PRs #1–#3 were merged at his request on 2026-09-24).
-- **Next:** merge #5 then #6; run the live payout test; funding day; then Phase 4 (launch). Idea queued by Sammy: a spectator `/watch` page streamed to the pump.fun coin page (plan first).
+- **Next:** fix the worker + hot-wallet SOL and move the game server to a dedicated CPU (runbook step 0); merge #5 → #6 → #7 → Phase 4; then follow `docs/runbook-launch.md` (payout test, funding day, launch day). Legal done 2026-10-01; no geo-block. Idea queued by Sammy: a spectator `/watch` page streamed to the pump.fun coin page (plan first).
 
 **What's live (on the THROWAWAY test coin `HFypaAkLk4XwKJvLK5hTvL65dhY2F61davhjo1x8pump`)**
 - Site https://cockfightsol.fun: Netlify site `cockfightsol` (also cockfightsol.netlify.app). Cloudflare DNS: `@` and `www` CNAME → `cockfightsol.netlify.app`, DNS only.
@@ -32,7 +33,9 @@ then `CLAUDE.md`.
 1. Live payout test: a second wallet with ≥$1 of the test coin, played from a different network (the queue never pairs the same IP /24 or browser; a phone on cellular works). Winner should get ~181 PUMP.
 2. Funding day: seed amount, `GUARANTEED_WIN_BUDGET_USD`, `GUARANTEED_DAILY_POOL_USD`, `COLD_WALLET`, `SEED_WALLET_KEYPAIR`.
 3. Launch day: switch `COCK_MINT` / `NEXT_PUBLIC_COCK_MINT` to the real mint (rebuild the web), `GATE_USD_MIN=30`, and "Share creator rewards" 70 hot / 30 launch on the real coin.
-4. Lawyer's read + geo-block list.
+4. ~~Lawyer's read + geo-block list.~~ Done (Sammy, 2026-10-01): no geo-block.
+
+**Found 2026-10-01:** the worker app has no machine (stopped around 05:30 UTC) and the hot wallet holds 0.0009 SOL. See the runbook, step 0.
 
 **Redeploy the playtest** (see the README's "Playtest build" section):
 

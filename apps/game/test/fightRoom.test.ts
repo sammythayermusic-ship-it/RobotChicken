@@ -143,12 +143,12 @@ describe("FightRoom", () => {
 });
 
 describe("HTTP", () => {
-  it("GET /health reports ok, region and room count", async () => {
+  it("GET /health reports ok, region, room count and load", async () => {
     const res = await fetch(`${base}/health`);
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const body = await res.json();
-    expect(body).toEqual({ ok: true, region: "local", rooms: expect.any(Number) });
+    expect(body).toEqual({ ok: true, region: "local", rooms: expect.any(Number), ccu: expect.any(Number), load: expect.objectContaining({ loopP99Ms: expect.any(Number), rssMb: expect.any(Number) }) });
   });
 
   it("matchmaking answers with a seat reservation and echoes only allowed origins", async () => {

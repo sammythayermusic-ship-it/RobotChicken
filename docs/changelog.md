@@ -1,5 +1,13 @@
 # Changelog
 
+## Phase 4: launch prep (branch `phase-4-launch`)
+
+- **Gate**: pump.fun bonding-curve quote as the second price source (`CurvePrice`); the gate takes the lower of it and Jupiter.
+- **Sharing**: site-wide link card (`og.png`, Open Graph + X large card) and a "Share on X" button on a ranked win linking the replay.
+- **Load**: `/health` reports event-loop delay, memory and connections; `tools/loadtest` runs N concurrent bot matches (real clients with the browser's predictor) against a throwaway open-mode copy of the game server, with a Fly load-generator image.
+- **Launch tooling** (`tools/launch`): a read-only preflight (game, worker, on-chain pairing and 70/30 creator-reward split, both prices, SOL for fees, the site), `fund.sh` (guarantees, cold wallet, the seed key by hidden prompt), `switch-mint.sh` (the real coin on game, worker and site in one go), `deploy-web.sh`; `docs/runbook-launch.md`.
+- **Builds**: `Claude outputs` (1.2 GB of video) left out of the Docker context; the production site export is indexable.
+
 ## Launch kit: videos (branch `launch-videos`)
 
 - **`tools/video`**: a Playwright capture rig (`video:capture`) that renders choreographed fights one tick per frame at 3840×2160 on the Mac's GPU, with per-tick event and sound logs; site stills and live captures; alpha title cards; the game's 30 procedural sounds exported as WAVs (`video:capture sounds`); the online match shot on the local open-mode stack (`video:online`); and an ffmpeg edit builder (`video:build promo|explainer`) with punch-ins, slow motion, overlays, the game's sounds at their ticks, VO, ducked music, captions and −14 LUFS output.

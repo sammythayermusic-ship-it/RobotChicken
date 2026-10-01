@@ -1,0 +1,65 @@
+# Fly.io config for the Colyseus game server. Deploy from the REPO ROOT (the
+# Dockerfile's build context):
+#   fly deploy . --config apps/game/fly.toml --dockerfile apps/game/Dockerfile --ha=false
+#
+# --ha=false keeps it to ONE machine: the queue, the rooms, the gate's cache
+# and the playtest results live in memory, and with two machines behind one
+# hostname the matchmaking request and the WebSocket join can land on
+# different machines (and two queues would never pair their players).
+#
+# Regions: Sammy chose one region (iad) to start, so every player shares one
+# queue. A second region or machine needs Redis (Colyseus presence + driver)
+# and each WebSocket pinned to the machine that holds its room (fly-replay
+# keyed on the processId, or a per-machine public address); see
+# docs/decisions.md. The client already takes the server URL from
+# NEXT_PUBLIC_GAME_WS_URL.
+#
+# Gate: set GATE_MODE=open for a playtest; ranked needs the secrets listed in
+# the README (mint, Helius, Turnstile, queue JWT, Supabase).
+
+app = "cockfight-loadtest"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+# Fly's maximum. On SIGTERM the fight rooms let a live match finish and its
+# result be stored before the machine stops (a 5-round match can run ~8 min,
+# longer than this: deploy between busy periods).
+kill_timeout = 300
+
+[env]
+  NODE_ENV = "production"
+  GATE_MODE = "open"
+  PORT = "2567"
+  # The web app's origin(s), comma-separated: only these may use the gate and matchmaking.
+  ALLOWED_ORIGINS = "https://cockfightsol.fun,https://www.cockfightsol.fun,https://cockfightsol.netlify.app"
+  SOLANA_CLUSTER = "mainnet-beta"
+  QUEUE_MIN_PLAYERS = "2"
+  # Per-launch values live in Fly secrets, not here: NEXT_PUBLIC_COCK_MINT (the coin),
+  # GATE_USD_MIN (30 at launch). Keys too: HELIUS_API_KEY, SUPABASE_URL,
+  # SUPABASE_SERVICE_ROLE_KEY, TURNSTILE_SECRET_KEY, QUEUE_JWT_SECRET, ADMIN_PASSWORD.
+
+[http_service]
+  internal_port = 2567
+  force_https = true
+  # Rooms live in memory: a stopped machine ends every match on it.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # Each player holds one WebSocket (a match is two), so limit by connections.
+  # Without this block Fly's default hard limit is 25 connections per machine.
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 400
+    hard_limit = 500
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  # The size under test (production runs what apps/game/fly.toml says).
+  size = "performance-1x"
+  memory = "2gb"

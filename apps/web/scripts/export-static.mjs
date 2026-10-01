@@ -6,7 +6,8 @@
  *
  * Writes out/_headers (Netlify's format) with the same security headers the
  * Next server sends (src/lib/csp.ts), cache rules for the decoders and models,
- * and X-Robots-Tag: noindex so a test link stays out of search results.
+ * and X-Robots-Tag: noindex so a test link stays out of search results
+ * (EXPORT_INDEXABLE=1 leaves that off: the production site, cockfightsol.fun).
  */
 import { spawnSync } from "node:child_process";
 import nextEnv from "@next/env";
@@ -30,7 +31,8 @@ nextEnv.loadEnvConfig(web, false);
 const { securityHeaders } = await import(join(web, "src/lib/csp.ts"));
 const gameWsUrl = process.env.NEXT_PUBLIC_GAME_WS_URL || "ws://localhost:2567";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || undefined;
-const lines = ["/*", ...securityHeaders({ dev: false, gameWsUrl, supabaseUrl }).map((h) => `  ${h.key}: ${h.value}`), "  X-Robots-Tag: noindex"];
+const indexable = process.env.EXPORT_INDEXABLE === "1";
+const lines = ["/*", ...securityHeaders({ dev: false, gameWsUrl, supabaseUrl }).map((h) => `  ${h.key}: ${h.value}`), ...(indexable ? [] : ["  X-Robots-Tag: noindex"])];
 lines.push("", "/decoders/*", "  Cache-Control: public, max-age=31536000, immutable");
 lines.push("", "/models/*", "  Cache-Control: public, max-age=0, must-revalidate");
 writeFileSync(join(web, "out/_headers"), lines.join("\n") + "\n");

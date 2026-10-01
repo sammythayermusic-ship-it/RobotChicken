@@ -15,6 +15,7 @@ import { WebSocketTransport } from "@colyseus/ws-transport";
 import { loadGameEnv, type GameEnv } from "@cockfight/shared/env";
 import { buildContext, setContext, type ContextOverrides, type GameContext } from "./context";
 import { clientIp } from "./gate";
+import { loadSample } from "./load";
 import { originPolicy } from "./origins";
 import { FightRoom } from "./rooms/FightRoom";
 import { QUEUE_ROOM, QueueRoom } from "./rooms/QueueRoom";
@@ -61,7 +62,7 @@ export function makeServer(opts: MakeServerOptions = {}) {
     // 503 while draining, so Fly's proxy stops sending new players to this machine.
     const ok = matchMaker.state === matchMaker.MatchMakerState.READY;
     return Response.json(
-      { ok, region: env.FLY_REGION, rooms: matchMaker.stats.local.roomCount },
+      { ok, region: env.FLY_REGION, rooms: matchMaker.stats.local.roomCount, ccu: matchMaker.stats.local.ccu, load: loadSample() },
       { status: ok ? 200 : 503, headers: NO_STORE },
     );
   });
