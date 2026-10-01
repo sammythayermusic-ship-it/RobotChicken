@@ -1,6 +1,6 @@
 #!/bin/zsh
 # LAUNCH DAY: points the whole stack at the real coin.
-#   1. game server: NEXT_PUBLIC_COCK_MINT=<mint>, GATE_USD_MIN=30
+#   1. game server: NEXT_PUBLIC_COCK_MINT=<mint>, GATE_USD_MIN=30, GATE_MODE=required (closes a free-play test)
 #   2. worker:      COCK_MINT=<mint>
 #   3. the site:    rebuilt with the mint and deployed
 # Run it only after the coin exists and "Share creator rewards" is set
@@ -18,7 +18,7 @@ read -r "ok?Type LAUNCH to go on: "
 [[ "$ok" == "LAUNCH" ]] || { echo "Stopped; nothing changed."; exit 1; }
 
 echo "\n[1/3] game server (restarts; any live match finishes first)"
-fly secrets set -a cockfight-game NEXT_PUBLIC_COCK_MINT="$mint" GATE_USD_MIN=30
+fly secrets set -a cockfight-game NEXT_PUBLIC_COCK_MINT="$mint" GATE_USD_MIN=30 GATE_MODE=required
 echo "\n[2/3] worker"
 fly secrets set -a cockfight-worker COCK_MINT="$mint"
 echo "\n[3/3] site"

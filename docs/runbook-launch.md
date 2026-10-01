@@ -64,7 +64,9 @@ guarantees just stay off and the site shows the real pool.
 pnpm --filter @cockfight/tools launch:preflight -- <mint>      # the chain checks should pass now
 tools/launch/switch-mint.sh <mint>                             # type LAUNCH to confirm
 ```
-`switch-mint.sh` sets `NEXT_PUBLIC_COCK_MINT` + `GATE_USD_MIN=30` on the game server,
+`switch-mint.sh` sets `NEXT_PUBLIC_COCK_MINT` + `GATE_USD_MIN=30` + `GATE_MODE=required` on the game server
+(the last one closes free play: since 2026-10-01 the test-coin server runs `GATE_MODE=open` so anyone can
+play online with just a name and nothing pays),
 `COCK_MINT` on the worker, rebuilds the site with the mint (search engines allowed) and
 deploys it to cockfightsol.fun, then runs the launch preflight. Fly restarts both apps
 (a live match finishes first; there are none yet on launch day).

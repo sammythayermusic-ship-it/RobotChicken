@@ -22,7 +22,7 @@ then `CLAUDE.md`.
 
 **What's live (on the THROWAWAY test coin `HFypaAkLk4XwKJvLK5hTvL65dhY2F61davhjo1x8pump`)**
 - Site https://cockfightsol.fun: Netlify site `cockfightsol` (also cockfightsol.netlify.app). Cloudflare DNS: `@` and `www` CNAME → `cockfightsol.netlify.app`, DNS only.
-- Game server: Fly `cockfight-game`, performance-1x (dedicated CPU, since 2026-10-01), `MAX_LIVE_MATCHES=100`, `GATE_MODE=required`, `GATE_USD_MIN=1` (test value; **30 at launch**).
+- Game server: Fly `cockfight-game`, performance-1x (dedicated CPU, since 2026-10-01), `MAX_LIVE_MATCHES=100`, **`GATE_MODE=open` since 2026-10-01 for free online testing** (anyone plays with a name, nothing pays; `switch-mint.sh` sets it back to required), `GATE_USD_MIN=1` (test value; **30 at launch**).
 - Worker: Fly `cockfight-worker`, **scaled to zero since 2026-10-01 05:30 UTC** (start with `tools/launch/start-worker.sh` once the hot wallet has SOL; hot key set by Sammy): fee claims every 10 min (first one 2026-09-25 16:40 UTC split the vault 70/30), pool every minute, payouts every 5 s. Telegram alerts go to Sammy.
 - Supabase: both migrations pushed.
 - Wallets (public): launch `Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF` (key never on a server), hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, seed `BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX` (no key set yet).
