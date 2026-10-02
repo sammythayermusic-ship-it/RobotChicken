@@ -1,5 +1,9 @@
 # Changelog
 
+## Fix: ranked results couldn't be recorded (branch `fix-record-match-where`)
+
+- Supabase runs pg-safeupdate, which refuses an UPDATE with no WHERE. The pot's `record_match` took each win off `pool_state` with a bare UPDATE, so the first ranked match on production (2026-10-02 23:09 UTC) wasn't recorded: no result, no ELO, no payout ("no prize for this match"). Migration `20261002000000_safe_updates.sql` adds `where ps.id` (and `where id` in the retired `book_seed_draw`). `tools/test/safeUpdate.test.ts` now fails on any bare UPDATE / DELETE in a function's current definition, since PGlite can't catch it.
+
 ## One press to fight (branch `play-one-click`)
 
 - **`/play` is the online game**: it opens straight to the wallet box and one FIGHT button (no mode picker, no "GO ONLINE" then "CHECK WALLET & FIGHT"). The bot check runs in the background; a FIGHT pressed before it finishes goes through the moment it does.
