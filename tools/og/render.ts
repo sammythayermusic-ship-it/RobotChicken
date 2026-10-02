@@ -1,6 +1,6 @@
 /**
  * Renders the link-preview card (tools/og/og.html, 1200×630) to
- * apps/web/public/og.png. Run: pnpm --filter @cockfight/tools og (the logo is art/brand/v1-mecha/logo-B).
+ * apps/web/public/og.png. Run: pnpm --filter @cockfight/tools og (the logo is art/brand/logo-D-flat-head, the X profile picture).
  */
 import { chromium } from "@playwright/test";
 import { resolve } from "node:path";
