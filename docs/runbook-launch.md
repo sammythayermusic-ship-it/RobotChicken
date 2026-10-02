@@ -64,8 +64,8 @@ Until the coin exists the site is up on the real address, the gate tells players
 price yet, and the worker quietly finds nothing to claim. The moment the coin is created:
 
 **Sammy, on pump.fun:**
-1. Create $COCK from the **new** launch wallet (its address goes in `LAUNCH_WALLET` in `apps/worker/fly.toml` first; Claude does that when you send it), paired to PUMP, with that mint.
-2. Turn on **Share creator rewards**: 70% hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, 30% the launch wallet.
+1. Create $COCK from the **new** launch wallet `CfNba4FGUUFUTbvEEuqSPdpr3YEY2mxJEvu1DN1LAAPm` (already in `LAUNCH_WALLET`, 2026-10-02), paired to PUMP, with that mint.
+2. Turn on **Share creator rewards**: 70% hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, 30% the launch wallet `CfNba4FGUUFUTbvEEuqSPdpr3YEY2mxJEvu1DN1LAAPm`.
 3. Run `pnpm --filter @cockfight/tools launch:preflight -- <mint> --launch`: everything green.
 
 (If the mint isn't known in advance: create the coin, then run `switch-mint.sh <mint>`.)
