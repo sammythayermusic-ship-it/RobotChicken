@@ -25,7 +25,7 @@ then `CLAUDE.md`.
 - Game server: Fly `cockfight-game`, performance-1x (dedicated CPU, since 2026-10-01), `MAX_LIVE_MATCHES=100`, **`GATE_MODE=open` since 2026-10-01 for free online testing** (anyone plays with a name, nothing pays; `switch-mint.sh` sets it back to required), `GATE_USD_MIN=1` (test value; **30 at launch**).
 - Worker: Fly `cockfight-worker`, **scaled to zero since 2026-10-01 05:30 UTC** (start with `tools/launch/start-worker.sh` once the hot wallet has SOL; hot key set by Sammy): fee claims every 10 min (first one 2026-09-25 16:40 UTC split the vault 70/30), pool every minute, payouts every 5 s. Telegram alerts go to Sammy.
 - Supabase: both migrations pushed.
-- Wallets (public): launch `Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF` (key never on a server), hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, seed `BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX` (no key set yet).
+- Wallets (public): launch `CfNba4FGUUFUTbvEEuqSPdpr3YEY2mxJEvu1DN1LAAPm` (new, for the real coin, given 2026-10-02; the test coin was made from the old one `Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF`; key never on a server), hot `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`, seed `BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX` (no key set yet).
 - Secrets: Fly secrets on each app; local copies in `.env.local` (git-ignored; `/admin` uses `ADMIN_PASSWORD` from it). Sammy enters private keys through a hidden Terminal prompt piped to `fly secrets import`, never chat.
 - Deploy: `fly deploy . --config apps/<game|worker>/fly.toml --dockerfile apps/<game|worker>/Dockerfile --ha=false --depot`. Web: `NEXT_PUBLIC_GAME_WS_URL=wss://cockfight-game.fly.dev` + the mint + keys from `.env.local`, export, deploy to site `cockfightsol`.
 

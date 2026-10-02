@@ -17,7 +17,7 @@ kill_timeout = 60
   SOLANA_CLUSTER = "mainnet-beta"
   # PUMP: fees arrive in it and players are paid in it.
   PAYOUT_MINT = "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn"
-  LAUNCH_WALLET = "Hqwjp8NAc9hyFxN1XUJoMQLotUdQuagwM2EpEMqCSjpF"
+  LAUNCH_WALLET = "CfNba4FGUUFUTbvEEuqSPdpr3YEY2mxJEvu1DN1LAAPm"
   HOT_WALLET = "HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1"
   SEED_WALLET = "BGZx5Lti1gWY7yD55pMBePiCAUPN4sEJYrmGUuLDjWwX"
   CLAIM_EVERY_MIN = "1"
