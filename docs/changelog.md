@@ -1,5 +1,10 @@
 # Changelog
 
+## Automatic pot top-ups (branch `pot-auto-topup`)
+
+- **The pot fills itself**: PUMP sent to the hot wallet is booked into the prize pot by the worker within a minute (`Treasury.syncPot`, run in every claim tick; Telegram says how much). Never books more than the wallet holds; waits while a payout is in flight; alerts once if the wallet holds less than the books. Tests: `packages/economy/test/topup.test.ts` and a month with three deposits in `month.test.ts`.
+- **`/admin`**: the manual "Add to prize pool" is gone (it would double-count), and the page loads again (payout counts no longer use a PostgREST aggregate, which Supabase rejects).
+
 ## Phase 4: launch prep (branch `phase-4-launch`)
 
 - **The pot** (Sammy, 2026-10-01): a win pays Rust 5% / Chrome 8% / Gold 12% of the prize pot above the reserve, taken off at once; $100 reserve once the pot has reached $500; daily top 10 at 10% of fees; pot top-ups in `/admin` (`pot_topups`, migration `20261001000000_pot.sql`); fee claims every minute; nothing swept. The month simulation and the SQL tests prove the pot is never overspent.

@@ -2,7 +2,8 @@
  * /admin: Sammy's console (spec: basic auth, allowlisted IPs). Flagged
  * matches with the replay, wallet and hashes; one-click clear / void / ban;
  * the pool knobs (P_min, P_max, the guarantees, the caps), the payouts pause
- * switch, the seed top-up. It writes the settings and players tables through
+ * switch. (Pot top-ups are automatic: the worker books PUMP that lands in the
+ * hot wallet, so there is no manual "Add" any more; it would count it twice.) It writes the settings and players tables through
  * the service key; the worker reads the settings every minute.
  *
  * Off (404) unless ADMIN_PASSWORD is set. Basic auth is compared in constant
@@ -81,10 +82,26 @@ export class AdminService {
       this.db<unknown[]>("GET", "matches?select=id,p1,p2,winner,reason,ended_at,flag,payout,tier_paid,quality_bps,net_quality_p1,net_quality_p2,p1_ip_hash,p2_ip_hash,p1_fp,p2_fp&flag=not.is.null&order=ended_at.desc&limit=50"),
       this.db<unknown[]>("GET", "abuse_events?select=*&resolved_at=is.null&order=created_at.desc&limit=100"),
       this.db<unknown[]>("GET", "payouts?select=id,idem_key,to_address,amount,usd,status,last_error,attempts,created_at&status=in.(deferred,failed)&order=created_at.desc&limit=100"),
-      this.db<unknown[]>("GET", "payouts?select=status,count:id.count()&status=in.(pending,deferred,sent,paid,failed,voided)"),
+      this.payoutCounts(),
       this.db<unknown[]>("GET", "players?select=address,username,tier,elo,flagged,banned_until,last_seen&or=(flagged.eq.true,banned_until.gt.now)&order=last_seen.desc&limit=100"),
     ]);
     return { status: 200, body: { pool: pool[0] ?? null, settings, seed: seed[0] ?? null, flagged, events, held, payouts, players, webOrigin: this.d.webOrigin, knobs: KNOBS } };
+  }
+
+  /** Payouts per status. Counted with count=exact (PostgREST has aggregate functions off). */
+  private async payoutCounts(): Promise<{ status: string; count: number }[]> {
+    const statuses = ["pending", "deferred", "sent", "paid", "failed", "voided"];
+    const counts = await Promise.all(
+      statuses.map(async (st) => {
+        const headers = supabaseHeaders(this.d.env.SUPABASE_SERVICE_ROLE_KEY as string);
+        headers.prefer = "count=exact";
+        const res = await this.d.fetch(`${this.d.env.SUPABASE_URL}/rest/v1/payouts?select=id&status=eq.${st}&limit=1`, { method: "GET", headers, signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) throw new Error(`supabase GET payouts count: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+        const total = Number((res.headers.get("content-range") ?? "").split("/")[1]);
+        return { status: st, count: Number.isFinite(total) ? total : 0 };
+      }),
+    );
+    return counts.filter((c) => c.count > 0);
   }
 
   async setKnob(body: unknown): Promise<AdminResult> {
@@ -112,19 +129,9 @@ export class AdminService {
     return { status: 200, body: { ok: true, paused } };
   }
 
-  /** Add PUMP Sammy already sent to the hot wallet to the prize pot (whole tokens, 6 decimals, or raw units). */
-  async seedTopup(body: unknown): Promise<AdminResult> {
-    const b = obj(body);
-    let raw = String(b.amount ?? "");
-    const tokens = String(b.tokens ?? "").trim();
-    if (tokens) {
-      const m = /^(\d{1,24})(?:\.(\d{1,6}))?$/.exec(tokens);
-      if (!m) return { status: 400, body: { error: "tokens: a number of PUMP, up to 6 decimals" } };
-      raw = (BigInt(m[1] as string) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0") || "0")).toString();
-    }
-    if (!/^\d{1,30}$/.test(raw) || BigInt(raw) === 0n) return { status: 400, body: { error: "amount: raw units (a positive integer)" } };
-    await this.db("POST", "rpc/seed_topup", { p_amount: raw });
-    return { status: 200, body: { ok: true, amount: raw } };
+  /** Gone: the worker adds PUMP that lands in the hot wallet to the pot by itself (a manual add would count it twice). */
+  async seedTopup(_body: unknown): Promise<AdminResult> {
+    return { status: 410, body: { error: "automatic now: send PUMP to the hot wallet and the worker adds it to the pot within a minute" } };
   }
 
   /** flag / clear / ban (hours) / unban a wallet. */
@@ -210,8 +217,7 @@ a{color:#5cd6ff}#msg{position:fixed;right:16px;bottom:16px;background:#222;paddi
 <p id="counts" class="muted"></p></section>
 <section><h2>Knobs <span class="muted">(USD; blank = the env default; the worker reads them within a minute)</span></h2><div class="grid" id="knobs"></div></section>
 <section><h2>Prize pot</h2><p id="seedLine"></p>
-<label>add to prize pool (PUMP tokens) <input id="topup" placeholder="e.g. 7500"></label> <button id="topupBtn">Add</button>
-<span class="muted">Only after the PUMP has actually landed in the HOT wallet. Wins pay from it within a minute.</span></section>
+<p class="muted">To add to the pot, send PUMP to the HOT wallet. The worker adds it within a minute by itself (and says so on Telegram); there is nothing to click.</p></section>
 <section><h2>Flagged matches (payout held)</h2><table id="flagged"></table></section>
 <section><h2>Held / failed payouts</h2><table id="held"></table></section>
 <section><h2>Flagged and banned wallets</h2>
@@ -230,7 +236,7 @@ $("#clock").textContent=new Date().toISOString();
 $("#poolGrid").innerHTML=p?[["next Rust win",usd(p.win_rust,p)],["next Chrome win",usd(p.win_chrome,p)],["next Gold win",usd(p.win_gold,p)],["today's top-10 pool",usd(p.daily_pool,p)],["per-win budget (D)",usd(p.per_win_budget,p)],["weighted matches 24h",(Number(p.weighted_milli)/1000).toFixed(1)],["gross fees 24h",usd(p.gross_24h,p)],["allowance (ledger)",usd(p.allowance,p)],["outstanding (booked, unsent)",usd(p.outstanding,p)],["hot target",usd(p.hot_target,p)],["price",("$"+Number(p.price_usd))],["computed",new Date(p.computed_at).toISOString()]].map(([k,v])=>"<div><div class=muted>"+k+"</div><div>"+esc(v)+"</div></div>").join(""):"<div class=muted>no pool yet (worker not running)</div>";
 $("#pauseLine").innerHTML=paused.paused?"<span class=bad>PAUSED</span> — "+esc(paused.reason||"")+" <span class=muted>"+esc(paused.at||"")+"</span>":"<span class=ok>payouts running</span>";
 $("#pauseBtn").textContent=paused.paused?"Resume payouts":"Pause payouts";$("#pauseBtn").className=paused.paused?"":"danger";
-$("#counts").textContent="payouts: "+S.payouts.map(r=>r.status+" "+r.count).join(" · ");
+$("#counts").textContent="payouts: "+(S.payouts.length?S.payouts.map(r=>r.status+" "+r.count).join(" · "):"none yet");
 $("#knobs").innerHTML=S.knobs.map(k=>{const s=S.settings.find(x=>x.key===k);return "<div><div class=muted>"+k+"</div><input data-k='"+k+"' value='"+esc(s?s.value:"")+"'> <button data-set='"+k+"'>Set</button> <button data-clr='"+k+"'>Default</button></div>"}).join("");
 const pd=(S.pool&&S.pool.detail)||{};$("#seedLine").textContent=S.pool?"pot "+usd(pd.pot||"0",p)+" · reserve "+usd(pd.reserve||"0",p)+" · available for wins "+usd(S.pool.win_available||"0",p)+" · next Rust win "+usd(S.pool.win_rust||"0",p):"—";
 $("#flagged").innerHTML="<tr><th>ended</th><th>match</th><th>winner</th><th>flag</th><th>tier / q</th><th>net q</th><th>payout</th><th>hashes</th><th></th></tr>"+(S.flagged.length?S.flagged.map(m=>"<tr><td>"+esc(m.ended_at)+"</td><td><a href='"+esc(S.webOrigin)+"/m/"+m.id+"' target=_blank>replay</a> <span class=muted>"+m.id.slice(0,8)+"</span></td><td><a href='"+esc(S.webOrigin)+"/p/"+esc(m.winner)+"' target=_blank>"+esc(m.winner)+"</a></td><td class=bad>"+esc(m.flag)+"</td><td>"+esc(m.tier_paid)+" / "+esc(m.quality_bps)+"</td><td>"+esc(m.net_quality_p1)+" / "+esc(m.net_quality_p2)+"</td><td>"+esc(m.payout)+"</td><td class=muted>"+esc((m.winner===m.p1?m.p1_ip_hash:m.p2_ip_hash)||"-")+"<br>"+esc((m.winner===m.p1?m.p1_fp:m.p2_fp)||"-")+"</td><td><button data-m='clear' data-id='"+m.id+"'>Clear &amp; pay</button> <button data-m='void' data-id='"+m.id+"' class=danger>Void</button> <button data-p='ban' data-addr='"+esc(m.winner)+"' class=danger>Ban 24h</button></td></tr>").join(""):"<tr><td colspan=9 class=muted>none</td></tr>");
@@ -242,7 +248,6 @@ document.addEventListener("click",async e=>{const b=e.target.closest("button");i
 if(b.id==="pauseBtn"){const paused=!((S.settings.find(s=>s.key==="payouts_paused")||{}).value||{}).paused;await api("pause",{paused,reason:paused?prompt("Reason?")||"paused from /admin":null})}
 else if(b.dataset.set){await api("knob",{key:b.dataset.set,value:$("input[data-k='"+b.dataset.set+"']").value})}
 else if(b.dataset.clr){await api("knob/clear",{key:b.dataset.clr})}
-else if(b.id==="topupBtn"){await api("seed/topup",{tokens:$("#topup").value.trim()})}
 else if(b.dataset.m){if(b.dataset.m==="void"&&!confirm("Void this payout?"))return;await api("match",{id:b.dataset.id,action:b.dataset.m})}
 else if(b.dataset.po){if(b.dataset.po==="void"&&!confirm("Void this payout?"))return;await api("payout",{id:b.dataset.id,action:b.dataset.po})}
 else if(b.dataset.p){const address=b.dataset.addr||$("#pAddr").value.trim();if(!address)return toast("address?",true);if(b.dataset.p==="ban"&&!confirm("Ban "+address+" for 24 h?"))return;await api("player",{address,action:b.dataset.p,hours:24})}

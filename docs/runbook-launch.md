@@ -46,11 +46,12 @@ Wins pay from a pot: Rust 5%, Chrome 8%, Gold 12% of what is in it, each win tak
 once. Fees are claimed into it every minute. Once it has been worth $500, $100 always stays in.
 
 1. Send the starting PUMP (e.g. $30 worth) to the **hot wallet** `HXvSiWxbvFsV7Y8NLgK5jK537EarX6v3PCns5SQSLGV1`.
-2. `/admin` → Prize pot → type the number of PUMP → Add. Only after it has landed.
-   Within a minute the site shows the pot and the next win: a $30 pot pays a Rust win $1.50,
-   Chrome $2.40, Gold $3.60.
+   That's it: the worker adds it to the pot within a minute by itself and says so on Telegram.
+   The site then shows the pot and the next win: a $30 pot pays a Rust win $1.50, Chrome $2.40, Gold $3.60.
 
-Top it up the same way any time. (The seed wallet and its 1/14-a-day drip are retired.)
+Top it up the same way any time. Don't move PUMP *out* of the hot wallet by hand: the books would
+then promise more than is there (the worker alerts if that happens). (The seed wallet and its
+1/14-a-day drip are retired; there is no "Add" button in `/admin` any more.)
 
 ## 3. Launch day
 

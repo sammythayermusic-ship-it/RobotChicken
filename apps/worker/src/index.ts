@@ -70,7 +70,7 @@ async function start(): Promise<void> {
     console.log(`[worker] observer: ${why.join("; ")}. The pool is computed, nothing is sent.`);
   }
   await chain.init();
-  const treasury = new Treasury({ params, ledger, chain, alerts, drawSeed: mode === "live" && !!(chain as SolanaChain).seed });
+  const treasury = new Treasury({ params, ledger, chain, alerts, drawSeed: mode === "live" && !!(chain as SolanaChain).seed, autoTopUp: mode === "live" });
   loop = new WorkerLoop({
     treasury, ledger, mode, status, claimEveryMin: env.CLAIM_EVERY_MIN,
     reloadParams: async () => treasury.updateParams(applySettings(params, await ledger.settings())),

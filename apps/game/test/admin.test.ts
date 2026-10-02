@@ -66,12 +66,18 @@ describe("/admin actions", () => {
     expect(calls.at(-1)?.body).toMatchObject({ key: "payouts_paused", value: { paused: false, reason: null } });
   });
 
-  it("tops the seed up through seed_topup, in raw units only", async () => {
+  it("has no manual pot top-up any more (the worker books deposits; a manual add would count them twice)", async () => {
     const { admin, calls } = make({ password: "correct-horse-battery" });
-    expect((await admin.seedTopup({ amount: "1.5" })).status).toBe(400);
-    expect((await admin.seedTopup({ amount: "0" })).status).toBe(400);
-    expect((await admin.seedTopup({ amount: "1000000000" })).status).toBe(200);
-    expect(calls.at(-1)).toMatchObject({ method: "POST", path: "rpc/seed_topup", body: { p_amount: "1000000000" } });
+    expect((await admin.seedTopup({ tokens: "7500" })).status).toBe(410);
+    expect(calls).toEqual([]);
+  });
+
+  it("counts payouts per status with count=exact, not an aggregate", async () => {
+    const { admin, calls } = make({ password: "correct-horse-battery" });
+    expect((await admin.state()).status).toBe(200);
+    const counts = calls.filter((c) => c.path.startsWith("payouts?select=id&status=eq."));
+    expect(counts.map((c) => c.prefer)).toEqual(Array(6).fill("count=exact"));
+    expect(calls.some((c) => c.path.includes("count()"))).toBe(false);
   });
 
   it("flags, clears, bans and unbans wallets", async () => {
