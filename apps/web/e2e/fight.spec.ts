@@ -107,19 +107,19 @@ test.describe("local fight", () => {
     });
   }
 
-  test("the mode picker starts a fight", async ({ page }) => {
+  test("/play opens the online lobby, and its practice link starts a CPU fight", async ({ page }) => {
     await page.goto("/play");
+    await expect(page.getByTestId("online-lobby")).toBeVisible();
+    await page.getByTestId("practice-link").click();
     await expect(page.getByTestId("mode-picker")).toBeVisible();
     // The selection is announced, not shown by colour only.
-    const cpu = page.getByRole("button", { name: "VS CPU" });
-    const versus = page.getByRole("button", { name: /2 PLAYERS/ });
-    await expect(cpu).toHaveAttribute("aria-pressed", "true");
-    await expect(versus).toHaveAttribute("aria-pressed", "false");
-    await expect(page.getByRole("group", { name: "CPU" }).getByRole("button", { pressed: true })).toHaveText("NORMAL");
-    await expect(page.getByRole("group", { name: /Look/ }).getByRole("button", { pressed: true })).toHaveText("RUST");
-    await versus.click();
-    await expect(versus).toHaveAttribute("aria-pressed", "true");
-    await expect(cpu).toHaveAttribute("aria-pressed", "false");
+    const cpuLevels = page.getByRole("group", { name: "CPU" });
+    await expect(cpuLevels.getByRole("button", { pressed: true })).toHaveText("NORMAL");
+    await cpuLevels.getByRole("button", { name: "HARD" }).click();
+    await expect(cpuLevels.getByRole("button", { pressed: true })).toHaveText("HARD");
+    // Practice only: no mode or look pickers to wade through.
+    await expect(page.getByRole("button", { name: /2 PLAYERS/ })).toHaveCount(0);
+    await expect(page.getByRole("group", { name: /Look/ })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Controls" }).click();
     const tester = page.getByTestId("key-tester");

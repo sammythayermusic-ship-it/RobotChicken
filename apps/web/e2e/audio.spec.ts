@@ -25,11 +25,10 @@ function setInput(page: Page, player: 0 | 1, mask: number): Promise<void> {
   return page.evaluate(([p, m]) => (window as unknown as Win).__cockfight.fight?.setInput(p as number, m as number), [player, mask] as const);
 }
 
-/** Starts a 2P fight through the mode picker: the FIGHT click is the user gesture that unlocks audio. */
+/** Starts a practice fight (the CPU stands still) through the picker: the FIGHT click is the user gesture that unlocks audio. */
 async function fightFromPicker(page: Page, seed: string): Promise<void> {
-  await page.goto(`/play?manual=1&debug=1&seed=${seed}`);
+  await page.goto(`/play?practice=1&manual=1&debug=1&cpu=idle&seed=${seed}`);
   await expect(page.getByTestId("mode-picker")).toBeVisible();
-  await page.getByRole("button", { name: /2 PLAYERS/ }).click();
   await page.getByTestId("fight-button").click();
   await expect(page.getByTestId("fight-screen")).toBeVisible();
   await page.waitForFunction(() => (window as unknown as Win).__cockfight.fight?.ready() === true, null, { timeout: 60_000 });

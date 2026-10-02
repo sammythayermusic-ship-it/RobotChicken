@@ -15,6 +15,7 @@ export function parsePlayParams(get: (key: string) => string | null | undefined)
   return {
     mode: mode === "cpu" || mode === "2p" || mode === "demo" || mode === "online" ? mode : bench ? "demo" : null,
     wallet: get("wallet")?.trim() || null,
+    practice: get("practice") === "1",
     difficulty: pick<CpuLevel>(get("difficulty"), ["easy", "normal", "hard"], "normal"),
     tier: pick<Tier>(get("tier"), ["rust", "chrome", "gold", "diamond"], "rust"),
     seed: get("seed") || (bench ? "bench" : null),

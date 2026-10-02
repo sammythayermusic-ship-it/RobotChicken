@@ -105,9 +105,9 @@ test.describe("landing", () => {
     await expect(page).toHaveTitle("COCKFIGHT");
     await expect(page.getByRole("heading", { level: 1, name: "COCKFIGHT" })).toBeVisible();
     await expect(page.getByText("Hold to play. Win to earn.")).toBeVisible();
-    // The wallet box opens the online lobby with the address filled in.
+    // The wallet box + FIGHT opens the online lobby with the address filled in (one press).
     await expect(page.getByLabel("Solana wallet address")).toBeEditable();
-    await expect(page.getByTestId("landing-wallet")).toHaveAttribute("action", "/play");
+    await expect(page.getByTestId("landing-wallet").getByRole("button", { name: "FIGHT" })).toBeVisible();
     await expect(page.getByTestId("rules-hash")).toHaveText(/^[0-9a-f]{16}$/);
 
     const canvas = page.locator("canvas");
@@ -159,9 +159,9 @@ test.describe("landing", () => {
     await expectShowcaseReady(page, model.present);
     const first = await page.locator("canvas").elementHandle();
 
-    await page.getByRole("link", { name: "FIGHT" }).click();
+    await page.getByRole("button", { name: "FIGHT" }).click();
     await expect(page).toHaveURL(/\/play$/);
-    await expect(page.getByTestId("mode-picker")).toBeVisible();
+    await expect(page.getByTestId("online-lobby")).toBeVisible();
     await expect(page.locator("canvas")).toHaveCount(0);
     expect(await showcase(page)).toBeNull();
 
@@ -186,7 +186,7 @@ test.describe("landing", () => {
     await expectShowcaseReady(page, model.present);
     const trips = 3;
     for (let i = 0; i < trips; i++) {
-      await page.getByRole("link", { name: "FIGHT" }).click();
+      await page.getByRole("button", { name: "FIGHT" }).click();
       await expect(page).toHaveURL(/\/play$/);
       await expect(page.locator("canvas")).toHaveCount(0);
       await page.goBack();
