@@ -17,9 +17,9 @@ export const metadata: Metadata = {
     siteName: "COCKFIGHT",
     title: "COCKFIGHT · hold $COCK, get paid",
     description: "1v1 robot-chicken fights in the browser. Hold $COCK to play ranked; winners get paid.",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "COCKFIGHT: hold $COCK, get paid" }],
+    images: [{ url: "/og.png?v=2", width: 1200, height: 630, alt: "COCKFIGHT: hold $COCK, get paid" }],
   },
-  twitter: { card: "summary_large_image", site: "@CockFightSol", images: ["/og.png"] },
+  twitter: { card: "summary_large_image", site: "@CockFightSol", images: ["/og.png?v=2"] },
 };
 
 export const viewport: Viewport = {
