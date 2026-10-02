@@ -13,7 +13,6 @@ export interface PlayConfig {
   tier: Tier;
 }
 
-const TIERS: Tier[] = ["rust", "chrome", "gold", "diamond"];
 const LEVELS: CpuLevel[] = ["easy", "normal", "hard"];
 
 /** A key the game binds in either mode. */
@@ -128,56 +127,39 @@ function TouchHelp() {
   );
 }
 
-export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart: (c: PlayConfig) => void }) {
-  const [cfg, setCfg] = useState<PlayConfig>(initial);
+/**
+ * Practice: a free fight against the CPU, off the record (nothing counts or
+ * pays). /play itself opens the online lobby; this is reached from its
+ * "Practice" link or /play?practice=1. (2P on one keyboard and the tier
+ * previews stay reachable by URL: /play?mode=2p, &tier=gold.)
+ */
+export function ModePicker({ initial, onStart, onOnline }: { initial: PlayConfig; onStart: (c: PlayConfig) => void; onOnline: () => void }) {
+  const [cfg, setCfg] = useState<PlayConfig>({ ...initial, mode: "cpu" });
   const [controls, setControls] = useState(false);
   const touchOnly = useTouchOnly();
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 py-8" data-testid="mode-picker">
-      <h1 className="font-display text-4xl text-white sm:text-5xl">PICK YOUR FIGHT</h1>
-      <ChoiceGroup id="pick-mode" caption="Mode">
-        <Choice selected={cfg.mode === "cpu"} onSelect={() => setCfg({ ...cfg, mode: "cpu" })}>
-          VS CPU
-        </Choice>
-        <Choice selected={cfg.mode === "2p"} onSelect={() => setCfg({ ...cfg, mode: "2p" })}>
-          2 PLAYERS · 1 KEYBOARD
-        </Choice>
-        <Choice selected={cfg.mode === "online"} onSelect={() => setCfg({ ...cfg, mode: "online" })}>
-          ONLINE
-        </Choice>
+      <div className="flex items-center justify-between gap-4">
+        <h1 className="font-display text-4xl text-white sm:text-5xl">PRACTICE</h1>
+        <button type="button" className="text-sm text-zinc-400 underline underline-offset-4" data-testid="go-online" onClick={onOnline}>
+          Fight online →
+        </button>
+      </div>
+      <p className="-mt-2 text-sm text-zinc-400">Free, against the CPU. Nothing counts or pays out: it&apos;s for learning the moves.</p>
+      <ChoiceGroup id="pick-cpu" caption="CPU">
+        {LEVELS.map((l) => (
+          <Choice key={l} selected={cfg.difficulty === l} onSelect={() => setCfg({ ...cfg, difficulty: l })}>
+            {l.toUpperCase()}
+          </Choice>
+        ))}
       </ChoiceGroup>
-      {touchOnly && cfg.mode === "2p" ? (
-        <p className="-mt-3 text-xs text-amber-200/80" data-testid="needs-keyboard">
-          2 players needs a keyboard. On a phone, fight the CPU with the on-screen buttons.
-        </p>
-      ) : null}
-      {cfg.mode === "cpu" ? (
-        <ChoiceGroup id="pick-cpu" caption="CPU">
-          {LEVELS.map((l) => (
-            <Choice key={l} selected={cfg.difficulty === l} onSelect={() => setCfg({ ...cfg, difficulty: l })}>
-              {l.toUpperCase()}
-            </Choice>
-          ))}
-        </ChoiceGroup>
-      ) : null}
-      {cfg.mode === "online" ? (
-        <p className="-mt-2 text-sm text-zinc-400">Fight a real player. Your look comes from the $COCK you hold.</p>
-      ) : (
-        <ChoiceGroup id="pick-look" caption="Look (preview · tiers unlock by holding $COCK)" wrap>
-          {TIERS.map((t) => (
-            <Choice key={t} selected={cfg.tier === t} onSelect={() => setCfg({ ...cfg, tier: t })}>
-              {t.toUpperCase()}
-            </Choice>
-          ))}
-        </ChoiceGroup>
-      )}
       <button
         type="button"
         data-testid="fight-button"
         className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 py-4 font-display text-3xl tracking-widest text-white shadow-[0_6px_0_#7c2d12] transition active:translate-y-1 active:shadow-[0_2px_0_#7c2d12]"
         onClick={() => onStart(cfg)}
       >
-        {cfg.mode === "online" ? "GO ONLINE" : "FIGHT!"}
+        FIGHT!
       </button>
       <button
         type="button"
@@ -189,11 +171,11 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
       </button>
       {controls ? (
         <div className="grid gap-4 text-sm sm:grid-cols-2">
-          {touchOnly && cfg.mode !== "2p" ? (
+          {touchOnly ? (
             <div className="sm:col-span-2">
               <TouchHelp />
             </div>
-          ) : cfg.mode !== "2p" ? (
+          ) : (
             <div>
               <h2 className="mb-1 font-display text-amber-300">YOU</h2>
               <Row label="Walk" keys={CONTROL_LABELS.solo.move} />
@@ -202,23 +184,6 @@ export function ModePicker({ initial, onStart }: { initial: PlayConfig; onStart:
               <Row label="Peck" keys={CONTROL_LABELS.solo.peck} />
               <Row label="Also" keys={CONTROL_LABELS.solo.alt} />
             </div>
-          ) : (
-            <>
-              <div>
-                <h2 className="mb-1 font-display text-amber-300">P1 (left)</h2>
-                <Row label="Walk" keys={CONTROL_LABELS.p1.move} />
-                <Row label="Jump" keys={CONTROL_LABELS.p1.jump} />
-                <Row label="Block" keys={CONTROL_LABELS.p1.block} />
-                <Row label="Peck" keys={CONTROL_LABELS.p1.peck} />
-              </div>
-              <div>
-                <h2 className="mb-1 font-display text-amber-300">P2 (right)</h2>
-                <Row label="Walk" keys={CONTROL_LABELS.p2.move} />
-                <Row label="Jump" keys={CONTROL_LABELS.p2.jump} />
-                <Row label="Block" keys={CONTROL_LABELS.p2.block} />
-                <Row label="Peck" keys={CONTROL_LABELS.p2.peck} />
-              </div>
-            </>
           )}
           <div className="text-zinc-400 sm:col-span-2">
             <p>Double-tap a direction to dash. Peck + toward = shove, peck + down = slam (unblockable), peck in the air = dive kick. With full Heat, peck with no direction held for the Rooster Rocket (peck + away stays a peck and keeps the meter).</p>

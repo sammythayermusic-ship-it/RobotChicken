@@ -62,8 +62,10 @@ function setAudioSession(muted: boolean): void {
 export interface PlayParams {
   /** Autostart: a local mode, or "online" (opens the online lobby). */
   mode: FightMode | null;
-  /** /play?mode=online&wallet=… (the landing page's wallet box) pre-fills the gate. */
+  /** /play?wallet=… (the landing page's wallet box) pre-fills the gate and checks it at once. */
   wallet: string | null;
+  /** /play?practice=1: the free vs-CPU picker instead of the online lobby. */
+  practice: boolean;
   difficulty: CpuLevel;
   tier: Tier;
   seed: string | null;
@@ -108,7 +110,10 @@ export default function PlayClient({ params }: { params: PlayParams }) {
     autostart ? { mode: params.mode as FightMode, difficulty: params.difficulty, tier: params.tier } : null,
   );
   /** The online lobby (before a match); `auto` re-queues at once (after a match). */
-  const [lobby, setLobby] = useState<{ auto: boolean } | null>(params.mode === "online" ? { auto: false } : null);
+  // /play is the online game: the lobby opens unless a practice or direct fight link asked otherwise.
+  const [lobby, setLobby] = useState<{ auto: boolean } | null>(
+    params.mode === "online" || (params.mode === null && !params.practice) ? { auto: false } : null,
+  );
   const net = cfg?.net ?? null;
   const netSnap = useSyncExternalStore<NetSnapshot | null>(
     net ? net.subscribe : noSubscribe,
@@ -373,7 +378,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   if (!cfg && lobby) {
     return (
       <main className="min-h-dvh bg-[radial-gradient(ellipse_at_top,#3b1d12,#0b0a10_60%)] text-white">
-        <OnlineLobby auto={lobby.auto} wallet={params.wallet} onMatched={onMatched} onBack={() => setLobby(null)} />
+        <OnlineLobby auto={lobby.auto} wallet={params.wallet} onMatched={onMatched} onPractice={() => setLobby(null)} />
       </main>
     );
   }
@@ -381,7 +386,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
   if (!cfg) {
     return (
       <main className="min-h-dvh bg-[radial-gradient(ellipse_at_top,#3b1d12,#0b0a10_60%)] text-white">
-        <ModePicker initial={{ mode: "cpu", difficulty: params.difficulty, tier: params.tier }} onStart={start} />
+        <ModePicker initial={{ mode: "cpu", difficulty: params.difficulty, tier: params.tier }} onStart={start} onOnline={() => setLobby({ auto: false })} />
       </main>
     );
   }
@@ -534,7 +539,7 @@ export default function PlayClient({ params }: { params: PlayParams }) {
             className="rounded-lg border border-zinc-500 bg-black/60 px-5 py-3 font-display text-lg sm:px-6 sm:text-xl"
             onClick={() => setCfg(null)}
           >
-            CHANGE MODE
+            MENU
           </button>
           <Link href="/" className="rounded-lg border border-zinc-700 bg-black/60 px-5 py-3 font-display text-lg text-zinc-300 sm:px-6 sm:text-xl">
             HOME

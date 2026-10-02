@@ -7,8 +7,11 @@ const from = (q: string) => {
 };
 
 describe("parsePlayParams", () => {
-  it("defaults to the mode picker", () => {
-    expect(from("")).toMatchObject({ mode: null, difficulty: "normal", tier: "rust", seed: null, manual: false, arena: true, quality: null, touch: null });
+  it("defaults to the online lobby (no mode, not practice)", () => {
+    expect(from("")).toMatchObject({ mode: null, practice: false, difficulty: "normal", tier: "rust", seed: null, manual: false, arena: true, quality: null, touch: null });
+  });
+  it("practice=1 opens the free vs-CPU picker", () => {
+    expect(from("practice=1").practice).toBe(true);
   });
   it("forces the on-screen buttons on or off, else leaves it to the device", () => {
     expect(from("touch=1").touch).toBe(true);

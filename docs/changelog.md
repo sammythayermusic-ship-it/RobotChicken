@@ -1,5 +1,11 @@
 # Changelog
 
+## One press to fight (branch `play-one-click`)
+
+- **`/play` is the online game**: it opens straight to the wallet box and one FIGHT button (no mode picker, no "GO ONLINE" then "CHECK WALLET & FIGHT"). The bot check runs in the background; a FIGHT pressed before it finishes goes through the moment it does.
+- **Landing page**: one wallet box and one FIGHT button; the wallet is carried to `/play?wallet=…` and checked at once, so that FIGHT is the only press.
+- **Practice**: a small "No $COCK yet? Practice against the CPU for free" link (`/play?practice=1`) opens a CPU-only picker (difficulty, FIGHT, controls). The 2-players-one-keyboard mode and the look preview are gone from the UI (still reachable by URL: `?mode=2p`, `&tier=gold`).
+
 ## Automatic pot top-ups (branch `pot-auto-topup`)
 
 - **The pot fills itself**: PUMP sent to the hot wallet is booked into the prize pot by the worker within a minute (`Treasury.syncPot`, run in every claim tick; Telegram says how much). Never books more than the wallet holds; waits while a payout is in flight; alerts once if the wallet holds less than the books. Tests: `packages/economy/test/topup.test.ts` and a month with three deposits in `month.test.ts`.

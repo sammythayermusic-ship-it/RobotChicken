@@ -36,15 +36,19 @@ export function buyUrl(mint: string | null): string | null {
 }
 
 /**
- * Online entry: the open playtest (a name) or the wallet gate (paste +
- * Turnstile + balance check), then the queue until the server pairs this
- * player. `auto` re-queues straight away when it can (after a match).
+ * Online entry (what /play opens to): the open playtest (a name) or the
+ * wallet gate, then the queue until the server pairs this player. One press:
+ * paste the wallet, FIGHT. The bot check (Turnstile) runs in the background;
+ * a FIGHT pressed before it is done goes through the moment it is. A wallet
+ * from the landing page (?wallet=) is checked as soon as it can be, so the
+ * landing page's FIGHT is the only press. `auto` re-queues straight away when
+ * it can (after a match).
  */
-export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
+export function OnlineLobby({ auto, wallet: walletParam, onMatched, onPractice }: {
   auto: boolean;
   wallet?: string | null;
   onMatched: (s: NetSession) => void;
-  onBack: () => void;
+  onPractice: () => void;
 }) {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
@@ -54,6 +58,8 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
     typeof window === "undefined" ? "" : walletParam && isWalletAddress(walletParam) ? walletParam : savedWallet(),
   );
   const [turnstile, setTurnstile] = useState<string | null>(null);
+  /** FIGHT was pressed (or a wallet came from the landing page) before the bot check finished. */
+  const [pending, setPending] = useState(() => !auto && !!walletParam && isWalletAddress(walletParam));
   const [tsKey, setTsKey] = useState(0);
   const [tsFailed, setTsFailed] = useState(false);
   const [size, setSize] = useState(0);
@@ -197,17 +203,14 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
     void enterQueue({ name: n }, { name: n, tier: "rust" });
   };
 
-  const submitWallet = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const checkWallet = async (token: string) => {
     const w = wallet.trim();
     if (!isWalletAddress(w)) {
       setPhase({ kind: "error", message: "That isn't a Solana wallet address. Paste the address your $COCK is in.", retry: true });
       return;
     }
-    if (!turnstile) return;
     saveWallet(w);
     setPhase({ kind: "checking" });
-    const token = turnstile;
     setTurnstile(null);
     setTsKey((k) => k + 1); // a token is single use: the next check needs a fresh one
     const ans = await postGate(w, token).catch(() => null);
@@ -224,14 +227,35 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
     }
   };
 
+  const submitWallet = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isWalletAddress(wallet.trim())) {
+      setPending(false);
+      setPhase({ kind: "error", message: "That isn't a Solana wallet address. Paste the address your $COCK is in.", retry: true });
+      return;
+    }
+    if (turnstile) void checkWallet(turnstile);
+    else setPending(true); // goes through as soon as the bot check hands over its token
+  };
+
+  /** The bot check's token: used at once if FIGHT is already waiting on it (or a landing-page wallet is). */
+  const onToken = (t: string | null) => {
+    if (t && pending) {
+      setPending(false);
+      void checkWallet(t);
+    } else {
+      setTurnstile(t);
+    }
+  };
+
   const cancel = async () => {
     setPhase({ kind: "form" });
     await stopQueue();
   };
 
-  const back = () => {
+  const practice = () => {
     void stopQueue();
-    onBack();
+    onPractice();
   };
 
   const gated = config?.gate === "required";
@@ -240,10 +264,7 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 py-8" data-testid="online-lobby">
       <div className="flex items-center justify-between">
-        <h1 className="font-display text-4xl text-white sm:text-5xl">ONLINE</h1>
-        <button type="button" className="text-sm text-zinc-400 underline underline-offset-4" onClick={back}>
-          Back
-        </button>
+        <h1 className="font-display text-4xl text-white sm:text-5xl">ENTER THE PIT</h1>
       </div>
 
       {phase.kind === "loading" ? <p className="text-zinc-400">Connecting to the pit…</p> : null}
@@ -271,7 +292,7 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
             data-testid="find-match"
             className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 py-4 font-display text-2xl tracking-widest text-white shadow-[0_6px_0_#7c2d12] transition active:translate-y-1 active:shadow-[0_2px_0_#7c2d12]"
           >
-            FIND MATCH
+            FIGHT!
           </button>
         </form>
       ) : null}
@@ -301,7 +322,10 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
               </>
             ) : null}
           </p>
-          <Turnstile key={tsKey} siteKey={publicEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY} onToken={setTurnstile} onError={() => setTsFailed(true)} />
+          <Turnstile key={tsKey} siteKey={publicEnv.NEXT_PUBLIC_TURNSTILE_SITE_KEY} onToken={onToken} onError={() => {
+              setTsFailed(true);
+              setPending(false);
+            }} />
           {tsFailed ? (
             <p className="text-sm text-red-200" role="alert">
               The bot check didn&apos;t load. Check your connection (or ad blocker), then{" "}
@@ -320,11 +344,11 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
           ) : null}
           <button
             type="submit"
-            disabled={!turnstile}
+            disabled={pending}
             data-testid="check-wallet"
-            className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 py-4 font-display text-2xl tracking-widest text-white shadow-[0_6px_0_#7c2d12] transition enabled:active:translate-y-1 disabled:opacity-50"
+            className="rounded-lg bg-gradient-to-b from-orange-400 to-red-600 py-4 font-display text-3xl tracking-widest text-white shadow-[0_6px_0_#7c2d12] transition enabled:active:translate-y-1 disabled:opacity-70"
           >
-            {turnstile ? "CHECK WALLET & FIGHT" : "CHECKING YOU'RE HUMAN…"}
+            {pending ? "ONE SEC…" : "FIGHT!"}
           </button>
         </form>
       ) : null}
@@ -390,6 +414,12 @@ export function OnlineLobby({ auto, wallet: walletParam, onMatched, onBack }: {
             CANCEL
           </button>
         </div>
+      ) : null}
+
+      {phase.kind === "form" || phase.kind === "error" || phase.kind === "short" || phase.kind === "loading" ? (
+        <button type="button" className="self-start text-sm text-zinc-400 underline underline-offset-4" data-testid="practice-link" onClick={practice}>
+          No $COCK yet? Practice against the CPU for free →
+        </button>
       ) : null}
 
       {phase.kind === "matched" ? (
