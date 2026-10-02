@@ -159,6 +159,10 @@ export class SupabaseLedger implements Ledger {
     await this.req("POST", "sweeps", { sig, amount, at: iso(at) }, "return=minimal");
   }
 
+  async recordTopup(amount: bigint, note: string, at: number): Promise<void> {
+    await this.req("POST", "pot_topups", { amount: amount.toString(), note, at: iso(at) }, "return=minimal");
+  }
+
   async duePayouts(now: number, limit: number): Promise<PayoutRow[]> {
     const rows = await this.req<PayoutRecord[]>(
       "GET",

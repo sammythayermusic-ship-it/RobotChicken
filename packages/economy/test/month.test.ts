@@ -43,7 +43,7 @@ function hourShare(h: number): number {
   return (1 + Math.sin(((h - 14) / 24) * 2 * Math.PI)) / 24 + 0.01;
 }
 
-async function runMonth(opts: { seedUsd: number; gWinUsd: number; gDailyUsd: number; seed?: number }): Promise<Run> {
+async function runMonth(opts: { seedUsd: number; gWinUsd: number; gDailyUsd: number; seed?: number; autoTopUp?: boolean; deposits?: { day: number; hod: number; usd: number }[] }): Promise<Run> {
   const r = rng(opts.seed ?? 7);
   let priceUsd = 0.005;
   const price = (): Price => ({ usd: priceUsd, decimals: DECIMALS });
@@ -56,7 +56,7 @@ async function runMonth(opts: { seedUsd: number; gWinUsd: number; gDailyUsd: num
   ledger.seedBalance = { original: seedRaw, remaining: seedRaw };
   const dust = usdToRaw(20, price()); // a little left over from testing, not in the ledger
   chain.hot = dust;
-  const mk = (t: Treasury | null) => new Treasury({ params, ledger, chain, alerts, batch: 100_000, deferMs: HOUR_MS, expireMs: HOUR_MS, minSweepUsd: 50, now: () => (t ? t.now() : T0) });
+  const mk = (t: Treasury | null) => new Treasury({ params, ledger, chain, alerts, batch: 100_000, deferMs: HOUR_MS, expireMs: HOUR_MS, minSweepUsd: 50, autoTopUp: opts.autoTopUp ?? false, now: () => (t ? t.now() : T0) });
   let treasury = mk(null);
   await treasury.reconcile(T0);
 
@@ -92,6 +92,7 @@ async function runMonth(opts: { seedUsd: number; gWinUsd: number; gDailyUsd: num
     // Fee claims fail for eight hours on day 10 (invariant 7).
     chain.claimFails = day === 10 && hod < 8;
     if (chain.claimFails) outageHours.push(h);
+    for (const d of opts.deposits ?? []) if (d.day === day && d.hod === hod) chain.hot += usdToRaw(d.usd, price());
     await treasury.claimTick(now + 60_000);
     const afterSweep = { hot: chain.hot, keep: (treasury.state?.hotTarget ?? 0n) + (await ledger.window(now + 60_000)).outstanding };
     await treasury.recompute(now + 120_000);
@@ -382,4 +383,23 @@ describe("a month with no seed and no guarantees still never overpays", () => {
     expect(run.ledger.payouts.filter((p) => p.status === "failed")).toEqual([]);
   }, 120_000);
 
+});
+
+describe("a month where Sammy tops the pot up by sending PUMP to the hot wallet", () => {
+  it("books every deposit (and the old dust) exactly once, and the books match the wallet", async () => {
+    const deposits = [{ day: 0, hod: 1, usd: 30 }, { day: 12, hod: 5, usd: 200 }, { day: 25, hod: 20, usd: 75 }];
+    const run = await runMonth({ seedUsd: 0, gWinUsd: 0, gDailyUsd: 0, seed: 13, autoTopUp: true, deposits });
+    const { ledger, chain, dust } = run;
+    const topped = sum(ledger.topups.map((t) => t.amount));
+    // The dust is booked at the first claim tick; each deposit at the tick after it lands (or after a payout in flight confirms).
+    // Prices move between deposits, so compare with what actually landed.
+    expect(ledger.topups.length).toBeGreaterThanOrEqual(4);
+    expect(chain.hot).toBe(ledger.allowance);
+    const paid = sum(ledger.payouts.filter(sentOrPaid).map((p) => p.amount));
+    expect(paid).toBeLessThanOrEqual(sum(ledger.claims.map((c) => c.playerShare)) + topped);
+    expect(topped).toBeGreaterThan(dust);
+    for (const h of run.hours) expect(h.hot, new Date(h.at).toISOString()).toBeGreaterThanOrEqual(h.allowance);
+    expect(ledger.payouts.filter((p) => p.status === "failed")).toEqual([]);
+    expect(run.alerts.sent.some((a) => /less than the books/.test(a.message))).toBe(false);
+  }, 120_000);
 });

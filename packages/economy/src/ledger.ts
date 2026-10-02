@@ -87,6 +87,8 @@ export interface Ledger {
   writePoolState(state: PoolState, now: number): Promise<void>;
   recordClaim(c: ClaimRecord): Promise<void>;
   recordSweep(amount: bigint, sig: string, at: number): Promise<void>;
+  /** PUMP added to the prize pot (pot_topups): counts toward the allowance. */
+  recordTopup(amount: bigint, note: string, at: number): Promise<void>;
   /** Rows to try now: pending, or deferred and due. Oldest first. */
   duePayouts(now: number, limit: number): Promise<PayoutRow[]>;
   /** Rows already sent whose confirmation is still open. */

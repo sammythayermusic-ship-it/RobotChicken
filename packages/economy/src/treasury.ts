@@ -6,10 +6,11 @@
  *   every minute  recompute()   pool state from the ledger → pool_state row
  *   every 5 s     payPass()     send due payouts (allowance, caps, wallet cover), confirm sent ones
  *   every minute  claimTick()   price, distribute creator fees to the hot wallet (the pot keeps all of it)
+ *   every minute  syncPot()     PUMP in the hot wallet the books don't know about → the pot (inside claimTick)
  *   00:00 UTC     midnight()    pay yesterday's top 10, book today's seed draw
  *   at boot       reconcile()   settle rows left `sent` by a crash, run a missed midnight
  */
-import { minRaw, usdToRaw, type Price } from "./money";
+import { minRaw, rawToUsd, usdToRaw, type Price } from "./money";
 import { validateParams, type EconomyParams } from "./params";
 import {
   computePoolState, dailyRewards, decideSend, seedDraw, type PoolState, type SeedDraw,
@@ -57,6 +58,14 @@ export interface TreasuryOptions {
   lowSolLamports?: bigint;
   /** False in observer mode (no seed key): midnight books the daily rewards but no seed draw. */
   drawSeed?: boolean;
+  /**
+   * Book PUMP that lands in the hot wallet outside the ledger (Sammy's deposits,
+   * fees someone else distributed) into the pot, every claim tick. The worker
+   * turns it on; the month test leaves it off so its dust stays out of the books.
+   */
+  autoTopUp?: boolean;
+  /** Ignore a gap between the wallet and the books smaller than this (USD). */
+  minTopUpUsd?: number;
 }
 
 export interface PayPassResult {
@@ -80,6 +89,8 @@ export class Treasury {
   readonly minSweepUsd: number;
   readonly lowSolLamports: bigint;
   readonly drawSeed: boolean;
+  readonly autoTopUp: boolean;
+  readonly minTopUpUsd: number;
   /** The price fetched at the last claim tick (or boot); pool maths use it until the next one. */
   price: Price | null = null;
   /** The last computed pool state (what the site and the game server see). */
@@ -89,6 +100,9 @@ export class Treasury {
   #lowSolAlerted = false;
   /** Claim ticks that failed in a row (price or claim); reset by the next good one. */
   claimFailStreak = 0;
+  /** payPass and syncPot never overlap: syncPot compares the wallet with the books, and a send in flight would skew that. */
+  #lock: Promise<unknown> = Promise.resolve();
+  #shortAlerted = false;
 
   constructor(o: TreasuryOptions) {
     validateParams(o.params);
@@ -104,6 +118,15 @@ export class Treasury {
     this.minSweepUsd = o.minSweepUsd ?? 50;
     this.lowSolLamports = o.lowSolLamports ?? 50_000_000n;
     this.drawSeed = o.drawSeed ?? true;
+    this.autoTopUp = o.autoTopUp ?? false;
+    this.minTopUpUsd = o.minTopUpUsd ?? 0.25;
+  }
+
+  /** Run `fn` with no payPass / syncPot running alongside it. */
+  #exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.#lock.then(fn, fn);
+    this.#lock = run.catch(() => undefined);
+    return run;
   }
 
   /** Replace the knobs at runtime (/admin settings); an invalid set is rejected and the old one kept. */
@@ -174,6 +197,13 @@ export class Treasury {
       // The fees stay in the vault, so the next tick collects them.
       await this.#claimFailed(`fee claim failed: ${msg(e)}`);
     }
+    if (this.autoTopUp) {
+      try {
+        await this.syncPot(now);
+      } catch (e) {
+        console.warn(`[treasury] pot sync failed: ${msg(e)}`);
+      }
+    }
     await this.recompute(now);
     await this.#sweep(now);
     await this.#checkSol();
@@ -226,7 +256,47 @@ export class Treasury {
    * transaction is broadcast, so a crash in between is settled by
    * reconcile() and a row is never paid twice.
    */
-  async payPass(now = this.now()): Promise<PayPassResult> {
+  payPass(now = this.now()): Promise<PayPassResult> {
+    return this.#exclusive(() => this.#payPass(now));
+  }
+
+  /**
+   * The wallet and the books, compared: PUMP in the hot wallet that the ledger
+   * doesn't count (a deposit, fees someone else distributed, dust) is booked as
+   * a pot top-up, so it is in the next win. Never books more than the wallet
+   * holds, so the pot can't promise what isn't there; skips while a payout is
+   * sent but unconfirmed (the wallet hasn't dropped yet). A wallet holding less
+   * than the books (PUMP moved out by hand) is alerted once, not booked.
+   * Returns what it booked (0n when nothing).
+   */
+  syncPot(now = this.now()): Promise<bigint> {
+    return this.#exclusive(async () => {
+      if ((await this.ledger.sentPayouts()).length > 0) return 0n;
+      const price = this.price ?? (await this.refreshPrice());
+      const w = await this.ledger.window(now);
+      const balance = await this.chain.hotBalance();
+      const gap = balance - w.allowance;
+      const min = usdToRaw(this.minTopUpUsd, price);
+      const tokens = (raw: bigint) => (Number(raw) / Number(10n ** BigInt(price.decimals))).toLocaleString("en-US", { maximumFractionDigits: 2 });
+      if (gap > 0n && gap >= min) {
+        await this.ledger.recordTopup(gap, "auto: found in the hot wallet", now);
+        this.#shortAlerted = false;
+        await this.alerts.alert("info", `added ${tokens(gap)} PUMP (~$${rawToUsd(gap, price).toFixed(2)}) to the prize pot: it landed in the hot wallet`);
+        return gap;
+      }
+      if (gap < 0n && -gap >= min) {
+        if (!this.#shortAlerted) {
+          await this.alerts.alert("info", `the hot wallet holds ${tokens(-gap)} PUMP less than the books (moved out by hand?). Wins still pay from what is there; send PUMP back to cover it.`);
+        }
+        this.#shortAlerted = true;
+      } else {
+        this.#shortAlerted = false;
+      }
+      return 0n;
+    });
+  }
+
+  async #payPass(now: number): Promise<PayPassResult> {
     const r: PayPassResult = { sent: 0, deferred: 0, confirmed: 0, retried: 0, failed: 0 };
     await this.#confirmSent(now, r);
     const pause = await this.ledger.pause();

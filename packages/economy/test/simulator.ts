@@ -110,6 +110,13 @@ export class MemoryLedger implements Ledger {
     this.allowance += amount;
   }
 
+  readonly topups: { amount: bigint; note: string; at: number }[] = [];
+  async recordTopup(amount: bigint, note: string, at: number): Promise<void> {
+    if (amount <= 0n) throw new Error("top-up must be positive");
+    this.topups.push({ amount, note, at });
+    this.allowance += amount;
+  }
+
   async recordClaim(c: ClaimRecord): Promise<void> {
     if (this.claims.some((x) => x.sig === c.sig)) throw new Error("duplicate claim signature");
     this.claims.push(c);
