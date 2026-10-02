@@ -226,6 +226,7 @@ describe("migration files and the harness", () => {
       "20260924000000_phase2_results.sql",
       "20260925000000_phase3_money.sql",
       "20261001000000_pot.sql",
+      "20261002000000_safe_updates.sql",
     ]);
   });
 
