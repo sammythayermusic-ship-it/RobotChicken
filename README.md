@@ -1,7 +1,7 @@
 # COCKFIGHT
 
 A browser 1v1 2.5D fighting game where robotic chickens brawl in a junkyard pit. Entry
-requires holding $30 of $COCK; every win pays instant SOL out of the coin's trading fees,
+requires holding $30. every win pays instant SOL out of the coin's trading fees,
 and the daily top 10 split a leaderboard pool. Nothing is wagered: the loser keeps every
 token. **Hold to play, win to earn.**
 
